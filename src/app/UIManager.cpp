@@ -1226,6 +1226,8 @@ void UIManager::TriggerBake() {
             std::error_code ec;
             std::filesystem::create_directories(outFolder, ec);
 
+            std::vector<std::string> allSavedFiles;
+
             for (const auto& res : results) {
                 std::string udimStr = std::to_string(res.udimTile);
 
@@ -1236,6 +1238,7 @@ void UIManager::TriggerBake() {
                         std::string exrErr;
                         if (ExrWriter::SaveFloatImage(dispPath, res.displacementMap.data(), res.width, res.height, exrErr)) {
                             m_logEntries.push_back("[EXR] Saved 32-bit displacement: " + dispPath);
+                            allSavedFiles.push_back(dispPath);
                         } else {
                             m_logEntries.push_back("[Error] Failed writing " + dispPath + ": " + exrErr);
                         }
@@ -1246,6 +1249,7 @@ void UIManager::TriggerBake() {
                         std::string exrErr;
                         if (ExrWriter::SaveRGBFloatImage(normPath, res.normalMapR.data(), res.normalMapG.data(), res.normalMapB.data(), res.width, res.height, true, exrErr)) {
                             m_logEntries.push_back("[EXR] Saved 16-bit normal: " + normPath);
+                            allSavedFiles.push_back(normPath);
                         }
                     }
 
@@ -1254,6 +1258,7 @@ void UIManager::TriggerBake() {
                         std::string exrErr;
                         if (ExrWriter::SaveRGBFloatImage(wnormPath, res.worldNormalR.data(), res.worldNormalG.data(), res.worldNormalB.data(), res.width, res.height, true, exrErr)) {
                             m_logEntries.push_back("[EXR] Saved 16-bit world normal: " + wnormPath);
+                            allSavedFiles.push_back(wnormPath);
                         }
                     }
 
@@ -1261,7 +1266,8 @@ void UIManager::TriggerBake() {
                         std::string aoPath = (outFolder / (m_settings.baseFilename + "_AO." + udimStr + ".exr")).string();
                         std::string exrErr;
                         if (ExrWriter::SaveFloatImage(aoPath, res.aoMap.data(), res.width, res.height, exrErr)) {
-                            m_logEntries.push_back("[EXR] Saved 16-bit AO: " + aoPath);
+                            m_logEntries.push_back("[EXR] Saved 16-bit AO map: " + aoPath);
+                            allSavedFiles.push_back(aoPath);
                         }
                     }
 
@@ -1270,6 +1276,7 @@ void UIManager::TriggerBake() {
                         std::string exrErr;
                         if (ExrWriter::SaveFloatImage(cavPath, res.cavityMap.data(), res.width, res.height, exrErr)) {
                             m_logEntries.push_back("[EXR] Saved 16-bit cavity: " + cavPath);
+                            allSavedFiles.push_back(cavPath);
                         }
                     }
 
@@ -1278,6 +1285,7 @@ void UIManager::TriggerBake() {
                         std::string exrErr;
                         if (ExrWriter::SaveFloatImage(curvPath, res.curvatureMap.data(), res.width, res.height, exrErr)) {
                             m_logEntries.push_back("[EXR] Saved 16-bit curvature: " + curvPath);
+                            allSavedFiles.push_back(curvPath);
                         }
                     }
 
@@ -1286,6 +1294,7 @@ void UIManager::TriggerBake() {
                         std::string exrErr;
                         if (ExrWriter::SaveFloatImage(thickPath, res.thicknessMap.data(), res.width, res.height, exrErr)) {
                             m_logEntries.push_back("[EXR] Saved 16-bit thickness: " + thickPath);
+                            allSavedFiles.push_back(thickPath);
                         }
                     }
 
@@ -1294,6 +1303,7 @@ void UIManager::TriggerBake() {
                         std::string exrErr;
                         if (ExrWriter::SaveRGBFloatImage(posPath, res.positionMapR.data(), res.positionMapG.data(), res.positionMapB.data(), res.width, res.height, false, exrErr)) {
                             m_logEntries.push_back("[EXR] Saved 32-bit world position: " + posPath);
+                            allSavedFiles.push_back(posPath);
                         }
                     }
 
@@ -1302,6 +1312,7 @@ void UIManager::TriggerBake() {
                         std::string exrErr;
                         if (ExrWriter::SaveRGBFloatImage(matPath, res.materialIdMapR.data(), res.materialIdMapG.data(), res.materialIdMapB.data(), res.width, res.height, true, exrErr)) {
                             m_logEntries.push_back("[EXR] Saved 16-bit material ID: " + matPath);
+                            allSavedFiles.push_back(matPath);
                         }
                     }
 
@@ -1310,6 +1321,7 @@ void UIManager::TriggerBake() {
                         std::string exrErr;
                         if (ExrWriter::SaveRGBFloatImage(colPath, res.baseColorMapR.data(), res.baseColorMapG.data(), res.baseColorMapB.data(), res.width, res.height, true, exrErr)) {
                             m_logEntries.push_back("[EXR] Saved 16-bit base color: " + colPath);
+                            allSavedFiles.push_back(colPath);
                         }
                     }
 
@@ -1318,6 +1330,7 @@ void UIManager::TriggerBake() {
                         std::string exrErr;
                         if (ExrWriter::SaveRGBFloatImage(diagPath, res.diagnosticMapR.data(), res.diagnosticMapG.data(), res.diagnosticMapB.data(), res.width, res.height, true, exrErr)) {
                             m_logEntries.push_back("[EXR] Saved diagnostic map: " + diagPath);
+                            allSavedFiles.push_back(diagPath);
                         }
                     }
                 }
@@ -1329,6 +1342,7 @@ void UIManager::TriggerBake() {
                         std::string pngErr;
                         if (ExrWriter::SaveRGBPNG(normPngPath, res.normalMapR.data(), res.normalMapG.data(), res.normalMapB.data(), res.width, res.height, pngErr)) {
                             m_logEntries.push_back("[PNG] Saved 8-bit normal: " + normPngPath);
+                            allSavedFiles.push_back(normPngPath);
                         }
                     }
 
@@ -1337,6 +1351,7 @@ void UIManager::TriggerBake() {
                         std::string pngErr;
                         if (ExrWriter::SaveRGBPNG(wnormPngPath, res.worldNormalR.data(), res.worldNormalG.data(), res.worldNormalB.data(), res.width, res.height, pngErr)) {
                             m_logEntries.push_back("[PNG] Saved 8-bit world normal: " + wnormPngPath);
+                            allSavedFiles.push_back(wnormPngPath);
                         }
                     }
 
@@ -1345,6 +1360,7 @@ void UIManager::TriggerBake() {
                         std::string pngErr;
                         if (ExrWriter::SaveGrayscalePNG(aoPngPath, res.aoMap.data(), res.width, res.height, pngErr)) {
                             m_logEntries.push_back("[PNG] Saved 8-bit AO map: " + aoPngPath);
+                            allSavedFiles.push_back(aoPngPath);
                         }
                     }
 
@@ -1353,6 +1369,7 @@ void UIManager::TriggerBake() {
                         std::string pngErr;
                         if (ExrWriter::SaveGrayscalePNG(cavPngPath, res.cavityMap.data(), res.width, res.height, pngErr)) {
                             m_logEntries.push_back("[PNG] Saved 8-bit Cavity map: " + cavPngPath);
+                            allSavedFiles.push_back(cavPngPath);
                         }
                     }
 
@@ -1361,6 +1378,7 @@ void UIManager::TriggerBake() {
                         std::string pngErr;
                         if (ExrWriter::SaveGrayscalePNG(curvPngPath, res.curvatureMap.data(), res.width, res.height, pngErr)) {
                             m_logEntries.push_back("[PNG] Saved 8-bit Curvature map: " + curvPngPath);
+                            allSavedFiles.push_back(curvPngPath);
                         }
                     }
 
@@ -1369,6 +1387,7 @@ void UIManager::TriggerBake() {
                         std::string pngErr;
                         if (ExrWriter::SaveGrayscalePNG(thickPngPath, res.thicknessMap.data(), res.width, res.height, pngErr)) {
                             m_logEntries.push_back("[PNG] Saved 8-bit thickness map: " + thickPngPath);
+                            allSavedFiles.push_back(thickPngPath);
                         }
                     }
 
@@ -1377,6 +1396,7 @@ void UIManager::TriggerBake() {
                         std::string pngErr;
                         if (ExrWriter::SaveRGBPNG(matPngPath, res.materialIdMapR.data(), res.materialIdMapG.data(), res.materialIdMapB.data(), res.width, res.height, pngErr)) {
                             m_logEntries.push_back("[PNG] Saved 8-bit Material ID: " + matPngPath);
+                            allSavedFiles.push_back(matPngPath);
                         }
                     }
 
@@ -1385,6 +1405,7 @@ void UIManager::TriggerBake() {
                         std::string pngErr;
                         if (ExrWriter::SaveRGBPNG(colPngPath, res.baseColorMapR.data(), res.baseColorMapG.data(), res.baseColorMapB.data(), res.width, res.height, pngErr)) {
                             m_logEntries.push_back("[PNG] Saved 8-bit Base Color: " + colPngPath);
+                            allSavedFiles.push_back(colPngPath);
                         }
                     }
 
@@ -1393,9 +1414,18 @@ void UIManager::TriggerBake() {
                         std::string pngErr;
                         if (ExrWriter::SaveRGBPNG(diagPngPath, res.diagnosticMapR.data(), res.diagnosticMapG.data(), res.diagnosticMapB.data(), res.width, res.height, pngErr)) {
                             m_logEntries.push_back("[PNG] Saved diagnostic map: " + diagPngPath);
+                            allSavedFiles.push_back(diagPngPath);
                         }
                     }
                 }
+            }
+
+            // Synchronize timestamps of all generated files across all UDIMs to identical timestamp
+            // Guarantees consistent side-by-side ordering in Windows File Explorer regardless of sorting mode
+            auto syncTime = std::filesystem::file_time_type::clock::now();
+            for (const auto& fp : allSavedFiles) {
+                std::error_code sec;
+                std::filesystem::last_write_time(fp, syncTime, sec);
             }
 
             m_logEntries.push_back("[Bake] All UDIM tiles successfully baked and written!");

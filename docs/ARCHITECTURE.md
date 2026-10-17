@@ -122,16 +122,27 @@ For example:
 * $u \in [0.0, 1.0), v \in [0.0, 1.0) \implies \text{UDIM } 1001$
 * $u \in [1.0, 2.0), v \in [0.0, 1.0) \implies \text{UDIM } 1002$
 
-### 4.2 Cage Generation & Ray Casting
-If no custom cage mesh is loaded, the baker dynamically calculates an extruded cage vertex for every low-poly vertex:
-$$V_{\text{cage}} = V_{\text{low}} + \vec{N}_{\text{low}} \times d_{\text{cage}}$$
-Where $\vec{N}_{\text{low}}$ is the area-weighted smooth vertex normal.
-The ray origin is placed at the interpolated cage position:
-$$P_{\text{ray}} = P_{\text{low}} + \vec{N}_{\text{low}} \times d_{\text{cage}}$$
-$$D_{\text{ray}} = -\vec{N}_{\text{low}}$$
-$$\text{Max Distance} = d_{\text{cage}} + d_{\text{maxRay}}$$
+### 4.2 Watertight Seam Cage Generation
+To prevent cage splitting at UV seams and hard edges, the baker computes continuous, watertight cage normals via spatial position welding:
+$$V_{\text{cage}} = V_{\text{low}} + \vec{N}_{\text{watertight}} \times d_{\text{cage}}$$
+Where $\vec{N}_{\text{watertight}}$ averages the face normals of all adjacent faces sharing identical 3D coordinates, guaranteeing an airtight envelope with zero cracks or slits.
 
-### 4.3 MikkTSpace Orthonormal Tangent Basis
+### 4.3 Marmoset & xNormal Bidirectional Ray Architecture
+Rather than relying on unidirectional rays that miss protruding sculpt features or slip into interior crevices, the engine executes dual-direction ray casting:
+1. **Primary Inward Ray**:
+   $$P_{\text{in}} = P_{\text{low}} + \vec{N}_{\text{cage}} \times d_{\text{cage}}, \quad \vec{D}_{\text{in}} = -\vec{N}_{\text{cage}}, \quad t_{\text{far}} = d_{\text{cage}} + d_{\text{maxRay}}$$
+2. **Fallback Outward Ray** (for sculpt crests and peaks protruding beyond the cage):
+   $$P_{\text{out}} = P_{\text{low}} + \vec{N}_{\text{cage}} \times 10^{-4}, \quad \vec{D}_{\text{out}} = +\vec{N}_{\text{cage}}, \quad t_{\text{far}} = d_{\text{maxRay}}$$
+3. **Closest-Distance Depth Arbitration**:
+   $$\text{Hit} = \arg\min (|\text{disp}_{\text{in}}|, |\text{disp}_{\text{out}}|)$$
+   Where $\text{disp} = (P_{\text{hit}} - P_{\text{low}}) \cdot \vec{N}$. The surface closest to the low-poly vertex along the normal axis is selected, eliminating interior occlusion slips and capturing 100% of protruding peaks.
+
+### 4.4 SubTool Bake Groups & Ray Masking
+Embree 3 geometry masks (`rtcSetGeometryMask`) isolate ray intersections per SubTool / object part:
+$$\text{Hit Condition: } (\text{Ray}.\text{mask} \ \& \ \text{Geometry}.\text{mask}) \neq 0$$
+When **Isolate Mesh Parts** is active, rays from Stone $K$ are physically blind to Stone $K+1$, eliminating ray bleeding across adjacent assets.
+
+### 4.5 MikkTSpace Orthonormal Tangent Basis
 To eliminate normal map seams and shading distortions across major 3D game engines (Unreal Engine 5, Unity HDRP, Blender, Maya), the baker computes the per-pixel tangent frame via Gram-Schmidt orthonormalization:
 $$\vec{N} = \text{normalize}(\vec{N}_{\text{interpolated}})$$
 $$\vec{T} = \text{normalize}(\vec{T}_{\text{interpolated}} - \vec{N} \cdot (\vec{N} \cdot \vec{T}_{\text{interpolated}}))$$

@@ -45,6 +45,29 @@ int main() {
     }
     std::cout << "Wall 1 (" << w1_tris << " tris): U[" << w1_minU << ", " << w1_maxU << "], V[" << w1_minV << ", " << w1_maxV << "]\n";
     std::cout << "Wall 2 (" << w2_tris << " tris): U[" << w2_minU << ", " << w2_maxU << "], V[" << w2_minV << ", " << w2_maxV << "]\n";
+    std::cout << "Wall 3 (" << w3_tris << " tris): U[" << w3_minU << ", " << w3_maxU << "], V[" << w3_minV << ", " << w3_maxV << "]\n";
+    std::cout << "Detected UDIMs: ";
+    for (int u : lp.detectedUDIMs) std::cout << u << " ";
+    std::cout << "\n";
+    for (int u : lp.detectedUDIMs) {
+        int count = 0;
+        float minU = 999, maxU = -999, minV = 999, maxV = -999;
+        float minX = 999, maxX = -999;
+        for (const auto& tri : lp.triangles) {
+            if (tri.udimTile == u) {
+                count++;
+                for (int c = 0; c < 3; ++c) {
+                    float uval = lp.vertices[tri.indices[c]].uv.u;
+                    float vval = lp.vertices[tri.indices[c]].uv.v;
+                    float xval = lp.vertices[tri.indices[c]].position.x;
+                    minU = (std::min)(minU, uval); maxU = (std::max)(maxU, uval);
+                    minV = (std::min)(minV, vval); maxV = (std::max)(maxV, vval);
+                    minX = (std::min)(minX, xval); maxX = (std::max)(maxX, xval);
+                }
+            }
+        }
+        std::cout << "UDIM " << u << ": " << count << " tris, U[" << minU << ", " << maxU << "], V[" << minV << ", " << maxV << "], X[" << minX << ", " << maxX << "]\n";
+    }
     std::cout << "LP Bounds: [" << lp.GetBoundingBoxMin().x << ", " << lp.GetBoundingBoxMin().y << ", " << lp.GetBoundingBoxMin().z
               << "] to [" << lp.GetBoundingBoxMax().x << ", " << lp.GetBoundingBoxMax().y << ", " << lp.GetBoundingBoxMax().z << "]\n";
     std::cout << "LP Center: [" << lp.GetBoundingBoxCenter().x << ", " << lp.GetBoundingBoxCenter().y << ", " << lp.GetBoundingBoxCenter().z << "], Diag: " << lp.GetBoundingBoxDiagonal() << "\n";
