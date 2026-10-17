@@ -1,0 +1,7 @@
+build/
+*.obj
+*.bin
+*.exr
+*.exp
+*.lib
+!include/*.lib
