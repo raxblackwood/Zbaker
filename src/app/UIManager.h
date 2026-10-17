@@ -20,6 +20,7 @@ public:
     void SetCommandLineHighPoly(const std::string& path);
     void SetCommandLineLowPoly(const std::string& path);
     void AutoDetectZBrushCache(bool force = false);
+    void CheckZBrushLiveSync();
 
     enum class ViewportMode {
         View3D = 0,

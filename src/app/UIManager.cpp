@@ -11,6 +11,7 @@
 #include <thread>
 #include <chrono>
 #include <sstream>
+#include <fstream>
 #include <cmath>
 
 namespace Baker {
@@ -260,7 +261,44 @@ void UIManager::AutoDetectZBrushCache(bool force) {
     }
 }
 
+void UIManager::CheckZBrushLiveSync() {
+    static int s_checkCounter = 0;
+    if (++s_checkCounter % 15 != 0) return;
+
+    std::string triggerPath = "C:/Users/Public/Documents/ZBrushData2026/ZPluginData/UDIMBaker/sync_trigger.txt";
+    DWORD attr = GetFileAttributesA(triggerPath.c_str());
+    if (attr != INVALID_FILE_ATTRIBUTES && !(attr & FILE_ATTRIBUTE_DIRECTORY)) {
+        std::ifstream inFile(triggerPath);
+        std::string line;
+        if (std::getline(inFile, line)) {
+            while (!line.empty() && (line.back() == '\r' || line.back() == '\n' || line.back() == ' ')) {
+                line.pop_back();
+            }
+        }
+        inFile.close();
+        DeleteFileA(triggerPath.c_str());
+
+        m_logEntries.push_back("[ZBrush Sync] Received live sync request from ZBrush: " + line);
+
+        if (!line.empty() && line.find('|') != std::string::npos) {
+            size_t pipe = line.find('|');
+            std::string high = line.substr(0, pipe);
+            std::string low = line.substr(pipe + 1);
+            if (!high.empty()) {
+                SetCommandLineHighPoly(high);
+            }
+            if (!low.empty()) {
+                SetCommandLineLowPoly(low);
+            }
+        } else {
+            AutoDetectZBrushCache(true);
+        }
+    }
+}
+
 void UIManager::RenderUI() {
+    CheckZBrushLiveSync();
+
     // 0. Synchronize shell state
     if (m_isBaking) {
         m_shellState.statusText = m_bakeStatus.c_str();
@@ -426,6 +464,63 @@ void UIManager::RenderOutlinerPanel() {
         }
         ImGui::SetNextItemWidth(140);
         ImGui::SliderFloat("Opacity##cage_op", &m_viewportRenderer.cageOpacity, 0.05f, 1.0f, "%.2f");
+        ImGui::Unindent(18.0f);
+        ImGui::TreePop();
+    }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    // 4. ZBrush Live SubTools Node
+    BakerUI::SectionLabel("ZBRUSH LIVE SUBTOOLS");
+    bool zbOpen = ImGui::TreeNodeEx("##zb_live_node", ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth, "ZBrush Active SubTools");
+    if (zbOpen) {
+        ImGui::Indent(18.0f);
+        std::string cacheLow = "C:/Users/Public/Documents/ZBrushData2026/ZPluginData/UDIMBaker/UDIM_LowPoly.obj";
+        std::string cacheHigh = "C:/Users/Public/Documents/ZBrushData2026/ZPluginData/UDIMBaker/UDIM_HighPoly.obj";
+
+        // High-Poly live cache
+        DWORD attrHP = GetFileAttributesA(cacheHigh.c_str());
+        if (attrHP != INVALID_FILE_ATTRIBUTES && !(attrHP & FILE_ATTRIBUTE_DIRECTORY)) {
+            uintmax_t sz = 0;
+            try { sz = std::filesystem::file_size(cacheHigh); } catch (...) {}
+            char szBuf[64];
+            if (sz > 1024 * 1024 * 1024) {
+                snprintf(szBuf, sizeof(szBuf), "%.2f GB", sz / (1024.0 * 1024.0 * 1024.0));
+            } else {
+                snprintf(szBuf, sizeof(szBuf), "%.1f MB", sz / (1024.0 * 1024.0));
+            }
+            ImGui::Text("Active Sculpt Cache: %s", szBuf);
+            if (BakerUI::PrimaryButton("<- Ingest Active High-Poly")) {
+                SetCommandLineHighPoly(cacheHigh);
+            }
+        } else {
+            ImGui::TextDisabled("No High-Poly cached in ZBrush.");
+        }
+
+        ImGui::Spacing();
+
+        // Low-Poly live cache
+        DWORD attrLP = GetFileAttributesA(cacheLow.c_str());
+        if (attrLP != INVALID_FILE_ATTRIBUTES && !(attrLP & FILE_ATTRIBUTE_DIRECTORY)) {
+            uintmax_t sz = 0;
+            try { sz = std::filesystem::file_size(cacheLow); } catch (...) {}
+            char szBuf[64];
+            snprintf(szBuf, sizeof(szBuf), "%.1f MB", sz / (1024.0 * 1024.0));
+            ImGui::Text("Active Low-Poly Cache: %s", szBuf);
+            if (BakerUI::SecondaryButton("<- Ingest Active Low-Poly")) {
+                SetCommandLineLowPoly(cacheLow);
+            }
+        } else {
+            ImGui::TextDisabled("No Low-Poly cached in ZBrush.");
+        }
+
+        ImGui::Spacing();
+        if (BakerUI::SecondaryButton("Sync All from ZBrush")) {
+            AutoDetectZBrushCache(true);
+        }
+
         ImGui::Unindent(18.0f);
         ImGui::TreePop();
     }
@@ -784,7 +879,24 @@ void UIManager::RenderMeshPanel() {
     BakerUI::SectionLabel("HIGH-POLY SOURCE");
     bool openHP = BakerUI::BeginCard("##hp");
     if (openHP) {
-        if (BakerUI::PrimaryButton("Sync from ZBrush Cache")) {
+        std::string cacheHigh = "C:/Users/Public/Documents/ZBrushData2026/ZPluginData/UDIMBaker/UDIM_HighPoly.obj";
+        DWORD attrHP = GetFileAttributesA(cacheHigh.c_str());
+        std::string syncHighLabel = "Sync from ZBrush Cache";
+        if (attrHP != INVALID_FILE_ATTRIBUTES && !(attrHP & FILE_ATTRIBUTE_DIRECTORY)) {
+            uintmax_t sz = 0;
+            try { sz = std::filesystem::file_size(cacheHigh); } catch (...) {}
+            char b[64];
+            if (sz > 1024 * 1024 * 1024) {
+                snprintf(b, sizeof(b), "Sync Active Sculpt (%.2f GB)", sz / (1024.0 * 1024.0 * 1024.0));
+            } else if (sz > 0) {
+                snprintf(b, sizeof(b), "Sync Active Sculpt (%.1f MB)", sz / (1024.0 * 1024.0));
+            } else {
+                snprintf(b, sizeof(b), "Sync from ZBrush Cache");
+            }
+            syncHighLabel = b;
+        }
+
+        if (BakerUI::PrimaryButton(syncHighLabel.c_str())) {
             AutoDetectZBrushCache(true);
         }
         if (BakerUI::SecondaryButton("Browse OBJ / FBX / BIN...")) {
@@ -813,6 +925,17 @@ void UIManager::RenderMeshPanel() {
     BakerUI::SectionLabel("LOW-POLY TARGET (UDIM)");
     bool openLP = BakerUI::BeginCard("##lp");
     if (openLP) {
+        std::string cacheLow = "C:/Users/Public/Documents/ZBrushData2026/ZPluginData/UDIMBaker/UDIM_LowPoly.obj";
+        DWORD attrLP = GetFileAttributesA(cacheLow.c_str());
+        if (attrLP != INVALID_FILE_ATTRIBUTES && !(attrLP & FILE_ATTRIBUTE_DIRECTORY)) {
+            uintmax_t sz = 0;
+            try { sz = std::filesystem::file_size(cacheLow); } catch (...) {}
+            char b[64];
+            snprintf(b, sizeof(b), "Sync Active Low-Poly (%.1f MB)", sz / (1024.0 * 1024.0));
+            if (BakerUI::PrimaryButton(b)) {
+                SetCommandLineLowPoly(cacheLow);
+            }
+        }
         if (BakerUI::SecondaryButton("Browse Low-Poly OBJ / FBX...")) {
             std::string path = OpenFileDialog(L"Mesh Files (*.obj;*.fbx)\0*.obj;*.fbx\0Wavefront OBJ (*.obj)\0*.obj\0Autodesk FBX (*.fbx)\0*.fbx\0All Files (*.*)\0*.*\0");
             if (!path.empty()) {

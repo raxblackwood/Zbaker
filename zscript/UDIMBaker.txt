@@ -41,6 +41,7 @@
 
 // Button 2: Set Active SubTool as Low-Poly Target
 [IButton, "ZPlugin:UDIM Baker:Set Active as Low-Poly", "Set the currently active SubTool as the target Low-Poly mesh",
+    [VarSet, g_BridgeDll, [FileNameResolvePath, "ZSTARTUP_ZPLUGS64/UDIMBakerData/UDIMBakerBridge.dll"]]
     [If, [IsEnabled, "Tool:Geometry:SDiv"],
         [VarSet, g_OrigSDiv, [IGet, "Tool:Geometry:SDiv"]]
         [ISet, "Tool:Geometry:SDiv", 1]
@@ -51,11 +52,13 @@
         [FileNameSetNext, [Var, g_CacheLow]]
         [IPress, "Tool:Export"]
     ]
-    [Note, "Active SubTool saved as Low-Poly Target!", , 2]
+    [VarSet, g_Res, [FileExecute, [Var, g_BridgeDll], "LaunchBakerSession", [StrMerge, "|", [Var, g_CacheLow]]]]
+    [Note, "Active SubTool saved as Low-Poly Target & synchronized with Baker!", , 2]
 ]
 
 // Button 3: Set Active SubTool as High-Poly Source
 [IButton, "ZPlugin:UDIM Baker:Set Active as High-Poly", "Set the currently active SubTool as the source High-Poly sculpt",
+    [VarSet, g_BridgeDll, [FileNameResolvePath, "ZSTARTUP_ZPLUGS64/UDIMBakerData/UDIMBakerBridge.dll"]]
     [If, [IsEnabled, "Tool:Geometry:SDiv"],
         [VarSet, g_OrigSDiv, [IGet, "Tool:Geometry:SDiv"]]
         [VarSet, g_MaxSDiv, [IGetMax, "Tool:Geometry:SDiv"]]
@@ -67,7 +70,8 @@
         [FileNameSetNext, [Var, g_CacheHigh]]
         [IPress, "Tool:Export"]
     ]
-    [Note, "Active SubTool saved as High-Poly Source!", , 2]
+    [VarSet, g_Res, [FileExecute, [Var, g_BridgeDll], "LaunchBakerSession", [Var, g_CacheHigh]]]
+    [Note, "Active SubTool saved as High-Poly Source & synchronized with Baker!", , 2]
 ]
 
 // Button 4: Launch Companion Baker Viewport

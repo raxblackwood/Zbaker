@@ -68,6 +68,29 @@ ZBRUSH_API LaunchBakerSession(
 ) {
     WriteBridgeLog("[Bridge] LaunchBakerSession called!");
 
+    HWND existingHwnd = FindWindowW(L"UDIMBakerAppClass", nullptr);
+    if (existingHwnd) {
+        WriteBridgeLog("[Bridge] Found running UDIMBakerApp instance. Writing trigger and focusing.");
+        std::string triggerDir = "C:\\Users\\Public\\Documents\\ZBrushData2026\\ZPluginData\\UDIMBaker";
+        CreateDirectoryA(triggerDir.c_str(), nullptr);
+        std::string triggerPath = triggerDir + "\\sync_trigger.txt";
+        FILE* tf = fopen(triggerPath.c_str(), "w");
+        if (tf) {
+            if (pData && pData[0] != '\0') {
+                fprintf(tf, "%s\n", pData);
+            } else {
+                fprintf(tf, "SYNC\n");
+            }
+            fclose(tf);
+        }
+        ShowWindow(existingHwnd, SW_RESTORE);
+        SetForegroundWindow(existingHwnd);
+        if (pOutputBuffer) {
+            snprintf(pOutputBuffer, 256, "Synchronized with running UDIM Baker window!");
+        }
+        return 1.0f;
+    }
+
     std::wstring exePath = FindBakerExecutable();
     std::wstring commandLine = L"\"" + exePath + L"\"";
 
