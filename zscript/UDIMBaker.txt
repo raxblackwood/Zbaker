@@ -1,22 +1,26 @@
 // ZPlugin: UDIM Baker Plugin for ZBrush 2026
 [ISubPalette, "ZPlugin:UDIM Baker"]
 
-[VarDef, g_BridgeDll, "ZStartup/ZPlugs64/UDIMBakerData/UDIMBakerBridge.dll"]
+[VarDef, g_BridgeDll, ""]
 [VarDef, g_Res, 0]
 
 [IButton, "ZPlugin:UDIM Baker:Launch Baker", "Open the UDIM Baking Viewport Application",
+    [VarSet, g_BridgeDll, [FileNameResolvePath, "ZSTARTUP_ZPLUGS64/UDIMBakerData/UDIMBakerBridge.dll"]]
+    [Note, [StrMerge, "Launching UDIM Baker...\nDLL: ", [Var, g_BridgeDll]], , 1]
     [VarSet, g_Res, [FileExecute, [Var, g_BridgeDll], "LaunchBakerSession", ""]]
-    [Note, [StrMerge, "UDIM Baker Status: ", [Var, g_Res]], , 2]
+    [Note, [StrMerge, "Launch Result Code: ", [Var, g_Res]], , 2]
 ]
 
 [IButton, "ZPlugin:UDIM Baker:Export & Bake Active", "Export active high-res SubTool to temporary cache and launch Baker",
+    [VarSet, g_BridgeDll, [FileNameResolvePath, "ZSTARTUP_ZPLUGS64/UDIMBakerData/UDIMBakerBridge.dll"]]
     [FileNameSetNext, [FileNameResolvePath, "ZBRUSHDATA_TEMP/UDIM_HighPoly_Temp.obj"]]
     [IPress, "Tool:Export"]
     [VarSet, g_Res, [FileExecute, [Var, g_BridgeDll], "LaunchBakerSession", [FileNameResolvePath, "ZBRUSHDATA_TEMP/UDIM_HighPoly_Temp.obj"]]]
-    [Note, [StrMerge, "Export & Launch Status: ", [Var, g_Res]], , 2]
+    [Note, [StrMerge, "Export & Launch Result: ", [Var, g_Res]], , 2]
 ]
 
 [IButton, "ZPlugin:UDIM Baker:About / Status", "Show UDIM Baker bridge version and status",
+    [VarSet, g_BridgeDll, [FileNameResolvePath, "ZSTARTUP_ZPLUGS64/UDIMBakerData/UDIMBakerBridge.dll"]]
     [VarSet, g_Res, [FileExecute, [Var, g_BridgeDll], "GetBridgeVersion", ""]]
-    [Note, [StrMerge, "Bridge Connection: ", [Var, g_Res]], , 2]
+    [Note, [StrMerge, "Bridge Connection: ", [Var, g_Res], "\nDLL: ", [Var, g_BridgeDll]], , 3]
 ]
