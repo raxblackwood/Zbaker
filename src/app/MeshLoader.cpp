@@ -3,12 +3,14 @@
 
 #define TINYOBJLOADER_IMPLEMENTATION
 #include <tiny_obj_loader.h>
+#include <ufbx.h>
 
 #include <algorithm>
 #include <set>
 #include <iostream>
 #include <fstream>
 #include <sstream>
+#include <cctype>
 
 #ifdef _WIN32
     #define WIN32_LEAN_AND_MEAN
@@ -16,6 +18,286 @@
 #endif
 
 namespace Baker {
+
+static std::string GetFileExtension(const std::string& path) {
+    size_t dot = path.find_last_of('.');
+    if (dot == std::string::npos) return "";
+    std::string ext = path.substr(dot);
+    for (char& c : ext) c = (char)std::tolower(c);
+    return ext;
+}
+
+bool MeshLoader::LoadLowPolyMesh(
+    const std::string& filePath,
+    LowPolyMesh& outMesh,
+    std::string& outError
+) {
+    std::string ext = GetFileExtension(filePath);
+    if (ext == ".fbx") {
+        return LoadLowPolyFBX(filePath, outMesh, outError);
+    }
+    return LoadLowPolyOBJ(filePath, outMesh, outError);
+}
+
+bool MeshLoader::LoadCageMesh(
+    const std::string& filePath,
+    LowPolyMesh& lowPoly,
+    std::string& outError
+) {
+    std::string ext = GetFileExtension(filePath);
+    if (ext == ".fbx") {
+        return LoadCageFBX(filePath, lowPoly, outError);
+    }
+    return LoadCageOBJ(filePath, lowPoly, outError);
+}
+
+bool MeshLoader::LoadHighPolyMesh(
+    const std::string& filePath,
+    HighPolyMesh& outMesh,
+    std::string& outError
+) {
+    std::string ext = GetFileExtension(filePath);
+    if (ext == ".fbx") {
+        return LoadHighPolyFBX(filePath, outMesh, outError);
+    } else if (ext == ".bin") {
+        return LoadBinaryGeometry(filePath, outMesh, outError);
+    }
+    return LoadHighPolyOBJ(filePath, outMesh, outError);
+}
+
+bool MeshLoader::LoadLowPolyFBX(
+    const std::string& filePath,
+    LowPolyMesh& outMesh,
+    std::string& outError
+) {
+    outMesh.Clear();
+
+    ufbx_load_opts opts = {};
+    opts.target_axes = ufbx_axes_right_handed_y_up;
+    opts.target_unit_meters = 1.0f;
+    opts.generate_missing_normals = true;
+
+    ufbx_error error;
+    ufbx_scene* scene = ufbx_load_file(filePath.c_str(), &opts, &error);
+    if (!scene) {
+        outError = std::string("Failed to load FBX: ") + error.description.data;
+        return false;
+    }
+
+    outMesh.name = filePath;
+    std::set<int> udimSet;
+
+    for (size_t n = 0; n < scene->nodes.count; ++n) {
+        ufbx_node* node = scene->nodes.data[n];
+        if (!node->mesh) continue;
+        ufbx_mesh* mesh = node->mesh;
+        ufbx_matrix normMat = ufbx_matrix_for_normals(&node->geometry_to_world);
+
+        for (size_t f = 0; f < mesh->faces.count; ++f) {
+            ufbx_face face = mesh->faces.data[f];
+            uint32_t triIndices[64];
+            uint32_t numTris = ufbx_triangulate_face(triIndices, 64, mesh, face);
+
+            for (uint32_t t = 0; t < numTris; ++t) {
+                LowPolyTriangle tri;
+                float triU = 0.0f;
+                float triV = 0.0f;
+
+                for (uint32_t c = 0; c < 3; ++c) {
+                    uint32_t meshIdx = triIndices[t * 3 + c];
+                    ufbx_vec3 localPos = ufbx_get_vertex_vec3(&mesh->vertex_position, meshIdx);
+                    ufbx_vec3 worldPos = ufbx_transform_position(&node->geometry_to_world, localPos);
+
+                    ufbx_vec3 worldNorm = { 0.0f, 1.0f, 0.0f };
+                    if (mesh->vertex_normal.exists) {
+                        ufbx_vec3 localNorm = ufbx_get_vertex_vec3(&mesh->vertex_normal, meshIdx);
+                        worldNorm = ufbx_transform_direction(&normMat, localNorm);
+                    }
+
+                    ufbx_vec2 uv = { 0.0f, 0.0f };
+                    if (mesh->vertex_uv.exists) {
+                        uv = ufbx_get_vertex_vec2(&mesh->vertex_uv, meshIdx);
+                    }
+
+                    Vertex vert;
+                    vert.position = { (float)worldPos.x, (float)worldPos.y, (float)worldPos.z };
+                    vert.normal = { (float)worldNorm.x, (float)worldNorm.y, (float)worldNorm.z };
+                    vert.uv = { (float)uv.x, (float)uv.y };
+
+                    triU += vert.uv.u;
+                    triV += vert.uv.v;
+
+                    uint32_t newIdx = (uint32_t)outMesh.vertices.size();
+                    outMesh.vertices.push_back(vert);
+                    outMesh.indices.push_back(newIdx);
+                    tri.indices[c] = newIdx;
+                }
+
+                Vertex& v0 = outMesh.vertices[tri.indices[0]];
+                Vertex& v1 = outMesh.vertices[tri.indices[1]];
+                Vertex& v2 = outMesh.vertices[tri.indices[2]];
+                Vec3 edge1 = v1.position - v0.position;
+                Vec3 edge2 = v2.position - v0.position;
+                Vec3 faceNormal = edge1.Cross(edge2).Normalized();
+
+                if (v0.normal.Length() < 1e-4f) v0.normal = faceNormal;
+                if (v1.normal.Length() < 1e-4f) v1.normal = faceNormal;
+                if (v2.normal.Length() < 1e-4f) v2.normal = faceNormal;
+
+                triU /= 3.0f;
+                triV /= 3.0f;
+                int tileId = CalculateUDIMTile(triU, triV);
+                tri.udimTile = tileId;
+                udimSet.insert(tileId);
+
+                outMesh.triangles.push_back(tri);
+            }
+        }
+    }
+
+    ufbx_free_scene(scene);
+
+    if (outMesh.vertices.empty()) {
+        outError = "FBX contains no mesh triangles";
+        return false;
+    }
+
+    outMesh.detectedUDIMs.assign(udimSet.begin(), udimSet.end());
+    if (outMesh.detectedUDIMs.empty()) {
+        outMesh.detectedUDIMs.push_back(1001);
+    }
+
+    MikkTSpaceBridge::CalculateTangents(outMesh);
+    return true;
+}
+
+bool MeshLoader::LoadCageFBX(
+    const std::string& filePath,
+    LowPolyMesh& lowPoly,
+    std::string& outError
+) {
+    if (lowPoly.vertices.empty()) {
+        outError = "Low-poly mesh must be loaded before loading an explicit cage";
+        return false;
+    }
+
+    ufbx_load_opts opts = {};
+    opts.target_axes = ufbx_axes_right_handed_y_up;
+    opts.target_unit_meters = 1.0f;
+
+    ufbx_error error;
+    ufbx_scene* scene = ufbx_load_file(filePath.c_str(), &opts, &error);
+    if (!scene) {
+        outError = std::string("Failed to load cage FBX: ") + error.description.data;
+        return false;
+    }
+
+    std::vector<Vec3> cageVerts;
+
+    for (size_t n = 0; n < scene->nodes.count; ++n) {
+        ufbx_node* node = scene->nodes.data[n];
+        if (!node->mesh) continue;
+        ufbx_mesh* mesh = node->mesh;
+
+        for (size_t f = 0; f < mesh->faces.count; ++f) {
+            ufbx_face face = mesh->faces.data[f];
+            uint32_t triIndices[64];
+            uint32_t numTris = ufbx_triangulate_face(triIndices, 64, mesh, face);
+
+            for (uint32_t t = 0; t < numTris; ++t) {
+                for (uint32_t c = 0; c < 3; ++c) {
+                    uint32_t meshIdx = triIndices[t * 3 + c];
+                    ufbx_vec3 localPos = ufbx_get_vertex_vec3(&mesh->vertex_position, meshIdx);
+                    ufbx_vec3 worldPos = ufbx_transform_position(&node->geometry_to_world, localPos);
+                    cageVerts.push_back({ (float)worldPos.x, (float)worldPos.y, (float)worldPos.z });
+                }
+            }
+        }
+    }
+
+    ufbx_free_scene(scene);
+
+    if (cageVerts.size() != lowPoly.vertices.size()) {
+        outError = "Explicit cage FBX vertex count (" + std::to_string(cageVerts.size()) +
+            ") does not match low-poly vertex count (" + std::to_string(lowPoly.vertices.size()) + "). Topology must match.";
+        return false;
+    }
+
+    lowPoly.cagePositions = std::move(cageVerts);
+    return true;
+}
+
+bool MeshLoader::LoadHighPolyFBX(
+    const std::string& filePath,
+    HighPolyMesh& outMesh,
+    std::string& outError
+) {
+    outMesh.Clear();
+
+    ufbx_load_opts opts = {};
+    opts.target_axes = ufbx_axes_right_handed_y_up;
+    opts.target_unit_meters = 1.0f;
+    opts.generate_missing_normals = true;
+
+    ufbx_error error;
+    ufbx_scene* scene = ufbx_load_file(filePath.c_str(), &opts, &error);
+    if (!scene) {
+        outError = std::string("Failed to load high-poly FBX: ") + error.description.data;
+        return false;
+    }
+
+    outMesh.name = filePath;
+
+    for (size_t n = 0; n < scene->nodes.count; ++n) {
+        ufbx_node* node = scene->nodes.data[n];
+        if (!node->mesh) continue;
+        ufbx_mesh* mesh = node->mesh;
+        ufbx_matrix normMat = ufbx_matrix_for_normals(&node->geometry_to_world);
+
+        for (size_t f = 0; f < mesh->faces.count; ++f) {
+            ufbx_face face = mesh->faces.data[f];
+            uint32_t triIndices[64];
+            uint32_t numTris = ufbx_triangulate_face(triIndices, 64, mesh, face);
+            int mtlIndex = (f < mesh->face_material.count) ? mesh->face_material.data[f] : (int)n;
+
+            for (uint32_t t = 0; t < numTris; ++t) {
+                outMesh.polygroupPerFace.push_back((uint32_t)(mtlIndex + 1));
+                for (uint32_t c = 0; c < 3; ++c) {
+                    uint32_t meshIdx = triIndices[t * 3 + c];
+                    ufbx_vec3 localPos = ufbx_get_vertex_vec3(&mesh->vertex_position, meshIdx);
+                    ufbx_vec3 worldPos = ufbx_transform_position(&node->geometry_to_world, localPos);
+
+                    ufbx_vec3 worldNorm = { 0.0f, 1.0f, 0.0f };
+                    if (mesh->vertex_normal.exists) {
+                        ufbx_vec3 localNorm = ufbx_get_vertex_vec3(&mesh->vertex_normal, meshIdx);
+                        worldNorm = ufbx_transform_direction(&normMat, localNorm);
+                    }
+
+                    Vec3 vColor = { 1.0f, 1.0f, 1.0f };
+                    if (mesh->vertex_color.exists) {
+                        ufbx_vec4 clr = ufbx_get_vertex_vec4(&mesh->vertex_color, meshIdx);
+                        vColor = { (float)clr.x, (float)clr.y, (float)clr.z };
+                    }
+
+                    uint32_t idx = (uint32_t)outMesh.positions.size();
+                    outMesh.positions.push_back({ (float)worldPos.x, (float)worldPos.y, (float)worldPos.z });
+                    outMesh.normals.push_back({ (float)worldNorm.x, (float)worldNorm.y, (float)worldNorm.z });
+                    outMesh.colors.push_back(vColor);
+                    outMesh.indices.push_back(idx);
+                }
+            }
+        }
+    }
+
+    ufbx_free_scene(scene);
+
+    if (outMesh.positions.empty()) {
+        outError = "High-poly FBX contains no geometry";
+        return false;
+    }
+
+    return true;
+}
 
 bool MeshLoader::LoadLowPolyOBJ(
     const std::string& filePath,
@@ -219,6 +501,18 @@ bool MeshLoader::LoadHighPolyOBJ(
         );
     }
 
+    if (attrib.colors.size() == attrib.vertices.size()) {
+        outMesh.colors.resize(numVerts);
+        for (size_t i = 0; i < numVerts; ++i) {
+            outMesh.colors[i] = Vec3(
+                attrib.colors[3 * i + 0],
+                attrib.colors[3 * i + 1],
+                attrib.colors[3 * i + 2]
+            );
+        }
+    }
+
+    uint32_t currentGroup = 1;
     for (const auto& shape : shapes) {
         size_t indexOffset = 0;
         for (size_t f = 0; f < shape.mesh.num_face_vertices.size(); ++f) {
@@ -227,9 +521,14 @@ bool MeshLoader::LoadHighPolyOBJ(
                 outMesh.indices.push_back(static_cast<uint32_t>(shape.mesh.indices[indexOffset + 0].vertex_index));
                 outMesh.indices.push_back(static_cast<uint32_t>(shape.mesh.indices[indexOffset + 1].vertex_index));
                 outMesh.indices.push_back(static_cast<uint32_t>(shape.mesh.indices[indexOffset + 2].vertex_index));
+
+                int mtlId = (f < shape.mesh.material_ids.size()) ? shape.mesh.material_ids[f] : -1;
+                uint32_t pg = (mtlId >= 0) ? static_cast<uint32_t>(mtlId + 1) : currentGroup;
+                outMesh.polygroupPerFace.push_back(pg);
             }
             indexOffset += fv;
         }
+        currentGroup++;
     }
 
     outMesh.normals.resize(numVerts, Vec3(0, 0, 0));

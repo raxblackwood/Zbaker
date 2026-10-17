@@ -77,7 +77,105 @@ void CreateTestHighPolyOBJ(const std::string& path) {
     out.close();
 }
 
-int main() {
+int main(int argc, char** argv) {
+    if (argc >= 3) {
+        std::string lowPolyPath = argv[1];
+        std::string highPolyPath = argv[2];
+        int res = (argc >= 4) ? std::stoi(argv[3]) : 2048;
+        int aa = (argc >= 5) ? std::stoi(argv[4]) : 2;
+
+        std::cout << "=== CLI Test Bake ===" << std::endl;
+        std::cout << "LowPoly: " << lowPolyPath << std::endl;
+        std::cout << "HighPoly: " << highPolyPath << std::endl;
+        std::cout << "Resolution: " << res << ", AA: " << aa << "x" << std::endl;
+
+        LowPolyMesh lp;
+        std::string err;
+        if (!MeshLoader::LoadLowPolyMesh(lowPolyPath, lp, err)) {
+            std::cerr << "Failed loading lowpoly: " << err << std::endl;
+            return 1;
+        }
+
+        HighPolyMesh hp;
+        if (!MeshLoader::LoadHighPolyMesh(highPolyPath, hp, err)) {
+            std::cerr << "Failed loading highpoly: " << err << std::endl;
+            return 1;
+        }
+
+        float lpDiag = lp.GetBoundingBoxDiagonal();
+        float hpDiag = hp.GetBoundingBoxDiagonal();
+        float scale = 1.0f;
+        if (lpDiag > 1e-4f && hpDiag > 1e-4f) {
+            float ratio = hpDiag / lpDiag;
+            if (ratio > 5.0f || ratio < 0.2f) {
+                scale = ratio;
+                std::cout << "Auto-scaling low-poly by " << scale << "x to match high-poly" << std::endl;
+            }
+        }
+
+        BakerEngine engine;
+        if (!engine.BuildHighPolyBVH(hp, err)) {
+            std::cerr << "Failed building BVH: " << err << std::endl;
+            return 1;
+        }
+
+        BakeSettings settings;
+        settings.resolution = res;
+        settings.antiAliasing = aa;
+        settings.lowPolyScale = scale;
+        settings.cageDistance = hpDiag * 0.02f;
+        settings.maxRayDistance = hpDiag * 0.08f;
+        settings.seamPadding = 16;
+        settings.discardBackfaceHits = true;
+        settings.bakeNormal = true;
+        settings.bakeDisplacement = true;
+        settings.bakeDiagnosticMap = true;
+        settings.bakeAmbientOcclusion = true;
+        settings.aoSamples = 16;
+        settings.aoMaxDistance = hpDiag * 0.1f;
+        settings.bakeCavity = true;
+        settings.bakeCurvature = true;
+        settings.cavityStrength = 1.5f;
+        settings.exportPNG = true;
+        settings.exportEXR = true;
+        settings.baseFilename = "CLIBake";
+        settings.outputDir = "./";
+
+        std::vector<BakeResult> results;
+        bool ok = engine.ExecuteBake(lp, settings, results, [](float p, const std::string& s) {
+            std::cout << "\rProgress: " << static_cast<int>(p * 100) << "% (" << s << ")    " << std::flush;
+        }, err);
+        std::cout << std::endl;
+
+        if (!ok) {
+            std::cerr << "Bake failed: " << err << std::endl;
+            return 1;
+        }
+
+        for (const auto& r : results) {
+            std::string udim = std::to_string(r.udimTile);
+            std::string normPng = "CLIBake_Normal." + udim + ".png";
+            std::string normExr = "CLIBake_Normal." + udim + ".exr";
+            std::string aoPng = "CLIBake_AO." + udim + ".png";
+            std::string cavPng = "CLIBake_Cavity." + udim + ".png";
+            std::string curvPng = "CLIBake_Curvature." + udim + ".png";
+            std::string diagPng = "CLIBake_Diag." + udim + ".png";
+
+            std::string wErr;
+            ExrWriter::SaveRGBPNG(normPng, r.normalMapR.data(), r.normalMapG.data(), r.normalMapB.data(), r.width, r.height, wErr);
+            ExrWriter::SaveRGBFloatImage(normExr, r.normalMapR.data(), r.normalMapG.data(), r.normalMapB.data(), r.width, r.height, true, wErr);
+            ExrWriter::SaveGrayscalePNG(aoPng, r.aoMap.data(), r.width, r.height, wErr);
+            ExrWriter::SaveGrayscalePNG(cavPng, r.cavityMap.data(), r.width, r.height, wErr);
+            ExrWriter::SaveGrayscalePNG(curvPng, r.curvatureMap.data(), r.width, r.height, wErr);
+            ExrWriter::SaveRGBPNG(diagPng, r.diagnosticMapR.data(), r.diagnosticMapG.data(), r.diagnosticMapB.data(), r.width, r.height, wErr);
+
+            std::cout << "Saved: " << normPng << ", " << aoPng << ", " << cavPng << ", " << curvPng << std::endl;
+        }
+
+        std::cout << "CLI Bake Completed Successfully!" << std::endl;
+        return 0;
+    }
+
     std::cout << "=== Running ZBrush UDIM Baker Advanced Test Suite ===" << std::endl;
 
     std::string lowPolyPath = "test_lowpoly.obj";
@@ -136,7 +234,7 @@ int main() {
     assert(bvhOk);
     std::cout << "[Test 4/5] Multi-SubTool Embree 3 BVH acceleration built with geometry masking." << std::endl;
 
-    // 5. Execute Bake with JFA Dilation & Diagnostic Map
+    // 5. Execute Bake with JFA Dilation, Diagnostic Map, Cavity, and Curvature
     BakeSettings settings;
     settings.resolution = 512;
     settings.cageDistance = 0.05f;
@@ -144,6 +242,11 @@ int main() {
     settings.seamPadding = 12; // JFA nearest-texel padding
     settings.bakeDisplacement = true;
     settings.bakeNormal = true;
+    settings.bakeAmbientOcclusion = true;
+    settings.aoSamples = 16;
+    settings.bakeCavity = true;
+    settings.bakeCurvature = true;
+    settings.cavityStrength = 1.5f;
     settings.bakeDiagnosticMap = true;
     settings.groupMask = 0x1;
     settings.outputDir = "./";
@@ -162,13 +265,19 @@ int main() {
         std::string dispFile = "AdvBake_Disp." + std::to_string(res.udimTile) + ".exr";
         std::string normFile = "AdvBake_Normal." + std::to_string(res.udimTile) + ".exr";
         std::string diagFile = "AdvBake_Diag." + std::to_string(res.udimTile) + ".exr";
+        std::string cavFile = "AdvBake_Cavity." + std::to_string(res.udimTile) + ".png";
+        std::string curvFile = "AdvBake_Curvature." + std::to_string(res.udimTile) + ".png";
+        std::string aoFile = "AdvBake_AO." + std::to_string(res.udimTile) + ".png";
 
         std::string exrErr;
         assert(ExrWriter::SaveFloatImage(dispFile, res.displacementMap.data(), res.width, res.height, exrErr));
         assert(ExrWriter::SaveRGBFloatImage(normFile, res.normalMapR.data(), res.normalMapG.data(), res.normalMapB.data(), res.width, res.height, true, exrErr));
         assert(ExrWriter::SaveRGBFloatImage(diagFile, res.diagnosticMapR.data(), res.diagnosticMapG.data(), res.diagnosticMapB.data(), res.width, res.height, true, exrErr));
+        assert(ExrWriter::SaveGrayscalePNG(cavFile, res.cavityMap.data(), res.width, res.height, exrErr));
+        assert(ExrWriter::SaveGrayscalePNG(curvFile, res.curvatureMap.data(), res.width, res.height, exrErr));
+        assert(ExrWriter::SaveGrayscalePNG(aoFile, res.aoMap.data(), res.width, res.height, exrErr));
 
-        std::cout << "  Verified UDIM " << res.udimTile << ": Displacement (32-bit), Normal (16-bit), Diagnostic (EXR)." << std::endl;
+        std::cout << "  Verified UDIM " << res.udimTile << ": Displacement (32-bit), Normal (16-bit), Cavity, Curvature, AO." << std::endl;
     }
 
     std::cout << "[Test 5/5] JFA dilation & multi-tile output verification complete!" << std::endl;

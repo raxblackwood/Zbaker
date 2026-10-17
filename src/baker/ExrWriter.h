@@ -34,6 +34,27 @@ public:
         bool asHalfFloat,
         std::string& outError
     );
+
+    // Saves an RGB image as an 8-bit PNG (e.g. 8-bit normal map or preview)
+    static bool SaveRGBPNG(
+        const std::string& filePath,
+        const float* rData,
+        const float* gData,
+        const float* bData,
+        int width,
+        int height,
+        std::string& outError
+    );
+
+    // Saves a single-channel float image as an 8-bit grayscale PNG (e.g. Ambient Occlusion)
+    static bool SaveGrayscalePNG(
+        const std::string& filePath,
+        const float* grayData,
+        int width,
+        int height,
+        std::string& outError
+    );
 };
 
 } // namespace Baker
+

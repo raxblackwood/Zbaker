@@ -12,7 +12,7 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 # Multi-threading and optimizations for MSVC
 if(MSVC)
     add_compile_options(/W3 /MP /O2 /EHsc)
-    add_definitions(-D_CRT_SECURE_NO_WARNINGS)
+    add_definitions(-D_CRT_SECURE_NO_WARNINGS -DNOMINMAX)
 endif()
 
 # Global include directories
@@ -49,12 +49,14 @@ set(IMGUI_SOURCES
 set(BAKER_SOURCES
     src/app/Main.cpp
     src/app/UIManager.cpp
+    src/app/ViewportRenderer.cpp
     src/app/MeshLoader.cpp
     src/baker/BakerEngine.cpp
     src/baker/MikkTSpaceBridge.cpp
     src/baker/ExrWriter.cpp
     include/mikktspace.c
     include/miniz.c
+    include/ufbx.c
 )
 
 add_executable(UDIMBakerApp WIN32
@@ -72,6 +74,8 @@ target_link_libraries(UDIMBakerApp PRIVATE
     dxgi
     d3dcompiler
     comdlg32
+    shell32
+    ole32
     ${CMAKE_CURRENT_SOURCE_DIR}/include/embree3.lib
 )
 
@@ -99,6 +103,7 @@ add_executable(TestBaker
     src/baker/ExrWriter.cpp
     include/mikktspace.c
     include/miniz.c
+    include/ufbx.c
 )
 
 target_include_directories(TestBaker PRIVATE
@@ -121,4 +126,25 @@ if(EXISTS "${ZBRUSH_DIR}/embree3.dll")
         COMMENT "Copying ZBrush Embree3 and TBB12 runtime DLLs to test directory"
     )
 endif()
+
+add_executable(UserBakeTest
+    test/UserBakeTest.cpp
+    src/app/MeshLoader.cpp
+    src/baker/BakerEngine.cpp
+    src/baker/MikkTSpaceBridge.cpp
+    src/baker/ExrWriter.cpp
+    include/mikktspace.c
+    include/miniz.c
+    include/ufbx.c
+)
+
+target_include_directories(UserBakeTest PRIVATE
+    src/app
+    src/baker
+)
+
+target_link_libraries(UserBakeTest PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/embree3.lib
+)
+
 

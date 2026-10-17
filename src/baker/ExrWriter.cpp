@@ -5,6 +5,10 @@
 
 #include <vector>
 #include <cstring>
+#include <fstream>
+#include <algorithm>
+#include <cmath>
+#include <miniz.h>
 
 namespace Baker {
 
@@ -141,4 +145,88 @@ bool ExrWriter::SaveRGBFloatImage(
     return true;
 }
 
+bool ExrWriter::SaveRGBPNG(
+    const std::string& filePath,
+    const float* rData,
+    const float* gData,
+    const float* bData,
+    int width,
+    int height,
+    std::string& outError
+) {
+    if (!rData || !gData || !bData || width <= 0 || height <= 0) {
+        outError = "Invalid image parameters for PNG write";
+        return false;
+    }
+
+    std::vector<uint8_t> pixels(static_cast<size_t>(width) * height * 3);
+    for (int i = 0; i < width * height; ++i) {
+        float r = std::clamp(rData[i], 0.0f, 1.0f);
+        float g = std::clamp(gData[i], 0.0f, 1.0f);
+        float b = std::clamp(bData[i], 0.0f, 1.0f);
+
+        pixels[i * 3 + 0] = static_cast<uint8_t>(std::round(r * 255.0f));
+        pixels[i * 3 + 1] = static_cast<uint8_t>(std::round(g * 255.0f));
+        pixels[i * 3 + 2] = static_cast<uint8_t>(std::round(b * 255.0f));
+    }
+
+    size_t pngLen = 0;
+    void* pngData = tdefl_write_image_to_png_file_in_memory(pixels.data(), width, height, 3, &pngLen);
+    if (!pngData) {
+        outError = "Failed to compress PNG image";
+        return false;
+    }
+
+    std::ofstream out(filePath, std::ios::binary);
+    if (!out.is_open()) {
+        mz_free(pngData);
+        outError = "Failed to open destination file for PNG: " + filePath;
+        return false;
+    }
+
+    out.write(static_cast<const char*>(pngData), pngLen);
+    out.close();
+    mz_free(pngData);
+    return true;
+}
+
+bool ExrWriter::SaveGrayscalePNG(
+    const std::string& filePath,
+    const float* grayData,
+    int width,
+    int height,
+    std::string& outError
+) {
+    if (!grayData || width <= 0 || height <= 0) {
+        outError = "Invalid grayscale parameters for PNG write";
+        return false;
+    }
+
+    std::vector<uint8_t> pixels(static_cast<size_t>(width) * height);
+    for (int i = 0; i < width * height; ++i) {
+        float g = std::clamp(grayData[i], 0.0f, 1.0f);
+        pixels[i] = static_cast<uint8_t>(std::round(g * 255.0f));
+    }
+
+    size_t pngLen = 0;
+    void* pngData = tdefl_write_image_to_png_file_in_memory(pixels.data(), width, height, 1, &pngLen);
+    if (!pngData) {
+        outError = "Failed to compress grayscale PNG image";
+        return false;
+    }
+
+    std::ofstream out(filePath, std::ios::binary);
+    if (!out.is_open()) {
+        mz_free(pngData);
+        outError = "Failed to open destination file for PNG: " + filePath;
+        return false;
+    }
+
+    out.write(static_cast<const char*>(pngData), pngLen);
+    out.close();
+    mz_free(pngData);
+    return true;
+}
+
 } // namespace Baker
+

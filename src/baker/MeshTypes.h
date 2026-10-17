@@ -4,6 +4,7 @@
 #include <string>
 #include <cmath>
 #include <cstdint>
+#include <algorithm>
 
 namespace Baker {
 
@@ -78,8 +79,44 @@ struct LowPolyMesh {
     std::vector<int> detectedUDIMs; // Unique sorted list of UDIM tiles (e.g., 1001, 1002...)
     std::vector<Vec3> cagePositions; // Optional explicit cage vertex positions
 
+    Vec3 translation = Vec3(0, 0, 0);
+    Vec3 rotation = Vec3(0, 0, 0); // Pitch, Yaw, Roll in degrees
+    Vec3 scale = Vec3(1, 1, 1);
+    float skewFactor = 0.0f; // Marmoset skew correction (0 = smooth, 1 = flat)
+    std::vector<float> cageOffsets; // Optional per-vertex cage offsets
+
     bool HasExplicitCage() const {
         return !cagePositions.empty() && cagePositions.size() == vertices.size();
+    }
+
+    Vec3 GetBoundingBoxMin() const {
+        if (vertices.empty()) return Vec3(0, 0, 0);
+        Vec3 minB = vertices[0].position;
+        for (const auto& v : vertices) {
+            minB.x = (std::min)(minB.x, v.position.x);
+            minB.y = (std::min)(minB.y, v.position.y);
+            minB.z = (std::min)(minB.z, v.position.z);
+        }
+        return minB;
+    }
+
+    Vec3 GetBoundingBoxMax() const {
+        if (vertices.empty()) return Vec3(0, 0, 0);
+        Vec3 maxB = vertices[0].position;
+        for (const auto& v : vertices) {
+            maxB.x = (std::max)(maxB.x, v.position.x);
+            maxB.y = (std::max)(maxB.y, v.position.y);
+            maxB.z = (std::max)(maxB.z, v.position.z);
+        }
+        return maxB;
+    }
+
+    Vec3 GetBoundingBoxCenter() const {
+        return (GetBoundingBoxMin() + GetBoundingBoxMax()) * 0.5f;
+    }
+
+    float GetBoundingBoxDiagonal() const {
+        return (GetBoundingBoxMax() - GetBoundingBoxMin()).Length();
     }
 
     void Clear() {
@@ -88,6 +125,11 @@ struct LowPolyMesh {
         triangles.clear();
         detectedUDIMs.clear();
         cagePositions.clear();
+        cageOffsets.clear();
+        translation = Vec3(0, 0, 0);
+        rotation = Vec3(0, 0, 0);
+        scale = Vec3(1, 1, 1);
+        skewFactor = 0.0f;
     }
 };
 
@@ -98,14 +140,94 @@ struct HighPolyMesh {
     bool isVisible = true;
     std::vector<Vec3> positions;
     std::vector<Vec3> normals;
+    std::vector<Vec3> colors; // Polypaint / Vertex Colors (RGB in [0, 1])
+    std::vector<uint32_t> polygroupPerFace; // Polygroup ID per triangle face (for Material ID map)
     std::vector<uint32_t> indices; // Triangulated
+
+    Vec3 GetBoundingBoxMin() const {
+        if (positions.empty()) return Vec3(0, 0, 0);
+        Vec3 minB = positions[0];
+        for (const auto& p : positions) {
+            minB.x = (std::min)(minB.x, p.x);
+            minB.y = (std::min)(minB.y, p.y);
+            minB.z = (std::min)(minB.z, p.z);
+        }
+        return minB;
+    }
+
+    Vec3 GetBoundingBoxMax() const {
+        if (positions.empty()) return Vec3(0, 0, 0);
+        Vec3 maxB = positions[0];
+        for (const auto& p : positions) {
+            maxB.x = (std::max)(maxB.x, p.x);
+            maxB.y = (std::max)(maxB.y, p.y);
+            maxB.z = (std::max)(maxB.z, p.z);
+        }
+        return maxB;
+    }
+
+    Vec3 GetBoundingBoxCenter() const {
+        return (GetBoundingBoxMin() + GetBoundingBoxMax()) * 0.5f;
+    }
+
+    float GetBoundingBoxDiagonal() const {
+        return (GetBoundingBoxMax() - GetBoundingBoxMin()).Length();
+    }
     
     void Clear() {
         positions.clear();
         normals.clear();
+        colors.clear();
+        polygroupPerFace.clear();
         indices.clear();
     }
 };
+
+// Math helpers for transformations & color ID generation
+inline Vec3 RotateEuler(const Vec3& v, const Vec3& deg) {
+    float radX = deg.x * 3.14159265f / 180.0f;
+    float radY = deg.y * 3.14159265f / 180.0f;
+    float radZ = deg.z * 3.14159265f / 180.0f;
+    // Rotation around X
+    float cx = std::cos(radX), sx = std::sin(radX);
+    Vec3 p = { v.x, v.y * cx - v.z * sx, v.y * sx + v.z * cx };
+    // Rotation around Y
+    float cy = std::cos(radY), sy = std::sin(radY);
+    p = { p.x * cy + p.z * sy, p.y, -p.x * sy + p.z * cy };
+    // Rotation around Z
+    float cz = std::cos(radZ), sz = std::sin(radZ);
+    return { p.x * cz - p.y * sz, p.x * sz + p.y * cz, p.z };
+}
+
+inline Vec3 TransformPoint(const Vec3& p, const Vec3& t, const Vec3& r, const Vec3& s) {
+    Vec3 scaled = { p.x * s.x, p.y * s.y, p.z * s.z };
+    Vec3 rotated = RotateEuler(scaled, r);
+    return rotated + t;
+}
+
+inline Vec3 TransformDirection(const Vec3& d, const Vec3& r, const Vec3& s) {
+    Vec3 scaled = { d.x / (std::abs(s.x) > 1e-6f ? s.x : 1.0f),
+                   d.y / (std::abs(s.y) > 1e-6f ? s.y : 1.0f),
+                   d.z / (std::abs(s.z) > 1e-6f ? s.z : 1.0f) };
+    return RotateEuler(scaled, r).Normalized();
+}
+
+inline Vec3 HSVtoRGB(float h, float s, float v) {
+    float c = v * s;
+    float x = c * (1.0f - std::abs(std::fmod(h * 6.0f, 2.0f) - 1.0f));
+    float m = v - c;
+    float r = 0, g = 0, b = 0;
+    int hi = static_cast<int>(std::floor(h * 6.0f)) % 6;
+    switch (hi) {
+        case 0: r = c; g = x; b = 0; break;
+        case 1: r = x; g = c; b = 0; break;
+        case 2: r = 0; g = c; b = x; break;
+        case 3: r = 0; g = x; b = c; break;
+        case 4: r = x; g = 0; b = c; break;
+        case 5: r = c; g = 0; b = x; break;
+    }
+    return Vec3(r + m, g + m, b + m);
+}
 
 // Represents a multi-SubTool manifest for production baking
 struct BakeGroup {

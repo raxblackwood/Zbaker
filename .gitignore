@@ -5,3 +5,9 @@ build/
 *.exp
 *.lib
 !include/*.lib
+*.ini
+*.png
+!assets/**/*.png
+*.dll
+*.user
+.vs/

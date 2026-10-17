@@ -8,6 +8,7 @@
 #include <imgui_impl_dx11.h>
 
 #include "UIManager.h"
+#include "BakerUI.h"
 
 // Forward declare message handler from imgui_impl_win32.cpp
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
@@ -54,21 +55,19 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO(); (void)io;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+    io.IniFilename = "baker_layout.ini";
 
-    // Modern Dark Theme
-    ImGui::StyleColorsDark();
-    ImGuiStyle& style = ImGui::GetStyle();
-    style.WindowRounding = 6.0f;
-    style.FrameRounding = 4.0f;
-    style.GrabRounding = 4.0f;
-    style.PopupRounding = 4.0f;
+    // Modern Typography & Theme from BakerUI
+    BakerUI::LoadFonts(io, 1.0f);
+    BakerUI::ApplyTheme(1.0f);
 
     // Setup Platform/Renderer backends
     ImGui_ImplWin32_Init(hwnd);
     ImGui_ImplDX11_Init(g_pd3dDevice, g_pd3dDeviceContext);
 
     Baker::UIManager uiManager;
-    uiManager.Initialize();
+    uiManager.Initialize(g_pd3dDevice, g_pd3dDeviceContext);
 
     // Check command line arguments passed from ZBrush
     int argc = 0;

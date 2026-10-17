@@ -7,22 +7,60 @@ namespace Baker {
 
 class MeshLoader {
 public:
-    // Loads a low-poly OBJ mesh, computes MikkTSpace tangents and detects UDIM tiles
+    // Unified loader: auto-detects .obj or .fbx, computes MikkTSpace tangents and detects UDIMs
+    static bool LoadLowPolyMesh(
+        const std::string& filePath,
+        LowPolyMesh& outMesh,
+        std::string& outError
+    );
+
+    // Unified loader: auto-detects .obj or .fbx, validates topology against loaded low-poly
+    static bool LoadCageMesh(
+        const std::string& filePath,
+        LowPolyMesh& lowPoly,
+        std::string& outError
+    );
+
+    // Unified loader: auto-detects .obj, .fbx, or .bin for BVH acceleration
+    static bool LoadHighPolyMesh(
+        const std::string& filePath,
+        HighPolyMesh& outMesh,
+        std::string& outError
+    );
+
+    // Specific OBJ loaders
     static bool LoadLowPolyOBJ(
         const std::string& filePath,
         LowPolyMesh& outMesh,
         std::string& outError
     );
 
-    // Loads an explicit cage OBJ mesh, validating topology against the loaded low-poly mesh
     static bool LoadCageOBJ(
         const std::string& filePath,
         LowPolyMesh& lowPoly,
         std::string& outError
     );
 
-    // Loads a high-poly OBJ mesh for BVH acceleration
     static bool LoadHighPolyOBJ(
+        const std::string& filePath,
+        HighPolyMesh& outMesh,
+        std::string& outError
+    );
+
+    // Specific FBX loaders (Autodesk FBX ASCII & Binary via ufbx)
+    static bool LoadLowPolyFBX(
+        const std::string& filePath,
+        LowPolyMesh& outMesh,
+        std::string& outError
+    );
+
+    static bool LoadCageFBX(
+        const std::string& filePath,
+        LowPolyMesh& lowPoly,
+        std::string& outError
+    );
+
+    static bool LoadHighPolyFBX(
         const std::string& filePath,
         HighPolyMesh& outMesh,
         std::string& outError
