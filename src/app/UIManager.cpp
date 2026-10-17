@@ -81,6 +81,37 @@ void UIManager::SetCommandLineHighPoly(const std::string& path) {
     }
 }
 
+void UIManager::SetCommandLineLowPoly(const std::string& path) {
+    if (!path.empty()) {
+        m_lowPolyPath = path;
+        m_logEntries.push_back("[ZBrush] Ingested Low-Poly path: " + path);
+        std::string err;
+        if (MeshLoader::LoadLowPolyOBJ(path, m_lowPolyMesh, err)) {
+            m_hasLowPoly = true;
+            m_logEntries.push_back("[Mesh] Loaded Low-Poly (" +
+                std::to_string(m_lowPolyMesh.vertices.size()) + " verts, " +
+                std::to_string(m_lowPolyMesh.detectedUDIMs.size()) + " UDIMs).");
+        } else {
+            m_logEntries.push_back("[Error] Failed loading Low-Poly: " + err);
+        }
+    }
+}
+
+void UIManager::AutoDetectZBrushCache() {
+    std::string cacheLow = "C:/Users/Public/Documents/ZBrushData2026/ZPluginData/UDIMBaker/UDIM_LowPoly.obj";
+    std::string cacheHigh = "C:/Users/Public/Documents/ZBrushData2026/ZPluginData/UDIMBaker/UDIM_HighPoly.obj";
+
+    DWORD attrLow = GetFileAttributesA(cacheLow.c_str());
+    if (attrLow != INVALID_FILE_ATTRIBUTES && !(attrLow & FILE_ATTRIBUTE_DIRECTORY)) {
+        SetCommandLineLowPoly(cacheLow);
+    }
+
+    DWORD attrHigh = GetFileAttributesA(cacheHigh.c_str());
+    if (attrHigh != INVALID_FILE_ATTRIBUTES && !(attrHigh & FILE_ATTRIBUTE_DIRECTORY)) {
+        SetCommandLineHighPoly(cacheHigh);
+    }
+}
+
 void UIManager::RenderUI() {
     RenderMenuBar();
 
@@ -163,8 +194,14 @@ void UIManager::RenderMenuBar() {
 void UIManager::RenderMeshPanel() {
     ImGui::Begin("Mesh Ingestion", nullptr);
 
+    ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.5f, 1.0f), "ZBrush Live Sync:");
+    if (ImGui::Button("Sync / Load from ZBrush Cache", ImVec2(-1, 32))) {
+        AutoDetectZBrushCache();
+    }
+    ImGui::Separator();
+
     ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Target Low-Poly Mesh (with UDIMs):");
-    if (ImGui::Button("Browse Low-Poly OBJ...", ImVec2(-1, 30))) {
+    if (ImGui::Button("Browse Low-Poly OBJ...", ImVec2(-1, 28))) {
         std::string path = OpenFileDialog(L"Wavefront OBJ (*.obj)\0*.obj\0All Files (*.*)\0*.*\0");
         if (!path.empty()) {
             m_lowPolyPath = path;

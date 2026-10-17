@@ -16,6 +16,8 @@ public:
     void RenderUI();
 
     void SetCommandLineHighPoly(const std::string& path);
+    void SetCommandLineLowPoly(const std::string& path);
+    void AutoDetectZBrushCache();
 
 private:
     void RenderMenuBar();

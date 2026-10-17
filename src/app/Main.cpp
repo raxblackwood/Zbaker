@@ -74,15 +74,44 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
     if (argv && argc > 1) {
-        // First argument is usually the high-poly OBJ path passed by ZScript
-        int len = WideCharToMultiByte(CP_UTF8, 0, argv[1], -1, nullptr, 0, nullptr, nullptr);
-        if (len > 0) {
-            std::string highPolyPath(len - 1, 0);
-            WideCharToMultiByte(CP_UTF8, 0, argv[1], -1, &highPolyPath[0], len, nullptr, nullptr);
-            uiManager.SetCommandLineHighPoly(highPolyPath);
+        for (int i = 1; i < argc; ++i) {
+            int len = WideCharToMultiByte(CP_UTF8, 0, argv[i], -1, nullptr, 0, nullptr, nullptr);
+            if (len > 0) {
+                std::string argStr(len - 1, 0);
+                WideCharToMultiByte(CP_UTF8, 0, argv[i], -1, &argStr[0], len, nullptr, nullptr);
+
+                if (argStr == "--high" && i + 1 < argc) {
+                    i++;
+                    int lenH = WideCharToMultiByte(CP_UTF8, 0, argv[i], -1, nullptr, 0, nullptr, nullptr);
+                    std::string hPath(lenH - 1, 0);
+                    WideCharToMultiByte(CP_UTF8, 0, argv[i], -1, &hPath[0], lenH, nullptr, nullptr);
+                    uiManager.SetCommandLineHighPoly(hPath);
+                } else if (argStr == "--low" && i + 1 < argc) {
+                    i++;
+                    int lenL = WideCharToMultiByte(CP_UTF8, 0, argv[i], -1, nullptr, 0, nullptr, nullptr);
+                    std::string lPath(lenL - 1, 0);
+                    WideCharToMultiByte(CP_UTF8, 0, argv[i], -1, &lPath[0], lenL, nullptr, nullptr);
+                    uiManager.SetCommandLineLowPoly(lPath);
+                } else {
+                    size_t pipePos = argStr.find('|');
+                    if (pipePos != std::string::npos) {
+                        std::string hPath = argStr.substr(0, pipePos);
+                        std::string lPath = argStr.substr(pipePos + 1);
+                        uiManager.SetCommandLineHighPoly(hPath);
+                        uiManager.SetCommandLineLowPoly(lPath);
+                    } else if (i == 1) {
+                        uiManager.SetCommandLineHighPoly(argStr);
+                    } else if (i == 2) {
+                        uiManager.SetCommandLineLowPoly(argStr);
+                    }
+                }
+            }
         }
         LocalFree(argv);
     }
+
+    // Auto-detect any cached ZBrush session files
+    uiManager.AutoDetectZBrushCache();
 
     // Main event loop
     bool done = false;
