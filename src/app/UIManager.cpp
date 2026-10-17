@@ -83,6 +83,10 @@ UIManager::UIManager() {
     m_settings.cageDistance = 0.05f;
     m_settings.maxRayDistance = 0.2f;
     m_settings.seamPadding = 16;
+    m_settings.discardBackfaceHits = true;
+    m_settings.angleThreshold = 90.0f;
+    m_settings.useBidirectionalRays = true;
+    m_settings.isolateMeshParts = false;
     m_settings.bakeDisplacement = true;
     m_settings.bakeNormal = true;
     m_settings.outputDir = "./";
@@ -966,6 +970,8 @@ void UIManager::RenderSettingsPanel() {
         if (m_settings.discardBackfaceHits) {
             BakerUI::PropFloat("Angle Threshold", &m_settings.angleThreshold, 0.5f, 30.0f, 90.0f, "%.1f deg");
         }
+        BakerUI::PropCheck("Bidirectional Rays", &m_settings.useBidirectionalRays, "Marmoset/xNormal dual-direction rays to catch crevices and protrusions");
+        BakerUI::PropCheck("Isolate Mesh Parts", &m_settings.isolateMeshParts, "Prevent ray bleeding between adjacent stones/subtools");
         BakerUI::EndProps();
     }
 

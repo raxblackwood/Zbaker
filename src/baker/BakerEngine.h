@@ -14,7 +14,10 @@ struct BakeSettings {
     int seamPadding = 16;             // Dilation pixels (JFA nearest-texel)
     int antiAliasing = 2;             // 1 = 1x (Draft), 2 = 2x2 (4 rays/pixel), 4 = 4x4 (16 rays/pixel)
     bool discardBackfaceHits = true;  // Discard backfaces & grazing hits to prevent inverted border artifacts
-    float angleThreshold = 80.0f;     // Max angle (degrees) between LP and HP normal before rejecting side-wall slip (0-90)
+    float angleThreshold = 90.0f;     // Max angle (degrees) between LP and HP normal (90 allows all front faces and steep crevices)
+    bool useBidirectionalRays = true; // Cast both inward from cage and outward from surface (Marmoset/xNormal standard)
+    float maxOutwardDistance = 0.2f;  // Maximum distance to search along +normal for protruding sculpt peaks
+    bool isolateMeshParts = false;    // Ray mask isolation per mesh/subtool part (prevents bleeding between adjacent stones)
     bool bakeDisplacement = true;     // 32-bit float EXR
     bool bakeNormal = true;           // Tangent-space normal map (MikkTSpace)
     bool bakeWorldNormal = false;     // Object/World-space normal map

@@ -4,6 +4,7 @@
 #include <string>
 #include <cmath>
 #include <cstdint>
+#include <unordered_map>
 #include <algorithm>
 
 namespace Baker {
@@ -67,7 +68,9 @@ struct Vertex {
 // Represents a triangle on a low-poly mesh
 struct LowPolyTriangle {
     uint32_t indices[3];
-    int udimTile = 1001; // Detected UDIM tile (e.g. 1001, 1002...)
+    int udimTile = 1001;              // Detected UDIM tile (e.g. 1001, 1002...)
+    uint32_t meshIndex = 0;           // Source mesh / node / subtool index
+    uint32_t groupMask = 0xFFFFFFFF;  // Bitmask for bake group isolation
 };
 
 // Represents a low-poly mesh configured for UDIM baking
@@ -78,6 +81,7 @@ struct LowPolyMesh {
     std::vector<LowPolyTriangle> triangles;
     std::vector<int> detectedUDIMs; // Unique sorted list of UDIM tiles (e.g., 1001, 1002...)
     std::vector<Vec3> cagePositions; // Optional explicit cage vertex positions
+    std::vector<Vec3> cageNormals;   // Watertight averaged normals across UV seams for continuous envelope
 
     Vec3 translation = Vec3(0, 0, 0);
     Vec3 rotation = Vec3(0, 0, 0); // Pitch, Yaw, Roll in degrees
@@ -87,6 +91,73 @@ struct LowPolyMesh {
 
     bool HasExplicitCage() const {
         return !cagePositions.empty() && cagePositions.size() == vertices.size();
+    }
+
+    bool HasWatertightCageNormals() const {
+        return !cageNormals.empty() && cageNormals.size() == vertices.size();
+    }
+
+    // Computes continuous, watertight cage normals by welding positions across UV seams
+    // Eliminates cracks/wedges in the cage where rays would otherwise miss high-poly surfaces
+    void ComputeWatertightCageNormals() {
+        cageNormals.assign(vertices.size(), Vec3(0, 0, 0));
+        if (vertices.empty() || triangles.empty()) return;
+
+        struct PosKey {
+            int64_t x, y, z;
+            bool operator==(const PosKey& o) const {
+                return x == o.x && y == o.y && z == o.z;
+            }
+        };
+        struct PosHasher {
+            size_t operator()(const PosKey& k) const {
+                size_t h = 14695981039346656037ULL;
+                h ^= static_cast<size_t>(k.x); h *= 1099511628211ULL;
+                h ^= static_cast<size_t>(k.y); h *= 1099511628211ULL;
+                h ^= static_cast<size_t>(k.z); h *= 1099511628211ULL;
+                return h;
+            }
+        };
+
+        // Quantize position: 0.1 mm precision (10000 units per meter)
+        auto Quantize = [](const Vec3& p) -> PosKey {
+            return PosKey{
+                static_cast<int64_t>(std::floor(p.x * 10000.0f + 0.5f)),
+                static_cast<int64_t>(std::floor(p.y * 10000.0f + 0.5f)),
+                static_cast<int64_t>(std::floor(p.z * 10000.0f + 0.5f))
+            };
+        };
+
+        std::unordered_map<PosKey, Vec3, PosHasher> posNormals;
+        posNormals.reserve(vertices.size());
+
+        for (const auto& tri : triangles) {
+            const auto& p0 = vertices[tri.indices[0]].position;
+            const auto& p1 = vertices[tri.indices[1]].position;
+            const auto& p2 = vertices[tri.indices[2]].position;
+
+            Vec3 e1 = p1 - p0;
+            Vec3 e2 = p2 - p0;
+            Vec3 fn = e1.Cross(e2); // Area-weighted face normal
+            float len = fn.Length();
+            if (len > 1e-9f) {
+                posNormals[Quantize(p0)] = posNormals[Quantize(p0)] + fn;
+                posNormals[Quantize(p1)] = posNormals[Quantize(p1)] + fn;
+                posNormals[Quantize(p2)] = posNormals[Quantize(p2)] + fn;
+            }
+        }
+
+        for (size_t i = 0; i < vertices.size(); ++i) {
+            PosKey k = Quantize(vertices[i].position);
+            auto it = posNormals.find(k);
+            if (it != posNormals.end() && it->second.Length() > 1e-6f) {
+                cageNormals[i] = it->second.Normalized();
+            } else if (vertices[i].normal.Length() > 1e-6f) {
+                cageNormals[i] = vertices[i].normal.Normalized();
+            } else {
+                cageNormals[i] = Vec3(0, 1, 0);
+            }
+        }
     }
 
     Vec3 GetBoundingBoxMin() const {
@@ -125,6 +196,7 @@ struct LowPolyMesh {
         triangles.clear();
         detectedUDIMs.clear();
         cagePositions.clear();
+        cageNormals.clear();
         cageOffsets.clear();
         translation = Vec3(0, 0, 0);
         rotation = Vec3(0, 0, 0);

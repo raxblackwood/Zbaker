@@ -93,6 +93,9 @@ bool MeshLoader::LoadLowPolyFBX(
         ufbx_mesh* mesh = node->mesh;
         ufbx_matrix normMat = ufbx_matrix_for_normals(&node->geometry_to_world);
 
+        uint32_t nodeIdx = static_cast<uint32_t>(n);
+        uint32_t nodeMask = (1u << (nodeIdx % 32));
+
         for (size_t f = 0; f < mesh->faces.count; ++f) {
             ufbx_face face = mesh->faces.data[f];
             uint32_t triIndices[64];
@@ -100,6 +103,8 @@ bool MeshLoader::LoadLowPolyFBX(
 
             for (uint32_t t = 0; t < numTris; ++t) {
                 LowPolyTriangle tri;
+                tri.meshIndex = nodeIdx;
+                tri.groupMask = nodeMask;
                 float triU = 0.0f;
                 float triV = 0.0f;
 
@@ -168,6 +173,7 @@ bool MeshLoader::LoadLowPolyFBX(
     }
 
     MikkTSpaceBridge::CalculateTangents(outMesh);
+    outMesh.ComputeWatertightCageNormals();
     return true;
 }
 
@@ -330,7 +336,9 @@ bool MeshLoader::LoadLowPolyOBJ(
     outMesh.name = filePath;
     std::set<int> udimSet;
 
+    uint32_t shapeIdx = 0;
     for (const auto& shape : shapes) {
+        uint32_t shapeMask = (1u << (shapeIdx % 32));
         size_t indexOffset = 0;
         for (size_t f = 0; f < shape.mesh.num_face_vertices.size(); ++f) {
             size_t fv = shape.mesh.num_face_vertices[f];
@@ -340,6 +348,8 @@ bool MeshLoader::LoadLowPolyOBJ(
             }
 
             LowPolyTriangle tri;
+            tri.meshIndex = shapeIdx;
+            tri.groupMask = shapeMask;
             float triU = 0.0f;
             float triV = 0.0f;
 
@@ -393,6 +403,7 @@ bool MeshLoader::LoadLowPolyOBJ(
             outMesh.triangles.push_back(tri);
             indexOffset += 3;
         }
+        shapeIdx++;
     }
 
     outMesh.detectedUDIMs.assign(udimSet.begin(), udimSet.end());
@@ -401,6 +412,7 @@ bool MeshLoader::LoadLowPolyOBJ(
     }
 
     MikkTSpaceBridge::CalculateTangents(outMesh);
+    outMesh.ComputeWatertightCageNormals();
     return true;
 }
 

@@ -646,6 +646,16 @@ bool BakerEngine::ExecuteBake(
                                 float skew = std::clamp(settings.skewFactor, 0.0f, 1.0f);
                                 Vec3 rayNormal = (n * (1.0f - skew) + geomFaceNormal * skew).Normalized();
 
+                                // Watertight cage normal across UV seams and hard edges
+                                Vec3 cageNormal = rayNormal;
+                                if (lowPoly.HasWatertightCageNormals()) {
+                                    Vec3 rawCageNorm = (lowPoly.cageNormals[tri.indices[0]] * w0 +
+                                                        lowPoly.cageNormals[tri.indices[1]] * w1 +
+                                                        lowPoly.cageNormals[tri.indices[2]] * w2).Normalized();
+                                    Vec3 transCageNorm = TransformDirection(rawCageNorm, lpRot, lpScaleVec).Normalized();
+                                    cageNormal = (transCageNorm * (1.0f - skew) + geomFaceNormal * skew).Normalized();
+                                }
+
                                 Vec3 rayOrg;
                                 Vec3 rayDir;
                                 float maxDist = 0.0f;
@@ -664,134 +674,237 @@ bool BakerEngine::ExecuteBake(
                                     if (cageDist > 1e-6f) {
                                         rayDir = cageToLow * (1.0f / cageDist);
                                     } else {
-                                        rayDir = rayNormal * -1.0f;
+                                        rayDir = cageNormal * -1.0f;
                                     }
                                     maxDist = cageDist + settings.maxRayDistance;
                                 } else {
-                                    rayOrg = pos + rayNormal * settings.cageDistance;
-                                    rayDir = rayNormal * -1.0f;
+                                    rayOrg = pos + cageNormal * settings.cageDistance;
+                                    rayDir = cageNormal * -1.0f;
                                     maxDist = settings.cageDistance + settings.maxRayDistance;
                                 }
 
-                                RTCRayHit rayhit;
-                                rayhit.ray.org_x = rayOrg.x;
-                                rayhit.ray.org_y = rayOrg.y;
-                                rayhit.ray.org_z = rayOrg.z;
-                                rayhit.ray.dir_x = rayDir.x;
-                                rayhit.ray.dir_y = rayDir.y;
-                                rayhit.ray.dir_z = rayDir.z;
-                                rayhit.ray.tnear = 0.0f;
-                                rayhit.ray.tfar = maxDist;
-                                rayhit.ray.mask = settings.groupMask;
-                                rayhit.ray.flags = 0;
-                                rayhit.hit.geomID = RTC_INVALID_GEOMETRY_ID;
-                                rayhit.hit.primID = RTC_INVALID_GEOMETRY_ID;
+                                unsigned int rayMask = settings.isolateMeshParts ? tri.groupMask : settings.groupMask;
 
-                                rtcIntersect1(scene, &context, &rayhit);
+                                // --- 1. Primary Inward Ray (from cage envelope inward) ---
+                                RTCRayHit rayhitIn;
+                                rayhitIn.ray.org_x = rayOrg.x;
+                                rayhitIn.ray.org_y = rayOrg.y;
+                                rayhitIn.ray.org_z = rayOrg.z;
+                                rayhitIn.ray.dir_x = rayDir.x;
+                                rayhitIn.ray.dir_y = rayDir.y;
+                                rayhitIn.ray.dir_z = rayDir.z;
+                                rayhitIn.ray.tnear = 0.0f;
+                                rayhitIn.ray.tfar = maxDist;
+                                rayhitIn.ray.mask = rayMask;
+                                rayhitIn.ray.flags = 0;
+                                rayhitIn.hit.geomID = RTC_INVALID_GEOMETRY_ID;
+                                rayhitIn.hit.primID = RTC_INVALID_GEOMETRY_ID;
 
-                                if (rayhit.hit.geomID != RTC_INVALID_GEOMETRY_ID) {
-                                    float hitU = rayhit.hit.u;
-                                    float hitV = rayhit.hit.v;
-                                    float hitW = 1.0f - hitU - hitV;
+                                rtcIntersect1(scene, &context, &rayhitIn);
 
-                                    Vec3 hitNorm;
-                                    unsigned int gid = rayhit.hit.geomID;
-                                    unsigned int pid = rayhit.hit.primID;
-                                    uint32_t i0 = 0, i1 = 0, i2 = 0;
+                                bool hasHitIn = false;
+                                Vec3 hitPosIn, hitNormIn;
+                                float dispIn = 0.0f;
+                                unsigned int gidIn = 0, pidIn = 0;
+                                float hitUIn = 0.0f, hitVIn = 0.0f, hitWIn = 0.0f;
 
-                                    if (gid < m_geoms.size() && !m_geoms[gid].normals.empty() && !m_geoms[gid].indices.empty()) {
-                                        const auto& g = m_geoms[gid];
-                                        i0 = g.indices[pid * 3 + 0];
-                                        i1 = g.indices[pid * 3 + 1];
-                                        i2 = g.indices[pid * 3 + 2];
-                                        hitNorm = (g.normals[i0] * hitW + g.normals[i1] * hitU + g.normals[i2] * hitV).Normalized();
+                                float minCos = std::cos(std::clamp(settings.angleThreshold, 10.0f, 90.0f) * 3.14159265f / 180.0f);
+
+                                if (rayhitIn.hit.geomID != RTC_INVALID_GEOMETRY_ID) {
+                                    gidIn = rayhitIn.hit.geomID;
+                                    pidIn = rayhitIn.hit.primID;
+                                    hitUIn = rayhitIn.hit.u;
+                                    hitVIn = rayhitIn.hit.v;
+                                    hitWIn = 1.0f - hitUIn - hitVIn;
+
+                                    if (gidIn < m_geoms.size() && !m_geoms[gidIn].normals.empty() && !m_geoms[gidIn].indices.empty()) {
+                                        const auto& g = m_geoms[gidIn];
+                                        uint32_t i0 = g.indices[pidIn * 3 + 0];
+                                        uint32_t i1 = g.indices[pidIn * 3 + 1];
+                                        uint32_t i2 = g.indices[pidIn * 3 + 2];
+                                        hitNormIn = (g.normals[i0] * hitWIn + g.normals[i1] * hitUIn + g.normals[i2] * hitVIn).Normalized();
                                     } else {
-                                        hitNorm = Vec3(rayhit.hit.Ng_x, rayhit.hit.Ng_y, rayhit.hit.Ng_z).Normalized();
+                                        hitNormIn = Vec3(rayhitIn.hit.Ng_x, rayhitIn.hit.Ng_y, rayhitIn.hit.Ng_z).Normalized();
                                     }
 
-                                    Vec3 geomNg = Vec3(rayhit.hit.Ng_x, rayhit.hit.Ng_y, rayhit.hit.Ng_z);
-                                    if (hitNorm.Dot(geomNg) < 0.0f) {
-                                        hitNorm = hitNorm * -1.0f;
+                                    Vec3 geomNg = Vec3(rayhitIn.hit.Ng_x, rayhitIn.hit.Ng_y, rayhitIn.hit.Ng_z);
+                                    if (hitNormIn.Dot(geomNg) < 0.0f) {
+                                        hitNormIn = hitNormIn * -1.0f;
                                     }
 
-                                    // Reject backface hits and extreme grazing angles to eliminate seam fringe
+                                    bool valid = true;
                                     if (settings.discardBackfaceHits) {
-                                        float minCos = std::cos(std::clamp(settings.angleThreshold, 10.0f, 90.0f) * 3.14159265f / 180.0f);
-                                        if (hitNorm.Dot(rayDir) >= -1e-4f || hitNorm.Dot(n) <= minCos) {
-                                            continue;
+                                        if (hitNormIn.Dot(rayDir) >= -1e-4f || hitNormIn.Dot(n) < minCos) {
+                                            valid = false;
                                         }
                                     }
+                                    if (valid) {
+                                        hitPosIn = rayOrg + rayDir * rayhitIn.ray.tfar;
+                                        dispIn = (hitPosIn - pos).Dot(n);
+                                        hasHitIn = true;
+                                    }
+                                }
 
-                                    Vec3 hitPos = rayOrg + rayDir * rayhit.ray.tfar;
-                                    float disp = (hitPos - pos).Dot(n);
+                                // --- 2. Fallback Outward Ray (catches tall protruding sculpt peaks beyond cage) ---
+                                bool hasHitOut = false;
+                                Vec3 hitPosOut, hitNormOut;
+                                float dispOut = 0.0f;
+                                unsigned int gidOut = 0, pidOut = 0;
+                                float hitUOut = 0.0f, hitVOut = 0.0f, hitWOut = 0.0f;
 
-                                    float nTx = hitNorm.Dot(t);
-                                    float nTy = hitNorm.Dot(b);
-                                    if (settings.flipYNormal) nTy = -nTy;
-                                    float nTz = hitNorm.Dot(n);
+                                if (settings.useBidirectionalRays && (!hasHitIn || dispIn < 0.0f)) {
+                                    Vec3 rayOrgOut = pos + cageNormal * 0.0001f;
+                                    Vec3 rayDirOut = cageNormal;
+                                    float maxDistOut = (settings.maxOutwardDistance > 1e-6f ? settings.maxOutwardDistance : settings.maxRayDistance);
 
-                                    Vec3 tsNorm = Vec3(nTx, nTy, nTz).Normalized();
+                                    RTCRayHit rayhitOut;
+                                    rayhitOut.ray.org_x = rayOrgOut.x;
+                                    rayhitOut.ray.org_y = rayOrgOut.y;
+                                    rayhitOut.ray.org_z = rayOrgOut.z;
+                                    rayhitOut.ray.dir_x = rayDirOut.x;
+                                    rayhitOut.ray.dir_y = rayDirOut.y;
+                                    rayhitOut.ray.dir_z = rayDirOut.z;
+                                    rayhitOut.ray.tnear = 0.0f;
+                                    rayhitOut.ray.tfar = maxDistOut;
+                                    rayhitOut.ray.mask = rayMask;
+                                    rayhitOut.ray.flags = 0;
+                                    rayhitOut.hit.geomID = RTC_INVALID_GEOMETRY_ID;
+                                    rayhitOut.hit.primID = RTC_INVALID_GEOMETRY_ID;
 
-                                    // Ambient Occlusion
-                                    float aoVal = 1.0f;
-                                    if (settings.bakeAmbientOcclusion && settings.aoSamples > 0) {
-                                        int occludedCount = 0;
-                                        Vec3 aoUp = (std::abs(hitNorm.z) < 0.99f) ? Vec3(0, 0, 1) : Vec3(1, 0, 0);
-                                        Vec3 aoTangent = hitNorm.Cross(aoUp).Normalized();
-                                        Vec3 aoBitangent = hitNorm.Cross(aoTangent);
+                                    rtcIntersect1(scene, &context, &rayhitOut);
 
-                                        for (int a = 0; a < settings.aoSamples; ++a) {
-                                            float u1 = (static_cast<float>(a) + 0.5f) / static_cast<float>(settings.aoSamples);
-                                            float u2 = std::fmod(u1 * 7.618f + 0.123f, 1.0f);
-                                            float phi = 6.2831853f * u1;
-                                            float r = std::sqrt(u2);
-                                            float lx = r * std::cos(phi);
-                                            float ly = r * std::sin(phi);
-                                            float lz = std::sqrt((std::max)(0.0f, 1.0f - u2));
+                                    if (rayhitOut.hit.geomID != RTC_INVALID_GEOMETRY_ID) {
+                                        gidOut = rayhitOut.hit.geomID;
+                                        pidOut = rayhitOut.hit.primID;
+                                        hitUOut = rayhitOut.hit.u;
+                                        hitVOut = rayhitOut.hit.v;
+                                        hitWOut = 1.0f - hitUOut - hitVOut;
 
-                                            Vec3 aoDir = (aoTangent * lx + aoBitangent * ly + hitNorm * lz).Normalized();
+                                        if (gidOut < m_geoms.size() && !m_geoms[gidOut].normals.empty() && !m_geoms[gidOut].indices.empty()) {
+                                            const auto& g = m_geoms[gidOut];
+                                            uint32_t i0 = g.indices[pidOut * 3 + 0];
+                                            uint32_t i1 = g.indices[pidOut * 3 + 1];
+                                            uint32_t i2 = g.indices[pidOut * 3 + 2];
+                                            hitNormOut = (g.normals[i0] * hitWOut + g.normals[i1] * hitUOut + g.normals[i2] * hitVOut).Normalized();
+                                        } else {
+                                            hitNormOut = Vec3(rayhitOut.hit.Ng_x, rayhitOut.hit.Ng_y, rayhitOut.hit.Ng_z).Normalized();
+                                        }
 
-                                            RTCRay aoRay;
-                                            aoRay.org_x = hitPos.x + hitNorm.x * 0.001f;
-                                            aoRay.org_y = hitPos.y + hitNorm.y * 0.001f;
-                                            aoRay.org_z = hitPos.z + hitNorm.z * 0.001f;
-                                            aoRay.dir_x = aoDir.x;
-                                            aoRay.dir_y = aoDir.y;
-                                            aoRay.dir_z = aoDir.z;
-                                            aoRay.tnear = 0.001f;
-                                            aoRay.tfar = settings.aoMaxDistance;
-                                            aoRay.mask = settings.groupMask;
-                                            aoRay.flags = 0;
+                                        Vec3 geomNg = Vec3(rayhitOut.hit.Ng_x, rayhitOut.hit.Ng_y, rayhitOut.hit.Ng_z);
+                                        if (hitNormOut.Dot(geomNg) < 0.0f) {
+                                            hitNormOut = hitNormOut * -1.0f;
+                                        }
 
-                                            rtcOccluded1(scene, &context, &aoRay);
-                                            if (aoRay.tfar < 0.0f) {
-                                                occludedCount++;
+                                        bool valid = true;
+                                        if (settings.discardBackfaceHits) {
+                                            if (hitNormOut.Dot(rayDirOut) >= -1e-4f || hitNormOut.Dot(n) < minCos) {
+                                                valid = false;
                                             }
                                         }
-                                        aoVal = 1.0f - static_cast<float>(occludedCount) / static_cast<float>(settings.aoSamples);
+                                        if (valid) {
+                                            hitPosOut = rayOrgOut + rayDirOut * rayhitOut.ray.tfar;
+                                            dispOut = (hitPosOut - pos).Dot(n);
+                                            hasHitOut = true;
+                                        }
                                     }
+                                }
 
-                                    // Thickness Map (translucency / SSS)
-                                    float thickVal = 0.0f;
-                                    if (settings.bakeThickness && settings.thicknessMaxDistance > 1e-4f) {
-                                        RTCRayHit thickRay;
-                                        thickRay.ray.org_x = hitPos.x - hitNorm.x * 0.001f;
-                                        thickRay.ray.org_y = hitPos.y - hitNorm.y * 0.001f;
-                                        thickRay.ray.org_z = hitPos.z - hitNorm.z * 0.001f;
-                                        thickRay.ray.dir_x = -hitNorm.x;
-                                        thickRay.ray.dir_y = -hitNorm.y;
-                                        thickRay.ray.dir_z = -hitNorm.z;
-                                        thickRay.ray.tnear = 0.001f;
-                                        thickRay.ray.tfar = settings.thicknessMaxDistance;
-                                        thickRay.ray.mask = settings.groupMask;
-                                        thickRay.ray.flags = 0;
-                                        thickRay.hit.geomID = RTC_INVALID_GEOMETRY_ID;
-                                        thickRay.hit.primID = RTC_INVALID_GEOMETRY_ID;
+                                // --- 3. Marmoset Closest-Hit Arbitration ---
+                                bool useInward = false;
+                                if (hasHitIn && hasHitOut) {
+                                    useInward = (std::abs(dispIn) <= std::abs(dispOut));
+                                } else if (hasHitIn) {
+                                    useInward = true;
+                                } else if (hasHitOut) {
+                                    useInward = false;
+                                } else {
+                                    continue;
+                                }
 
-                                        rtcIntersect1(scene, &context, &thickRay);
-                                        float d = (thickRay.hit.geomID != RTC_INVALID_GEOMETRY_ID) ? thickRay.ray.tfar : settings.thicknessMaxDistance;
-                                        thickVal = 1.0f - std::clamp(d / settings.thicknessMaxDistance, 0.0f, 1.0f);
+                                Vec3 hitPos = useInward ? hitPosIn : hitPosOut;
+                                Vec3 hitNorm = useInward ? hitNormIn : hitNormOut;
+                                float disp = useInward ? dispIn : dispOut;
+                                unsigned int gid = useInward ? gidIn : gidOut;
+                                unsigned int pid = useInward ? pidIn : pidOut;
+                                float hitU = useInward ? hitUIn : hitUOut;
+                                float hitV = useInward ? hitVIn : hitVOut;
+                                float hitW = useInward ? hitWIn : hitWOut;
+
+                                uint32_t i0 = 0, i1 = 0, i2 = 0;
+                                if (gid < m_geoms.size() && !m_geoms[gid].indices.empty()) {
+                                    const auto& g = m_geoms[gid];
+                                    i0 = g.indices[pid * 3 + 0];
+                                    i1 = g.indices[pid * 3 + 1];
+                                    i2 = g.indices[pid * 3 + 2];
+                                }
+
+                                float nTx = hitNorm.Dot(t);
+                                float nTy = hitNorm.Dot(b);
+                                if (settings.flipYNormal) nTy = -nTy;
+                                float nTz = hitNorm.Dot(n);
+
+                                Vec3 tsNorm = Vec3(nTx, nTy, nTz).Normalized();
+
+                                // Ambient Occlusion
+                                float aoVal = 1.0f;
+                                if (settings.bakeAmbientOcclusion && settings.aoSamples > 0) {
+                                    int occludedCount = 0;
+                                    Vec3 aoUp = (std::abs(hitNorm.z) < 0.99f) ? Vec3(0, 0, 1) : Vec3(1, 0, 0);
+                                    Vec3 aoTangent = hitNorm.Cross(aoUp).Normalized();
+                                    Vec3 aoBitangent = hitNorm.Cross(aoTangent);
+
+                                    for (int a = 0; a < settings.aoSamples; ++a) {
+                                        float u1 = (static_cast<float>(a) + 0.5f) / static_cast<float>(settings.aoSamples);
+                                        float u2 = std::fmod(u1 * 7.618f + 0.123f, 1.0f);
+                                        float phi = 6.2831853f * u1;
+                                        float r = std::sqrt(u2);
+                                        float lx = r * std::cos(phi);
+                                        float ly = r * std::sin(phi);
+                                        float lz = std::sqrt((std::max)(0.0f, 1.0f - u2));
+
+                                        Vec3 aoDir = (aoTangent * lx + aoBitangent * ly + hitNorm * lz).Normalized();
+
+                                        RTCRay aoRay;
+                                        aoRay.org_x = hitPos.x + hitNorm.x * 0.001f;
+                                        aoRay.org_y = hitPos.y + hitNorm.y * 0.001f;
+                                        aoRay.org_z = hitPos.z + hitNorm.z * 0.001f;
+                                        aoRay.dir_x = aoDir.x;
+                                        aoRay.dir_y = aoDir.y;
+                                        aoRay.dir_z = aoDir.z;
+                                        aoRay.tnear = 0.001f;
+                                        aoRay.tfar = settings.aoMaxDistance;
+                                        aoRay.mask = rayMask;
+                                        aoRay.flags = 0;
+
+                                        rtcOccluded1(scene, &context, &aoRay);
+                                        if (aoRay.tfar < 0.0f) {
+                                            occludedCount++;
+                                        }
                                     }
+                                    aoVal = 1.0f - static_cast<float>(occludedCount) / static_cast<float>(settings.aoSamples);
+                                }
+
+                                // Thickness Map (translucency / SSS)
+                                float thickVal = 0.0f;
+                                if (settings.bakeThickness && settings.thicknessMaxDistance > 1e-4f) {
+                                    RTCRayHit thickRay;
+                                    thickRay.ray.org_x = hitPos.x - hitNorm.x * 0.001f;
+                                    thickRay.ray.org_y = hitPos.y - hitNorm.y * 0.001f;
+                                    thickRay.ray.org_z = hitPos.z - hitNorm.z * 0.001f;
+                                    thickRay.ray.dir_x = -hitNorm.x;
+                                    thickRay.ray.dir_y = -hitNorm.y;
+                                    thickRay.ray.dir_z = -hitNorm.z;
+                                    thickRay.ray.tnear = 0.001f;
+                                    thickRay.ray.tfar = settings.thicknessMaxDistance;
+                                    thickRay.ray.mask = rayMask;
+                                    thickRay.ray.flags = 0;
+                                    thickRay.hit.geomID = RTC_INVALID_GEOMETRY_ID;
+                                    thickRay.hit.primID = RTC_INVALID_GEOMETRY_ID;
+
+                                    rtcIntersect1(scene, &context, &thickRay);
+                                    float d = (thickRay.hit.geomID != RTC_INVALID_GEOMETRY_ID) ? thickRay.ray.tfar : settings.thicknessMaxDistance;
+                                    thickVal = 1.0f - std::clamp(d / settings.thicknessMaxDistance, 0.0f, 1.0f);
+                                }
 
                                     // Base Color (Polypaint)
                                     Vec3 hitColor(1.0f, 1.0f, 1.0f);
@@ -829,9 +942,8 @@ bool BakerEngine::ExecuteBake(
                                 }
                             }
                         }
-                    }
 
-                    // Flush row pixels into result buffers
+                        // Flush row pixels into result buffers
                     for (int x = 0; x < W; ++x) {
                         int pixelIdx = y * W + x;
                         const auto& p = rowAccum[x];
