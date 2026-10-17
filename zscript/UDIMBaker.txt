@@ -1,73 +1,22 @@
 // ZPlugin: UDIM Baker Plugin for ZBrush 2026
-// Maxon ZBrush C-ABI Bridge Interface
-
 [ISubPalette, "ZPlugin:UDIM Baker"]
 
-[VarDef, g_BridgeDllPath, ""]
-[VarDef, g_CallRes, 0]
-[VarDef, g_TempHighPoly, ""]
+[VarDef, g_BridgeDll, "ZStartup/ZPlugs64/UDIMBakerData/UDIMBakerBridge.dll"]
+[VarDef, g_Res, 0]
 
-// Routine to resolve Bridge DLL path
-[RoutineDef, InitBridgePath,
-    [VarSet, g_BridgeDllPath, [FileNameResolvePath, "ZSTARTUP_ZPLUGS64/UDIMBakerData/UDIMBakerBridge.dll"]]
-    [If, [FileExists, [Var, g_BridgeDllPath]] == 0,
-        [If, [FileExists, "UDIMBakerData/UDIMBakerBridge.dll"],
-            [VarSet, g_BridgeDllPath, "UDIMBakerData/UDIMBakerBridge.dll"]
-        ,
-            [If, [FileExists, "UDIMBakerBridge.dll"],
-                [VarSet, g_BridgeDllPath, "UDIMBakerBridge.dll"]
-            ]
-        ]
-    ]
-]
-
-// Button 1: Launch Companion Standalone Application
 [IButton, "ZPlugin:UDIM Baker:Launch Baker", "Open the UDIM Baking Viewport Application",
-    [RoutineCall, InitBridgePath]
-    [If, [FileExists, [Var, g_BridgeDllPath]],
-        [VarSet, g_CallRes, [FileExecute, [Var, g_BridgeDllPath], "LaunchBakerSession", ""]]
-        [If, [Var, g_CallRes] >= 1.0,
-            [Note, "UDIM Baker Viewport Launched!", , 2]
-        ,
-            [Note, "UDIM Baker launch failed. Please verify UDIMBakerData files.", , 3]
-        ]
-    ,
-        [Note, [StrMerge, "UDIMBakerBridge.dll not found at:\n", [Var, g_BridgeDllPath], "\nPlease verify installation in UDIMBakerData folder."], , 3]
-    ]
+    [VarSet, g_Res, [FileExecute, [Var, g_BridgeDll], "LaunchBakerSession", ""]]
+    [Note, [StrMerge, "UDIM Baker Status: ", [Var, g_Res]], , 2]
 ]
 
-// Button 2: Export Active High-Res SubTool and Launch Baker
 [IButton, "ZPlugin:UDIM Baker:Export & Bake Active", "Export active high-res SubTool to temporary cache and launch Baker",
-    [RoutineCall, InitBridgePath]
-    [VarSet, g_TempHighPoly, [FileNameResolvePath, "ZBRUSHDATA_TEMP/UDIM_HighPoly_Temp.obj"]]
-    
-    // Export current active SubTool to temporary OBJ
-    [FileNameSetNext, [Var, g_TempHighPoly]]
+    [FileNameSetNext, [FileNameResolvePath, "ZBRUSHDATA_TEMP/UDIM_HighPoly_Temp.obj"]]
     [IPress, "Tool:Export"]
-    
-    [If, [FileExists, [Var, g_BridgeDllPath]],
-        [VarSet, g_CallRes, [FileExecute, [Var, g_BridgeDllPath], "LaunchBakerSession", [Var, g_TempHighPoly]]]
-        [If, [Var, g_CallRes] >= 1.0,
-            [Note, [StrMerge, "High-poly mesh cached and Baker launched!\nPath: ", [Var, g_TempHighPoly]], , 2]
-        ,
-            [Note, "Launch failed.", , 3]
-        ]
-    ,
-        [Note, [StrMerge, "UDIMBakerBridge.dll not found at: ", [Var, g_BridgeDllPath]], , 3]
-    ]
+    [VarSet, g_Res, [FileExecute, [Var, g_BridgeDll], "LaunchBakerSession", [FileNameResolvePath, "ZBRUSHDATA_TEMP/UDIM_HighPoly_Temp.obj"]]]
+    [Note, [StrMerge, "Export & Launch Status: ", [Var, g_Res]], , 2]
 ]
 
-// Button 3: Version & Status Check
 [IButton, "ZPlugin:UDIM Baker:About / Status", "Show UDIM Baker bridge version and status",
-    [RoutineCall, InitBridgePath]
-    [If, [FileExists, [Var, g_BridgeDllPath]],
-        [VarSet, g_CallRes, [FileExecute, [Var, g_BridgeDllPath], "GetBridgeVersion", ""]]
-        [If, [Var, g_CallRes] >= 1.0,
-            [Note, [StrMerge, "ZBrush UDIM Baker Suite v1.0.0\nStatus: Connected\nBridge DLL: ", [Var, g_BridgeDllPath]], , 3]
-        ,
-            [Note, "Failed to query Bridge DLL version.", , 3]
-        ]
-    ,
-        [Note, [StrMerge, "Bridge DLL not loaded.\nExpected at: ", [Var, g_BridgeDllPath]], , 3]
-    ]
+    [VarSet, g_Res, [FileExecute, [Var, g_BridgeDll], "GetBridgeVersion", ""]]
+    [Note, [StrMerge, "Bridge Connection: ", [Var, g_Res]], , 2]
 ]

@@ -7,10 +7,19 @@
 static const char* BRIDGE_VERSION = "1.0.0";
 static HMODULE g_hModule = nullptr;
 
+static void WriteBridgeLog(const char* message) {
+    FILE* f = fopen("C:\\Users\\raman\\Desktop\\baker_bridge_log.txt", "a");
+    if (f) {
+        fprintf(f, "%s\n", message);
+        fclose(f);
+    }
+}
+
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserved) {
     if (ul_reason_for_call == DLL_PROCESS_ATTACH) {
         g_hModule = hModule;
         DisableThreadLibraryCalls(hModule);
+        WriteBridgeLog("[Bridge DLL] DllMain attached to process.");
     }
     return TRUE;
 }
@@ -54,11 +63,8 @@ static std::wstring FindBakerExecutable() {
     // 5. Development build directories
     std::wstring candidate5 = modDir + L"\\..\\..\\build\\bin\\Release\\UDIMBakerApp.exe";
     if (FileExists(candidate5)) return candidate5;
-    std::wstring candidate6 = modDir + L"\\..\\..\\build\\bin\\Debug\\UDIMBakerApp.exe";
-    if (FileExists(candidate6)) return candidate6;
 
-    // Fallback: return direct name and let OS search PATH
-    return L"UDIMBakerApp.exe";
+    return L"C:\\Program Files\\Maxon ZBrush 2026\\ZStartup\\ZPlugs64\\UDIMBakerData\\UDIMBakerApp.exe";
 }
 
 // ZBrush entry point: LaunchBakerSession
@@ -68,9 +74,11 @@ ZBRUSH_API LaunchBakerSession(
     char* pOutputBuffer,
     double* optOutputValue
 ) {
-    std::wstring exePath = FindBakerExecutable();
+    WriteBridgeLog("[Bridge] LaunchBakerSession called by ZBrush!");
 
+    std::wstring exePath = FindBakerExecutable();
     std::wstring commandLine = L"\"" + exePath + L"\"";
+
     if (pData && pData[0] != '\0') {
         int wlen = MultiByteToWideChar(CP_UTF8, 0, pData, -1, nullptr, 0);
         if (wlen > 0) {
@@ -91,7 +99,12 @@ ZBRUSH_API LaunchBakerSession(
     std::vector<wchar_t> cmdVec(commandLine.begin(), commandLine.end());
     cmdVec.push_back(L'\0');
 
-    std::wstring workDir = GetModuleDirectory();
+    // Working directory set to the folder where UDIMBakerApp.exe resides
+    std::wstring workDir = exePath;
+    wchar_t* lastSlash = wcsrchr(&workDir[0], L'\\');
+    if (lastSlash) {
+        *lastSlash = L'\0';
+    }
 
     BOOL success = CreateProcessW(
         nullptr,
@@ -99,19 +112,24 @@ ZBRUSH_API LaunchBakerSession(
         nullptr,
         nullptr,
         FALSE,
-        CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS,
+        0, // Standard GUI process
         nullptr,
-        workDir.empty() ? nullptr : workDir.c_str(),
+        workDir.c_str(),
         &si,
         &pi
     );
+
+    char logBuf[512];
+    snprintf(logBuf, sizeof(logBuf), "[Bridge] CreateProcess result: %d (PID: %lu, LastError: %lu)",
+             success, pi.dwProcessId, success ? 0 : GetLastError());
+    WriteBridgeLog(logBuf);
 
     if (success) {
         CloseHandle(pi.hProcess);
         CloseHandle(pi.hThread);
 
         if (pOutputBuffer) {
-            snprintf(pOutputBuffer, 256, "UDIM Baker launched successfully (PID: %lu)", pi.dwProcessId);
+            snprintf(pOutputBuffer, 256, "UDIM Baker launched (PID: %lu)", pi.dwProcessId);
         }
         if (optOutputValue) {
             *optOutputValue = static_cast<double>(pi.dwProcessId);
@@ -120,7 +138,7 @@ ZBRUSH_API LaunchBakerSession(
     } else {
         DWORD err = GetLastError();
         if (pOutputBuffer) {
-            snprintf(pOutputBuffer, 256, "Failed to launch UDIMBakerApp.exe (Error %lu)", err);
+            snprintf(pOutputBuffer, 256, "Failed to launch UDIMBakerApp (Error %lu)", err);
         }
         if (optOutputValue) {
             *optOutputValue = -1.0;
@@ -136,6 +154,7 @@ ZBRUSH_API GetBridgeVersion(
     char* pOutputBuffer,
     double* optOutputValue
 ) {
+    WriteBridgeLog("[Bridge] GetBridgeVersion called by ZBrush!");
     if (pOutputBuffer) {
         snprintf(pOutputBuffer, 256, "%s", BRIDGE_VERSION);
     }
