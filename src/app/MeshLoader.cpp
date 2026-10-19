@@ -1,6 +1,8 @@
 #include "MeshLoader.h"
 #include "../baker/MikkTSpaceBridge.h"
+#include "../baker/GoZReader.h"
 
+#define TINYOBJLOADER_STREAM_READER_MAX_BYTES (size_t(8) * size_t(1024) * size_t(1024) * size_t(1024))
 #define TINYOBJLOADER_IMPLEMENTATION
 #include <tiny_obj_loader.h>
 #include <ufbx.h>
@@ -61,6 +63,8 @@ bool MeshLoader::LoadHighPolyMesh(
         return LoadHighPolyFBX(filePath, outMesh, outError);
     } else if (ext == ".bin") {
         return LoadBinaryGeometry(filePath, outMesh, outError);
+    } else if (ext == ".goz") {
+        return GoZReader::GetOrLoadSubTool(filePath, outMesh, false, outError);
     }
     return LoadHighPolyOBJ(filePath, outMesh, outError);
 }

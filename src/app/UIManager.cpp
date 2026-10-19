@@ -246,6 +246,30 @@ void UIManager::AutoDetectZBrushCache(bool force) {
     std::string cacheLow = "C:/Users/Public/Documents/ZBrushData2026/ZPluginData/UDIMBaker/UDIM_LowPoly.obj";
     std::string cacheHigh = "C:/Users/Public/Documents/ZBrushData2026/ZPluginData/UDIMBaker/UDIM_HighPoly.obj";
 
+    // Also check GoZ Default project folder for latest .GoZ export
+    std::string gozDir = "C:/Users/Public/Pixologic/GoZProjects/Default";
+    std::string latestGoz = "";
+    if (std::filesystem::exists(gozDir)) {
+        std::filesystem::file_time_type latestTime{};
+        for (const auto& entry : std::filesystem::directory_iterator(gozDir)) {
+            if (entry.is_regular_file()) {
+                std::string ext = entry.path().extension().string();
+                for (char& c : ext) c = (char)std::tolower(c);
+                if (ext == ".goz") {
+                    auto wt = entry.last_write_time();
+                    if (wt > latestTime) {
+                        latestTime = wt;
+                        latestGoz = entry.path().string();
+                    }
+                }
+            }
+        }
+    }
+
+    if (!latestGoz.empty()) {
+        cacheHigh = latestGoz;
+    }
+
     if (force || !m_hasLowPoly) {
         DWORD attrLow = GetFileAttributesA(cacheLow.c_str());
         if (attrLow != INVALID_FILE_ATTRIBUTES && !(attrLow & FILE_ATTRIBUTE_DIRECTORY)) {

@@ -100,6 +100,7 @@ add_executable(TestBaker
     test/TestBaker.cpp
     src/app/MeshLoader.cpp
     src/baker/BakerEngine.cpp
+    src/baker/GoZReader.cpp
     src/baker/MikkTSpaceBridge.cpp
     src/baker/ExrWriter.cpp
     include/mikktspace.c
@@ -132,6 +133,7 @@ add_executable(UserBakeTest
     test/UserBakeTest.cpp
     src/app/MeshLoader.cpp
     src/baker/BakerEngine.cpp
+    src/baker/GoZReader.cpp
     src/baker/MikkTSpaceBridge.cpp
     src/baker/ExrWriter.cpp
     include/mikktspace.c
