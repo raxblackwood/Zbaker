@@ -58,9 +58,62 @@ float4 PSMain(PS_INPUT input) : SV_TARGET {
         return float4(MeshColor.rgb, Opacity);
     }
 
-    // 5: Ground Grid
+    // 5: Blender Procedural Anti-Aliased Ground Grid & Colored Axes
     if (ShadingMode == 5) {
-        return float4(MeshColor.rgb, Opacity);
+        float2 coord = input.WorldPos.xz;
+        float2 d = fwidth(coord);
+        d = max(d, 0.00001f);
+
+        // 1.0 unit major grid (exact 1px screen-space line anti-aliased via fwidth)
+        float2 grid1 = abs(frac(coord - 0.5f) - 0.5f) / d;
+        float line1 = min(grid1.x, grid1.y);
+        float alpha1 = saturate(1.0f - line1);
+
+        // Subtle 0.2 unit subdivision grid
+        float2 coordSub = coord * 5.0f;
+        float2 dSub = d * 5.0f;
+        float2 gridSub = abs(frac(coordSub - 0.5f) - 0.5f) / dSub;
+        float lineSub = min(gridSub.x, gridSub.y);
+        float alphaSub = saturate(1.0f - lineSub) * 0.35f;
+
+        // Smoothly fade out grid lines before distant pixel density causes moire
+        float gridFade = saturate(1.0f - max(d.x, d.y));
+        float combinedGridAlpha = max(alpha1 * 0.65f, alphaSub) * gridFade;
+
+        // Red X Ground Axis (at z = 0)
+        float distAxisX = abs(input.WorldPos.z) / d.y;
+        float alphaAxisX = saturate(1.0f - distAxisX);
+
+        // Green Z Ground Axis (at x = 0)
+        float distAxisZ = abs(input.WorldPos.x) / d.x;
+        float alphaAxisZ = saturate(1.0f - distAxisZ);
+
+        // Distance fog / horizon fade into slate background
+        float distToCam = length(CameraPos.xyz - input.WorldPos);
+        float camHeight = max(abs(CameraPos.y), 1.0f);
+        float fadeDist = max(camHeight * 25.0f, 90.0f);
+        float distFade = 1.0f - smoothstep(fadeDist * 0.35f, fadeDist, distToCam);
+
+        float3 col = float3(0.42f, 0.425f, 0.44f); // Subtle slate gray grid
+        float alpha = combinedGridAlpha * 0.50f;
+
+        // Blender Red X Axis
+        if (alphaAxisX > 0.001f) {
+            col = lerp(col, float3(0.88f, 0.22f, 0.22f), alphaAxisX);
+            alpha = max(alpha, alphaAxisX * 0.95f);
+        }
+        // Blender Green Ground Axis
+        if (alphaAxisZ > 0.001f) {
+            col = lerp(col, float3(0.28f, 0.82f, 0.28f), alphaAxisZ);
+            alpha = max(alpha, alphaAxisZ * 0.95f);
+        }
+
+        alpha *= distFade;
+        if (alpha < 0.003f) {
+            discard;
+        }
+
+        return float4(col, alpha);
     }
 
     float3 N = normalize(input.WorldNorm);
@@ -111,10 +164,10 @@ ViewportRenderer::~ViewportRenderer() {
 void ViewportRenderer::Release() {
     m_highPolyGPU.Release();
     m_lowPolyGPU.Release();
+    m_lowPolyWireGPU.Release();
     m_cageGPU.Release();
-    m_gridGPU.Release();
-    m_axisXGPU.Release();
-    m_axisYGPU.Release();
+    m_cageWireGPU.Release();
+    m_groundPlaneGPU.Release();
 
     if (m_colorSRV) { m_colorSRV->Release(); m_colorSRV = nullptr; }
     if (m_colorRTV) { m_colorRTV->Release(); m_colorRTV = nullptr; }
@@ -132,6 +185,7 @@ void ViewportRenderer::Release() {
     if (m_solidNoCullRS) { m_solidNoCullRS->Release(); m_solidNoCullRS = nullptr; }
     if (m_wireframeRS) { m_wireframeRS->Release(); m_wireframeRS = nullptr; }
     if (m_depthState) { m_depthState->Release(); m_depthState = nullptr; }
+    if (m_depthNoWriteState) { m_depthNoWriteState->Release(); m_depthNoWriteState = nullptr; }
     if (m_depthBiasState) { m_depthBiasState->Release(); m_depthBiasState = nullptr; }
     if (m_alphaBlendState) { m_alphaBlendState->Release(); m_alphaBlendState = nullptr; }
     if (m_opaqueBlendState) { m_opaqueBlendState->Release(); m_opaqueBlendState = nullptr; }
@@ -233,6 +287,10 @@ bool ViewportRenderer::CreateRasterizerAndBlendStates() {
     dsd.DepthFunc = D3D11_COMPARISON_LESS_EQUAL;
     m_device->CreateDepthStencilState(&dsd, &m_depthState);
 
+    // Depth Stencil State with DepthWriteMask = ZERO (for ground grid & transparent overlays)
+    dsd.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO;
+    m_device->CreateDepthStencilState(&dsd, &m_depthNoWriteState);
+
     // Alpha Blend State (for semi-transparent cage)
     D3D11_BLEND_DESC bd = {};
     bd.RenderTarget[0].BlendEnable = TRUE;
@@ -253,110 +311,37 @@ bool ViewportRenderer::CreateRasterizerAndBlendStates() {
 }
 
 void ViewportRenderer::CreateGridBuffers() {
-    std::vector<ViewportVertex> gridVerts;
-    std::vector<uint32_t> gridIndices;
+    m_groundPlaneGPU.Release();
 
-    std::vector<ViewportVertex> axisXVerts;
-    std::vector<uint32_t> axisXIndices;
+    // Large horizontal ground plane at y=0 for procedural anti-aliased shader
+    ViewportVertex groundVerts[4] = {
+        { { -10000.0f, 0.0f, -10000.0f }, { 0.0f, 1.0f, 0.0f } },
+        { {  10000.0f, 0.0f, -10000.0f }, { 0.0f, 1.0f, 0.0f } },
+        { {  10000.0f, 0.0f,  10000.0f }, { 0.0f, 1.0f, 0.0f } },
+        { { -10000.0f, 0.0f,  10000.0f }, { 0.0f, 1.0f, 0.0f } }
+    };
 
-    std::vector<ViewportVertex> axisYVerts;
-    std::vector<uint32_t> axisYIndices;
+    uint32_t groundIndices[6] = {
+        0, 1, 2,
+        0, 2, 3
+    };
 
-    float extent = 60.0f;
-    int steps = 60;
-    float stepSize = extent * 2.0f / steps;
+    D3D11_BUFFER_DESC vbd = {};
+    vbd.ByteWidth = sizeof(groundVerts);
+    vbd.Usage = D3D11_USAGE_IMMUTABLE;
+    vbd.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+    D3D11_SUBRESOURCE_DATA vInit = { groundVerts };
+    m_device->CreateBuffer(&vbd, &vInit, &m_groundPlaneGPU.vertexBuffer);
 
-    for (int i = 0; i <= steps; ++i) {
-        float c = -extent + i * stepSize;
-        bool isCenter = std::abs(c) < 1e-4f;
+    D3D11_BUFFER_DESC ibd = {};
+    ibd.ByteWidth = sizeof(groundIndices);
+    ibd.Usage = D3D11_USAGE_IMMUTABLE;
+    ibd.BindFlags = D3D11_BIND_INDEX_BUFFER;
+    D3D11_SUBRESOURCE_DATA iInit = { groundIndices };
+    m_device->CreateBuffer(&ibd, &iInit, &m_groundPlaneGPU.indexBuffer);
 
-        // Line along X
-        if (isCenter) {
-            uint32_t idx = (uint32_t)axisXVerts.size();
-            axisXVerts.push_back({ { -extent, 0.0f, c }, { 0.0f, 1.0f, 0.0f } });
-            axisXVerts.push_back({ {  extent, 0.0f, c }, { 0.0f, 1.0f, 0.0f } });
-            axisXIndices.push_back(idx);
-            axisXIndices.push_back(idx + 1);
-        } else {
-            uint32_t idx = (uint32_t)gridVerts.size();
-            gridVerts.push_back({ { -extent, 0.0f, c }, { 0.0f, 1.0f, 0.0f } });
-            gridVerts.push_back({ {  extent, 0.0f, c }, { 0.0f, 1.0f, 0.0f } });
-            gridIndices.push_back(idx);
-            gridIndices.push_back(idx + 1);
-        }
-
-        // Line along Z
-        if (isCenter) {
-            uint32_t idx = (uint32_t)axisYVerts.size();
-            axisYVerts.push_back({ { c, 0.0f, -extent }, { 0.0f, 1.0f, 0.0f } });
-            axisYVerts.push_back({ { c, 0.0f,  extent }, { 0.0f, 1.0f, 0.0f } });
-            axisYIndices.push_back(idx);
-            axisYIndices.push_back(idx + 1);
-        } else {
-            uint32_t idx = (uint32_t)gridVerts.size();
-            gridVerts.push_back({ { c, 0.0f, -extent }, { 0.0f, 1.0f, 0.0f } });
-            gridVerts.push_back({ { c, 0.0f,  extent }, { 0.0f, 1.0f, 0.0f } });
-            gridIndices.push_back(idx);
-            gridIndices.push_back(idx + 1);
-        }
-    }
-
-    // 1. Grid Buffer
-    if (!gridVerts.empty()) {
-        D3D11_BUFFER_DESC vbd = {};
-        vbd.ByteWidth = (UINT)(gridVerts.size() * sizeof(ViewportVertex));
-        vbd.Usage = D3D11_USAGE_IMMUTABLE;
-        vbd.BindFlags = D3D11_BIND_VERTEX_BUFFER;
-        D3D11_SUBRESOURCE_DATA vInit = { gridVerts.data() };
-        m_device->CreateBuffer(&vbd, &vInit, &m_gridGPU.vertexBuffer);
-
-        D3D11_BUFFER_DESC ibd = {};
-        ibd.ByteWidth = (UINT)(gridIndices.size() * sizeof(uint32_t));
-        ibd.Usage = D3D11_USAGE_IMMUTABLE;
-        ibd.BindFlags = D3D11_BIND_INDEX_BUFFER;
-        D3D11_SUBRESOURCE_DATA iInit = { gridIndices.data() };
-        m_device->CreateBuffer(&ibd, &iInit, &m_gridGPU.indexBuffer);
-
-        m_gridGPU.indexCount = (uint32_t)gridIndices.size();
-    }
-
-    // 2. Axis X (Red) Buffer
-    if (!axisXVerts.empty()) {
-        D3D11_BUFFER_DESC vbd = {};
-        vbd.ByteWidth = (UINT)(axisXVerts.size() * sizeof(ViewportVertex));
-        vbd.Usage = D3D11_USAGE_IMMUTABLE;
-        vbd.BindFlags = D3D11_BIND_VERTEX_BUFFER;
-        D3D11_SUBRESOURCE_DATA vInit = { axisXVerts.data() };
-        m_device->CreateBuffer(&vbd, &vInit, &m_axisXGPU.vertexBuffer);
-
-        D3D11_BUFFER_DESC ibd = {};
-        ibd.ByteWidth = (UINT)(axisXIndices.size() * sizeof(uint32_t));
-        ibd.Usage = D3D11_USAGE_IMMUTABLE;
-        ibd.BindFlags = D3D11_BIND_INDEX_BUFFER;
-        D3D11_SUBRESOURCE_DATA iInit = { axisXIndices.data() };
-        m_device->CreateBuffer(&ibd, &iInit, &m_axisXGPU.indexBuffer);
-
-        m_axisXGPU.indexCount = (uint32_t)axisXIndices.size();
-    }
-
-    // 3. Axis Y (Green) Buffer
-    if (!axisYVerts.empty()) {
-        D3D11_BUFFER_DESC vbd = {};
-        vbd.ByteWidth = (UINT)(axisYVerts.size() * sizeof(ViewportVertex));
-        vbd.Usage = D3D11_USAGE_IMMUTABLE;
-        vbd.BindFlags = D3D11_BIND_VERTEX_BUFFER;
-        D3D11_SUBRESOURCE_DATA vInit = { axisYVerts.data() };
-        m_device->CreateBuffer(&vbd, &vInit, &m_axisYGPU.vertexBuffer);
-
-        D3D11_BUFFER_DESC ibd = {};
-        ibd.ByteWidth = (UINT)(axisYIndices.size() * sizeof(uint32_t));
-        ibd.Usage = D3D11_USAGE_IMMUTABLE;
-        ibd.BindFlags = D3D11_BIND_INDEX_BUFFER;
-        D3D11_SUBRESOURCE_DATA iInit = { axisYIndices.data() };
-        m_device->CreateBuffer(&ibd, &iInit, &m_axisYGPU.indexBuffer);
-
-        m_axisYGPU.indexCount = (uint32_t)axisYIndices.size();
-    }
+    m_groundPlaneGPU.indexCount = 6;
+    m_groundPlaneGPU.vertexCount = 4;
 }
 
 void ViewportRenderer::Resize(int width, int height) {
@@ -395,6 +380,7 @@ void ViewportRenderer::Resize(int width, int height) {
 
 void ViewportRenderer::SetLowPolyMesh(const LowPolyMesh& mesh, float scaleMultiplier) {
     m_lowPolyGPU.Release();
+    m_lowPolyWireGPU.Release();
     if (mesh.vertices.empty() || mesh.triangles.empty()) return;
 
     float s = scaleMultiplier > 1e-5f ? scaleMultiplier : 1.0f;
@@ -426,6 +412,7 @@ void ViewportRenderer::SetLowPolyMesh(const LowPolyMesh& mesh, float scaleMultip
         indices.push_back(tri.indices[2]);
     }
 
+    // 1. Shaded mesh triangles
     D3D11_BUFFER_DESC vbd = {};
     vbd.ByteWidth = (UINT)(verts.size() * sizeof(ViewportVertex));
     vbd.Usage = D3D11_USAGE_IMMUTABLE;
@@ -442,6 +429,17 @@ void ViewportRenderer::SetLowPolyMesh(const LowPolyMesh& mesh, float scaleMultip
 
     m_lowPolyGPU.indexCount = (uint32_t)indices.size();
     m_lowPolyGPU.vertexCount = (uint32_t)verts.size();
+
+    // 2. Wireframe lines: Pure polygon edges (NO diagonal triangulation splits!)
+    if (!mesh.wireframeLineIndices.empty()) {
+        D3D11_BUFFER_DESC wibd = {};
+        wibd.ByteWidth = (UINT)(mesh.wireframeLineIndices.size() * sizeof(uint32_t));
+        wibd.Usage = D3D11_USAGE_IMMUTABLE;
+        wibd.BindFlags = D3D11_BIND_INDEX_BUFFER;
+        D3D11_SUBRESOURCE_DATA wiInit = { mesh.wireframeLineIndices.data() };
+        m_device->CreateBuffer(&wibd, &wiInit, &m_lowPolyWireGPU.indexBuffer);
+        m_lowPolyWireGPU.indexCount = (uint32_t)mesh.wireframeLineIndices.size();
+    }
 
     FrameAll();
 }
@@ -498,6 +496,7 @@ void ViewportRenderer::SetHighPolyMesh(const HighPolyMesh& mesh) {
 
 void ViewportRenderer::UpdateCage(const LowPolyMesh& mesh, float cageDistance, float scaleMultiplier) {
     m_cageGPU.Release();
+    m_cageWireGPU.Release();
     if (mesh.vertices.empty() || mesh.triangles.empty()) return;
 
     float s = scaleMultiplier > 1e-5f ? scaleMultiplier : 1.0f;
@@ -545,6 +544,17 @@ void ViewportRenderer::UpdateCage(const LowPolyMesh& mesh, float cageDistance, f
 
     m_cageGPU.indexCount = (uint32_t)indices.size();
     m_cageGPU.vertexCount = (uint32_t)verts.size();
+
+    // Cage wireframe index buffer: Pure polygon edges
+    if (!mesh.wireframeLineIndices.empty()) {
+        D3D11_BUFFER_DESC wibd = {};
+        wibd.ByteWidth = (UINT)(mesh.wireframeLineIndices.size() * sizeof(uint32_t));
+        wibd.Usage = D3D11_USAGE_IMMUTABLE;
+        wibd.BindFlags = D3D11_BIND_INDEX_BUFFER;
+        D3D11_SUBRESOURCE_DATA wiInit = { mesh.wireframeLineIndices.data() };
+        m_device->CreateBuffer(&wibd, &wiInit, &m_cageWireGPU.indexBuffer);
+        m_cageWireGPU.indexCount = (uint32_t)mesh.wireframeLineIndices.size();
+    }
 }
 
 void ViewportRenderer::RecalculateSceneBounds() {
@@ -771,35 +781,19 @@ void ViewportRenderer::Render() {
     UINT stride = sizeof(ViewportVertex);
     UINT offset = 0;
 
-    // 1. Render Ground Grid (Blender subtle grid + colored X/Y axes)
-    if (showGrid) {
+    // 1. Render Ground Grid (Blender Procedural Anti-Aliased Ground Grid & Colored Axes)
+    if (showGrid && m_groundPlaneGPU.vertexBuffer) {
         m_context->OMSetBlendState(m_alphaBlendState, nullptr, 0xFFFFFFFF);
+        m_context->OMSetDepthStencilState(m_depthNoWriteState, 0);
         m_context->RSSetState(m_solidNoCullRS);
-        m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_LINELIST);
+        m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
-        // Subtle slate grid lines
-        if (m_gridGPU.vertexBuffer) {
-            UpdateConstantBuffer(identity, { 0.42f, 0.42f, 0.44f, 0.50f }, 5);
-            m_context->IASetVertexBuffers(0, 1, &m_gridGPU.vertexBuffer, &stride, &offset);
-            m_context->IASetIndexBuffer(m_gridGPU.indexBuffer, DXGI_FORMAT_R32_UINT, 0);
-            m_context->DrawIndexed(m_gridGPU.indexCount, 0, 0);
-        }
+        UpdateConstantBuffer(identity, { 1.0f, 1.0f, 1.0f, 1.0f }, 5);
+        m_context->IASetVertexBuffers(0, 1, &m_groundPlaneGPU.vertexBuffer, &stride, &offset);
+        m_context->IASetIndexBuffer(m_groundPlaneGPU.indexBuffer, DXGI_FORMAT_R32_UINT, 0);
+        m_context->DrawIndexed(m_groundPlaneGPU.indexCount, 0, 0);
 
-        // Blender Red X Axis
-        if (m_axisXGPU.vertexBuffer) {
-            UpdateConstantBuffer(identity, { 0.88f, 0.22f, 0.22f, 0.95f }, 5);
-            m_context->IASetVertexBuffers(0, 1, &m_axisXGPU.vertexBuffer, &stride, &offset);
-            m_context->IASetIndexBuffer(m_axisXGPU.indexBuffer, DXGI_FORMAT_R32_UINT, 0);
-            m_context->DrawIndexed(m_axisXGPU.indexCount, 0, 0);
-        }
-
-        // Blender Green Y/Z Axis
-        if (m_axisYGPU.vertexBuffer) {
-            UpdateConstantBuffer(identity, { 0.25f, 0.82f, 0.25f, 0.95f }, 5);
-            m_context->IASetVertexBuffers(0, 1, &m_axisYGPU.vertexBuffer, &stride, &offset);
-            m_context->IASetIndexBuffer(m_axisYGPU.indexBuffer, DXGI_FORMAT_R32_UINT, 0);
-            m_context->DrawIndexed(m_axisYGPU.indexCount, 0, 0);
-        }
+        m_context->OMSetDepthStencilState(m_depthState, 0);
     }
 
     m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
@@ -831,7 +825,7 @@ void ViewportRenderer::Render() {
         m_context->IASetIndexBuffer(m_lowPolyGPU.indexBuffer, DXGI_FORMAT_R32_UINT, 0);
         m_context->DrawIndexed(m_lowPolyGPU.indexCount, 0, 0);
 
-        // Wireframe overlay
+        // Wireframe overlay (Pure polygon edges, NO diagonal triangulation splits!)
         if (showLowPolyWireframe) {
             m_context->OMSetBlendState(m_alphaBlendState, nullptr, 0xFFFFFFFF);
             m_context->RSSetState(m_wireframeRS);
@@ -839,7 +833,17 @@ void ViewportRenderer::Render() {
             DirectX::XMFLOAT4 wireColor = { 0.10f, 0.12f, 0.15f, 0.90f };
             UpdateConstantBuffer(worldLP, wireColor, 4);
 
-            m_context->DrawIndexed(m_lowPolyGPU.indexCount, 0, 0);
+            if (m_lowPolyWireGPU.indexBuffer && m_lowPolyWireGPU.indexCount > 0) {
+                m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_LINELIST);
+                m_context->IASetVertexBuffers(0, 1, &m_lowPolyGPU.vertexBuffer, &stride, &offset);
+                m_context->IASetIndexBuffer(m_lowPolyWireGPU.indexBuffer, DXGI_FORMAT_R32_UINT, 0);
+                m_context->DrawIndexed(m_lowPolyWireGPU.indexCount, 0, 0);
+                m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+            } else {
+                m_context->IASetVertexBuffers(0, 1, &m_lowPolyGPU.vertexBuffer, &stride, &offset);
+                m_context->IASetIndexBuffer(m_lowPolyGPU.indexBuffer, DXGI_FORMAT_R32_UINT, 0);
+                m_context->DrawIndexed(m_lowPolyGPU.indexCount, 0, 0);
+            }
         }
     }
 
@@ -856,11 +860,20 @@ void ViewportRenderer::Render() {
         m_context->IASetIndexBuffer(m_cageGPU.indexBuffer, DXGI_FORMAT_R32_UINT, 0);
         m_context->DrawIndexed(m_cageGPU.indexCount, 0, 0);
 
-        // Cage wireframe
+        // Cage wireframe (Pure polygon edges)
         m_context->RSSetState(m_wireframeRS);
         DirectX::XMFLOAT4 cageWire = { 1.0f, 0.68f, 0.22f, 0.92f };
         UpdateConstantBuffer(worldLP, cageWire, 4);
-        m_context->DrawIndexed(m_cageGPU.indexCount, 0, 0);
+
+        if (m_cageWireGPU.indexBuffer && m_cageWireGPU.indexCount > 0) {
+            m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_LINELIST);
+            m_context->IASetVertexBuffers(0, 1, &m_cageGPU.vertexBuffer, &stride, &offset);
+            m_context->IASetIndexBuffer(m_cageWireGPU.indexBuffer, DXGI_FORMAT_R32_UINT, 0);
+            m_context->DrawIndexed(m_cageWireGPU.indexCount, 0, 0);
+            m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        } else {
+            m_context->DrawIndexed(m_cageGPU.indexCount, 0, 0);
+        }
     }
 }
 

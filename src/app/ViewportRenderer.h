@@ -92,6 +92,7 @@ private:
     ID3D11RasterizerState* m_solidNoCullRS = nullptr;
     ID3D11RasterizerState* m_wireframeRS = nullptr;
     ID3D11DepthStencilState* m_depthState = nullptr;
+    ID3D11DepthStencilState* m_depthNoWriteState = nullptr;
     ID3D11DepthStencilState* m_depthBiasState = nullptr;
     ID3D11BlendState* m_alphaBlendState = nullptr;
     ID3D11BlendState* m_opaqueBlendState = nullptr;
@@ -113,10 +114,10 @@ private:
 
     MeshGPUBuffer m_highPolyGPU;
     MeshGPUBuffer m_lowPolyGPU;
+    MeshGPUBuffer m_lowPolyWireGPU; // Pure polygon edges (no internal triangulation diagonals!)
     MeshGPUBuffer m_cageGPU;
-    MeshGPUBuffer m_gridGPU;
-    MeshGPUBuffer m_axisXGPU;
-    MeshGPUBuffer m_axisYGPU;
+    MeshGPUBuffer m_cageWireGPU;
+    MeshGPUBuffer m_groundPlaneGPU; // Blender-style procedural anti-aliased ground plane
 
     // Camera State
     DirectX::XMFLOAT3 m_cameraTarget = { 0.0f, 0.0f, 0.0f };

@@ -83,6 +83,12 @@ struct LowPolyMesh {
     std::vector<Vec3> cagePositions; // Optional explicit cage vertex positions
     std::vector<Vec3> cageNormals;   // Watertight averaged normals across UV seams for continuous envelope
 
+    // Original polygon topology preserved from source DCC / ZBrush (Quads & Tris)
+    uint32_t quadCount = 0;
+    uint32_t triCount = 0;
+    uint32_t polyCount = 0;
+    std::vector<uint32_t> wireframeLineIndices; // Perimeter line edges of original faces (NO internal diagonals!)
+
     Vec3 translation = Vec3(0, 0, 0);
     Vec3 rotation = Vec3(0, 0, 0); // Pitch, Yaw, Roll in degrees
     Vec3 scale = Vec3(1, 1, 1);
@@ -198,6 +204,10 @@ struct LowPolyMesh {
         cagePositions.clear();
         cageNormals.clear();
         cageOffsets.clear();
+        quadCount = 0;
+        triCount = 0;
+        polyCount = 0;
+        wireframeLineIndices.clear();
         translation = Vec3(0, 0, 0);
         rotation = Vec3(0, 0, 0);
         scale = Vec3(1, 1, 1);

@@ -102,63 +102,88 @@ bool MeshLoader::LoadLowPolyFBX(
 
         for (size_t f = 0; f < mesh->faces.count; ++f) {
             ufbx_face face = mesh->faces.data[f];
+            if (face.num_indices < 3) continue;
+
+            std::vector<uint32_t> faceIndices(face.num_indices);
+            float triU = 0.0f;
+            float triV = 0.0f;
+
+            for (uint32_t v = 0; v < face.num_indices; ++v) {
+                uint32_t meshIdx = face.index_begin + v;
+                ufbx_vec3 localPos = ufbx_get_vertex_vec3(&mesh->vertex_position, meshIdx);
+                ufbx_vec3 worldPos = ufbx_transform_position(&node->geometry_to_world, localPos);
+
+                ufbx_vec3 worldNorm = { 0.0f, 1.0f, 0.0f };
+                if (mesh->vertex_normal.exists) {
+                    ufbx_vec3 localNorm = ufbx_get_vertex_vec3(&mesh->vertex_normal, meshIdx);
+                    worldNorm = ufbx_transform_direction(&normMat, localNorm);
+                }
+
+                ufbx_vec2 uv = { 0.0f, 0.0f };
+                if (mesh->vertex_uv.exists) {
+                    uv = ufbx_get_vertex_vec2(&mesh->vertex_uv, meshIdx);
+                }
+
+                Vertex vert;
+                vert.position = { (float)worldPos.x, (float)worldPos.y, (float)worldPos.z };
+                vert.normal = { (float)worldNorm.x, (float)worldNorm.y, (float)worldNorm.z };
+                vert.uv = { (float)uv.x, (float)uv.y };
+
+                triU += vert.uv.u;
+                triV += vert.uv.v;
+
+                uint32_t newIdx = (uint32_t)outMesh.vertices.size();
+                outMesh.vertices.push_back(vert);
+                faceIndices[v] = newIdx;
+            }
+
+            // Normal fallback
+            Vertex& v0 = outMesh.vertices[faceIndices[0]];
+            Vertex& v1 = outMesh.vertices[faceIndices[1]];
+            Vertex& v2 = outMesh.vertices[faceIndices[2]];
+            Vec3 edge1 = v1.position - v0.position;
+            Vec3 edge2 = v2.position - v0.position;
+            Vec3 faceNormal = edge1.Cross(edge2).Normalized();
+            for (uint32_t v = 0; v < face.num_indices; ++v) {
+                if (outMesh.vertices[faceIndices[v]].normal.Length() < 1e-4f) {
+                    outMesh.vertices[faceIndices[v]].normal = faceNormal;
+                }
+            }
+
+            triU /= (float)face.num_indices;
+            triV /= (float)face.num_indices;
+            int tileId = CalculateUDIMTile(triU, triV);
+            udimSet.insert(tileId);
+
+            // 1. Wireframe lines: Perimeter edges of original polygon face (NO diagonal splits!)
+            for (uint32_t v = 0; v < face.num_indices; ++v) {
+                outMesh.wireframeLineIndices.push_back(faceIndices[v]);
+                outMesh.wireframeLineIndices.push_back(faceIndices[(v + 1) % face.num_indices]);
+            }
+
+            // 2. Count original topology
+            if (face.num_indices == 4) {
+                outMesh.quadCount++;
+            } else if (face.num_indices == 3) {
+                outMesh.triCount++;
+            }
+            outMesh.polyCount++;
+
+            // 3. Triangulation for baking ray-tracing and MikkTSpace
             uint32_t triIndices[64];
             uint32_t numTris = ufbx_triangulate_face(triIndices, 64, mesh, face);
-
             for (uint32_t t = 0; t < numTris; ++t) {
                 LowPolyTriangle tri;
                 tri.meshIndex = nodeIdx;
                 tri.groupMask = nodeMask;
-                float triU = 0.0f;
-                float triV = 0.0f;
+                tri.udimTile = tileId;
 
                 for (uint32_t c = 0; c < 3; ++c) {
-                    uint32_t meshIdx = triIndices[t * 3 + c];
-                    ufbx_vec3 localPos = ufbx_get_vertex_vec3(&mesh->vertex_position, meshIdx);
-                    ufbx_vec3 worldPos = ufbx_transform_position(&node->geometry_to_world, localPos);
-
-                    ufbx_vec3 worldNorm = { 0.0f, 1.0f, 0.0f };
-                    if (mesh->vertex_normal.exists) {
-                        ufbx_vec3 localNorm = ufbx_get_vertex_vec3(&mesh->vertex_normal, meshIdx);
-                        worldNorm = ufbx_transform_direction(&normMat, localNorm);
-                    }
-
-                    ufbx_vec2 uv = { 0.0f, 0.0f };
-                    if (mesh->vertex_uv.exists) {
-                        uv = ufbx_get_vertex_vec2(&mesh->vertex_uv, meshIdx);
-                    }
-
-                    Vertex vert;
-                    vert.position = { (float)worldPos.x, (float)worldPos.y, (float)worldPos.z };
-                    vert.normal = { (float)worldNorm.x, (float)worldNorm.y, (float)worldNorm.z };
-                    vert.uv = { (float)uv.x, (float)uv.y };
-
-                    triU += vert.uv.u;
-                    triV += vert.uv.v;
-
-                    uint32_t newIdx = (uint32_t)outMesh.vertices.size();
-                    outMesh.vertices.push_back(vert);
-                    outMesh.indices.push_back(newIdx);
-                    tri.indices[c] = newIdx;
+                    uint32_t cornerIdx = triIndices[t * 3 + c] - face.index_begin;
+                    uint32_t vIdx = faceIndices[cornerIdx];
+                    tri.indices[c] = vIdx;
+                    outMesh.indices.push_back(vIdx);
                 }
-
-                Vertex& v0 = outMesh.vertices[tri.indices[0]];
-                Vertex& v1 = outMesh.vertices[tri.indices[1]];
-                Vertex& v2 = outMesh.vertices[tri.indices[2]];
-                Vec3 edge1 = v1.position - v0.position;
-                Vec3 edge2 = v2.position - v0.position;
-                Vec3 faceNormal = edge1.Cross(edge2).Normalized();
-
-                if (v0.normal.Length() < 1e-4f) v0.normal = faceNormal;
-                if (v1.normal.Length() < 1e-4f) v1.normal = faceNormal;
-                if (v2.normal.Length() < 1e-4f) v2.normal = faceNormal;
-
-                triU /= 3.0f;
-                triV /= 3.0f;
-                int tileId = CalculateUDIMTile(triU, triV);
-                tri.udimTile = tileId;
-                udimSet.insert(tileId);
-
                 outMesh.triangles.push_back(tri);
             }
         }
@@ -211,16 +236,13 @@ bool MeshLoader::LoadCageFBX(
 
         for (size_t f = 0; f < mesh->faces.count; ++f) {
             ufbx_face face = mesh->faces.data[f];
-            uint32_t triIndices[64];
-            uint32_t numTris = ufbx_triangulate_face(triIndices, 64, mesh, face);
+            if (face.num_indices < 3) continue;
 
-            for (uint32_t t = 0; t < numTris; ++t) {
-                for (uint32_t c = 0; c < 3; ++c) {
-                    uint32_t meshIdx = triIndices[t * 3 + c];
-                    ufbx_vec3 localPos = ufbx_get_vertex_vec3(&mesh->vertex_position, meshIdx);
-                    ufbx_vec3 worldPos = ufbx_transform_position(&node->geometry_to_world, localPos);
-                    cageVerts.push_back({ (float)worldPos.x, (float)worldPos.y, (float)worldPos.z });
-                }
+            for (uint32_t v = 0; v < face.num_indices; ++v) {
+                uint32_t meshIdx = face.index_begin + v;
+                ufbx_vec3 localPos = ufbx_get_vertex_vec3(&mesh->vertex_position, meshIdx);
+                ufbx_vec3 worldPos = ufbx_transform_position(&node->geometry_to_world, localPos);
+                cageVerts.push_back({ (float)worldPos.x, (float)worldPos.y, (float)worldPos.z });
             }
         }
     }
@@ -317,7 +339,7 @@ bool MeshLoader::LoadLowPolyOBJ(
     outMesh.Clear();
 
     tinyobj::ObjReaderConfig readerConfig;
-    readerConfig.triangulate = true;
+    readerConfig.triangulate = false;
 
     tinyobj::ObjReader reader;
     if (!reader.ParseFromFile(filePath, readerConfig)) {
@@ -346,18 +368,16 @@ bool MeshLoader::LoadLowPolyOBJ(
         size_t indexOffset = 0;
         for (size_t f = 0; f < shape.mesh.num_face_vertices.size(); ++f) {
             size_t fv = shape.mesh.num_face_vertices[f];
-            if (fv != 3) {
+            if (fv < 3) {
                 indexOffset += fv;
                 continue;
             }
 
-            LowPolyTriangle tri;
-            tri.meshIndex = shapeIdx;
-            tri.groupMask = shapeMask;
-            float triU = 0.0f;
-            float triV = 0.0f;
+            std::vector<uint32_t> faceIndices(fv);
+            float faceU = 0.0f;
+            float faceV = 0.0f;
 
-            for (size_t v = 0; v < 3; ++v) {
+            for (size_t v = 0; v < fv; ++v) {
                 tinyobj::index_t idx = shape.mesh.indices[indexOffset + v];
                 Vertex vert;
 
@@ -378,34 +398,64 @@ bool MeshLoader::LoadLowPolyOBJ(
                     vert.uv.v = attrib.texcoords[2 * idx.texcoord_index + 1];
                 }
 
-                triU += vert.uv.u;
-                triV += vert.uv.v;
+                faceU += vert.uv.u;
+                faceV += vert.uv.v;
 
                 uint32_t newIdx = static_cast<uint32_t>(outMesh.vertices.size());
                 outMesh.vertices.push_back(vert);
-                outMesh.indices.push_back(newIdx);
-                tri.indices[v] = newIdx;
+                faceIndices[v] = newIdx;
             }
 
-            Vertex& v0 = outMesh.vertices[tri.indices[0]];
-            Vertex& v1 = outMesh.vertices[tri.indices[1]];
-            Vertex& v2 = outMesh.vertices[tri.indices[2]];
+            Vertex& v0 = outMesh.vertices[faceIndices[0]];
+            Vertex& v1 = outMesh.vertices[faceIndices[1]];
+            Vertex& v2 = outMesh.vertices[faceIndices[2]];
             Vec3 edge1 = v1.position - v0.position;
             Vec3 edge2 = v2.position - v0.position;
             Vec3 faceNormal = edge1.Cross(edge2).Normalized();
 
-            if (v0.normal.Length() < 1e-4f) v0.normal = faceNormal;
-            if (v1.normal.Length() < 1e-4f) v1.normal = faceNormal;
-            if (v2.normal.Length() < 1e-4f) v2.normal = faceNormal;
+            for (size_t v = 0; v < fv; ++v) {
+                if (outMesh.vertices[faceIndices[v]].normal.Length() < 1e-4f) {
+                    outMesh.vertices[faceIndices[v]].normal = faceNormal;
+                }
+            }
 
-            triU /= 3.0f;
-            triV /= 3.0f;
-            int tileId = CalculateUDIMTile(triU, triV);
-            tri.udimTile = tileId;
+            faceU /= (float)fv;
+            faceV /= (float)fv;
+            int tileId = CalculateUDIMTile(faceU, faceV);
             udimSet.insert(tileId);
 
-            outMesh.triangles.push_back(tri);
-            indexOffset += 3;
+            // 1. Wireframe lines: Perimeter of original polygon (NO diagonal splits!)
+            for (size_t v = 0; v < fv; ++v) {
+                outMesh.wireframeLineIndices.push_back(faceIndices[v]);
+                outMesh.wireframeLineIndices.push_back(faceIndices[(v + 1) % fv]);
+            }
+
+            // 2. Count original topology
+            if (fv == 4) {
+                outMesh.quadCount++;
+            } else if (fv == 3) {
+                outMesh.triCount++;
+            }
+            outMesh.polyCount++;
+
+            // 3. Triangulate for baking ray-tracing and MikkTSpace (fan triangulation: 0, k, k+1)
+            for (size_t k = 1; k + 1 < fv; ++k) {
+                LowPolyTriangle tri;
+                tri.meshIndex = shapeIdx;
+                tri.groupMask = shapeMask;
+                tri.udimTile = tileId;
+                tri.indices[0] = faceIndices[0];
+                tri.indices[1] = faceIndices[k];
+                tri.indices[2] = faceIndices[k + 1];
+
+                outMesh.indices.push_back(tri.indices[0]);
+                outMesh.indices.push_back(tri.indices[1]);
+                outMesh.indices.push_back(tri.indices[2]);
+
+                outMesh.triangles.push_back(tri);
+            }
+
+            indexOffset += fv;
         }
         shapeIdx++;
     }
@@ -431,7 +481,7 @@ bool MeshLoader::LoadCageOBJ(
     }
 
     tinyobj::ObjReaderConfig readerConfig;
-    readerConfig.triangulate = true;
+    readerConfig.triangulate = false;
 
     tinyobj::ObjReader reader;
     if (!reader.ParseFromFile(filePath, readerConfig)) {
@@ -447,12 +497,12 @@ bool MeshLoader::LoadCageOBJ(
         size_t indexOffset = 0;
         for (size_t f = 0; f < shape.mesh.num_face_vertices.size(); ++f) {
             size_t fv = shape.mesh.num_face_vertices[f];
-            if (fv != 3) {
+            if (fv < 3) {
                 indexOffset += fv;
                 continue;
             }
 
-            for (size_t v = 0; v < 3; ++v) {
+            for (size_t v = 0; v < fv; ++v) {
                 tinyobj::index_t idx = shape.mesh.indices[indexOffset + v];
                 Vec3 p(0, 0, 0);
                 if (idx.vertex_index >= 0) {
@@ -462,7 +512,7 @@ bool MeshLoader::LoadCageOBJ(
                 }
                 cageVerts.push_back(p);
             }
-            indexOffset += 3;
+            indexOffset += fv;
         }
     }
 

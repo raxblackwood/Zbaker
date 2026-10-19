@@ -482,7 +482,11 @@ void StandaloneUIManager::RenderOutlinerPanel() {
                     if (m_isLoadingHighPoly) {
                         BakerUI::StatusPill("Ingesting & building BVH...", BakerUI::Col::Warn());
                     } else {
-                        ImGui::TextDisabled("Verts: %zu  |  Tris: %zu", m_highPolyMesh.positions.size(), m_highPolyMesh.indices.size() / 3);
+                        if (m_highPolyMesh.isQuadMesh && !m_highPolyMesh.quadIndices.empty()) {
+                            ImGui::TextDisabled("Verts: %zu  |  Quads: %zu", m_highPolyMesh.positions.size(), m_highPolyMesh.quadIndices.size() / 4);
+                        } else {
+                            ImGui::TextDisabled("Verts: %zu  |  Tris: %zu", m_highPolyMesh.positions.size(), m_highPolyMesh.indices.size() / 3);
+                        }
 
                         // Badges
                         if (!m_highPolyMesh.colors.empty()) {
@@ -534,7 +538,15 @@ void StandaloneUIManager::RenderOutlinerPanel() {
 
                 if (lpOpen) {
                     ImGui::Indent(16.0f);
-                    ImGui::TextDisabled("Verts: %zu  |  Tris: %zu", m_lowPolyMesh.vertices.size(), m_lowPolyMesh.triangles.size());
+                    if (m_lowPolyMesh.quadCount > 0 && m_lowPolyMesh.triCount == 0) {
+                        ImGui::TextDisabled("Verts: %zu  |  Quads: %u", m_lowPolyMesh.vertices.size(), m_lowPolyMesh.quadCount);
+                    } else if (m_lowPolyMesh.quadCount > 0) {
+                        ImGui::TextDisabled("Verts: %zu  |  Faces: %u (%u Quads, %u Tris)",
+                                            m_lowPolyMesh.vertices.size(), m_lowPolyMesh.polyCount,
+                                            m_lowPolyMesh.quadCount, m_lowPolyMesh.triCount);
+                    } else {
+                        ImGui::TextDisabled("Verts: %zu  |  Tris: %zu", m_lowPolyMesh.vertices.size(), m_lowPolyMesh.triangles.size());
+                    }
                     ImGui::SetNextItemWidth(120);
                     ImGui::SliderFloat("Opacity##lp_op", &m_viewportRenderer.lowPolyOpacity, 0.05f, 1.0f, "%.2f");
 
@@ -793,7 +805,11 @@ void StandaloneUIManager::RenderMeshPanel() {
             if (BakerUI::gFontMono) ImGui::PushFont(BakerUI::gFontMono);
             ImGui::TextDisabled("%s", m_highPolyPath.c_str());
             ImGui::Text("Positions: %zu", m_highPolyMesh.positions.size());
-            ImGui::Text("Triangles: %zu", m_highPolyMesh.indices.size() / 3);
+            if (m_highPolyMesh.isQuadMesh && !m_highPolyMesh.quadIndices.empty()) {
+                ImGui::Text("Quads:     %zu", m_highPolyMesh.quadIndices.size() / 4);
+            } else {
+                ImGui::Text("Triangles: %zu", m_highPolyMesh.indices.size() / 3);
+            }
             ImGui::Text("Diagonal:  %.4f", m_highPolyMesh.GetBoundingBoxDiagonal());
             if (BakerUI::gFontMono) ImGui::PopFont();
             ImGui::Spacing();
@@ -825,7 +841,13 @@ void StandaloneUIManager::RenderMeshPanel() {
             if (BakerUI::gFontMono) ImGui::PushFont(BakerUI::gFontMono);
             ImGui::TextDisabled("%s", m_lowPolyPath.c_str());
             ImGui::Text("Vertices:   %zu", m_lowPolyMesh.vertices.size());
-            ImGui::Text("Triangles:  %zu", m_lowPolyMesh.triangles.size());
+            if (m_lowPolyMesh.quadCount > 0 && m_lowPolyMesh.triCount == 0) {
+                ImGui::Text("Quads:      %u", m_lowPolyMesh.quadCount);
+            } else if (m_lowPolyMesh.quadCount > 0) {
+                ImGui::Text("Faces:      %u (%u Quads, %u Tris)", m_lowPolyMesh.polyCount, m_lowPolyMesh.quadCount, m_lowPolyMesh.triCount);
+            } else {
+                ImGui::Text("Triangles:  %zu", m_lowPolyMesh.triangles.size());
+            }
             ImGui::Text("UDIM Tiles: %zu detected", m_lowPolyMesh.detectedUDIMs.size());
             if (BakerUI::gFontMono) ImGui::PopFont();
 
