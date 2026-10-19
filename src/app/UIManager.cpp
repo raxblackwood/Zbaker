@@ -259,6 +259,35 @@ void UIManager::SetCommandLineLowPoly(const std::string& path) {
     }
 }
 
+void UIManager::ClearLowPoly() {
+    m_lowPolyMesh.Clear();
+    m_hasLowPoly = false;
+    m_lowPolyPath.clear();
+    m_selectedUDIMs.clear();
+    m_viewportRenderer.SetLowPolyMesh(m_lowPolyMesh, 1.0f);
+    m_viewportRenderer.UpdateCage(m_lowPolyMesh, 0.0f, 1.0f);
+    m_logEntries.push_back("[Scene] Low-Poly mesh cleared.");
+}
+
+void UIManager::ClearHighPoly() {
+    std::lock_guard<std::mutex> lock(m_meshMutex);
+    m_highPolyMesh.Clear();
+    m_hasHighPoly = false;
+    m_highPolyPath.clear();
+    m_pendingMeshUpload = false;
+    m_viewportRenderer.SetHighPolyMesh(m_highPolyMesh);
+    m_logEntries.push_back("[Scene] High-Poly mesh cleared.");
+}
+
+void UIManager::ClearScene() {
+    ClearLowPoly();
+    ClearHighPoly();
+    m_hasExplicitCage = false;
+    m_cagePath.clear();
+    m_viewportRenderer.FrameAll();
+    m_logEntries.push_back("[Scene] Scene completely cleared.");
+}
+
 void UIManager::AutoDetectZBrushCache(bool force) {
     std::string cacheLow = "C:/Users/Public/Documents/ZBrushData2026/ZPluginData/UDIMBaker/UDIM_LowPoly.obj";
     std::string cacheHigh = "C:/Users/Public/Documents/ZBrushData2026/ZPluginData/UDIMBaker/UDIM_HighPoly.obj";
@@ -402,6 +431,14 @@ void UIManager::RenderUI() {
             }
         }
     }
+    if (m_shellState.clearScene) {
+        m_shellState.clearScene = false;
+        ClearScene();
+    }
+    if (m_shellState.loadZBrushCache) {
+        m_shellState.loadZBrushCache = false;
+        AutoDetectZBrushCache(true);
+    }
     if (m_shellState.exitApp) {
         PostQuitMessage(0);
     }
@@ -437,11 +474,23 @@ void UIManager::RenderOutlinerPanel() {
     ImGui::Begin("Scene Outliner###outliner", &m_shellState.showOutliner);
 
     BakerUI::SectionLabel("SCENE HIERARCHY");
+    if (m_hasHighPoly || m_hasLowPoly) {
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Clear All##scene_clr")) {
+            ClearScene();
+        }
+    }
 
     // 1. High-Poly Sculpt Node
     bool hpOpen = ImGui::TreeNodeEx("##hp_node", ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth, "High-Poly Sculpt");
     ImGui::SameLine();
     BakerUI::ToggleChip("View##hp_vis", &m_viewportRenderer.showHighPoly);
+    if (m_hasHighPoly) {
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Clear##hp_clr")) {
+            ClearHighPoly();
+        }
+    }
 
     if (hpOpen) {
         ImGui::Indent(18.0f);
@@ -485,6 +534,12 @@ void UIManager::RenderOutlinerPanel() {
     BakerUI::ToggleChip("View##lp_vis", &m_viewportRenderer.showLowPoly);
     ImGui::SameLine();
     BakerUI::ToggleChip("Wire##lp_wire", &m_viewportRenderer.showLowPolyWireframe);
+    if (m_hasLowPoly) {
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Clear##lp_clr")) {
+            ClearLowPoly();
+        }
+    }
 
     if (lpOpen) {
         ImGui::Indent(18.0f);

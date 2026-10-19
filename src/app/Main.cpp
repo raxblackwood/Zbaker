@@ -109,9 +109,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         LocalFree(argv);
     }
 
-    // Auto-detect any cached ZBrush session files
-    uiManager.AutoDetectZBrushCache();
-
     // Main event loop
     bool done = false;
     while (!done) {

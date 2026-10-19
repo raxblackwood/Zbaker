@@ -310,6 +310,8 @@ struct ShellState {
     bool        openLowPoly = false;
     bool        openHighPoly = false;
     bool        openCage = false;
+    bool        clearScene = false;
+    bool        loadZBrushCache = false;
     bool        exitApp = false;
 };
 
@@ -346,9 +348,13 @@ inline void BeginFrameHost(ShellState& st) {
     // 1) main menu
     if (ImGui::BeginMainMenuBar()) {
         if (ImGui::BeginMenu("File")) {
+            if (ImGui::MenuItem("New Session (Clear Scene)", "Ctrl+N")) st.clearScene = true;
+            ImGui::Separator();
             if (ImGui::MenuItem("Open Low-Poly...", "Ctrl+O")) st.openLowPoly = true;
             if (ImGui::MenuItem("Open High-Poly...", "Ctrl+Shift+O")) st.openHighPoly = true;
             if (ImGui::MenuItem("Open Cage...", nullptr)) st.openCage = true;
+            ImGui::Separator();
+            if (ImGui::MenuItem("Load ZBrush Cache", nullptr)) st.loadZBrushCache = true;
             ImGui::Separator();
             if (ImGui::MenuItem("Exit", "Alt+F4")) st.exitApp = true;
             ImGui::EndMenu();
