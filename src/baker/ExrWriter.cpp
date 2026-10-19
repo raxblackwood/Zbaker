@@ -33,7 +33,10 @@ bool ExrWriter::SaveFloatImage(
     image.num_channels = 1;
 
     std::vector<float> image_data(width * height);
-    std::memcpy(image_data.data(), data, sizeof(float) * width * height);
+    for (int y = 0; y < height; ++y) {
+        int srcY = height - 1 - y;
+        std::memcpy(&image_data[y * width], &data[srcY * width], sizeof(float) * width);
+    }
 
     float* image_ptr[1];
     image_ptr[0] = image_data.data();
@@ -98,11 +101,21 @@ bool ExrWriter::SaveRGBFloatImage(
 
     image.num_channels = 3;
 
+    std::vector<float> b_data(width * height);
+    std::vector<float> g_data(width * height);
+    std::vector<float> r_data(width * height);
+    for (int y = 0; y < height; ++y) {
+        int srcY = height - 1 - y;
+        std::memcpy(&b_data[y * width], &bData[srcY * width], sizeof(float) * width);
+        std::memcpy(&g_data[y * width], &gData[srcY * width], sizeof(float) * width);
+        std::memcpy(&r_data[y * width], &rData[srcY * width], sizeof(float) * width);
+    }
+
     // OpenEXR channels are typically ordered B, G, R
     const float* image_ptr[3];
-    image_ptr[0] = bData;
-    image_ptr[1] = gData;
-    image_ptr[2] = rData;
+    image_ptr[0] = b_data.data();
+    image_ptr[1] = g_data.data();
+    image_ptr[2] = r_data.data();
 
     image.images = reinterpret_cast<unsigned char**>(const_cast<float**>(image_ptr));
     image.width = width;
@@ -160,14 +173,19 @@ bool ExrWriter::SaveRGBPNG(
     }
 
     std::vector<uint8_t> pixels(static_cast<size_t>(width) * height * 3);
-    for (int i = 0; i < width * height; ++i) {
-        float r = std::clamp(rData[i], 0.0f, 1.0f);
-        float g = std::clamp(gData[i], 0.0f, 1.0f);
-        float b = std::clamp(bData[i], 0.0f, 1.0f);
+    for (int y = 0; y < height; ++y) {
+        int srcY = height - 1 - y;
+        for (int x = 0; x < width; ++x) {
+            int srcIdx = srcY * width + x;
+            int dstIdx = (y * width + x) * 3;
+            float r = std::clamp(rData[srcIdx], 0.0f, 1.0f);
+            float g = std::clamp(gData[srcIdx], 0.0f, 1.0f);
+            float b = std::clamp(bData[srcIdx], 0.0f, 1.0f);
 
-        pixels[i * 3 + 0] = static_cast<uint8_t>(std::round(r * 255.0f));
-        pixels[i * 3 + 1] = static_cast<uint8_t>(std::round(g * 255.0f));
-        pixels[i * 3 + 2] = static_cast<uint8_t>(std::round(b * 255.0f));
+            pixels[dstIdx + 0] = static_cast<uint8_t>(std::round(r * 255.0f));
+            pixels[dstIdx + 1] = static_cast<uint8_t>(std::round(g * 255.0f));
+            pixels[dstIdx + 2] = static_cast<uint8_t>(std::round(b * 255.0f));
+        }
     }
 
     size_t pngLen = 0;
@@ -203,9 +221,14 @@ bool ExrWriter::SaveGrayscalePNG(
     }
 
     std::vector<uint8_t> pixels(static_cast<size_t>(width) * height);
-    for (int i = 0; i < width * height; ++i) {
-        float g = std::clamp(grayData[i], 0.0f, 1.0f);
-        pixels[i] = static_cast<uint8_t>(std::round(g * 255.0f));
+    for (int y = 0; y < height; ++y) {
+        int srcY = height - 1 - y;
+        for (int x = 0; x < width; ++x) {
+            int srcIdx = srcY * width + x;
+            int dstIdx = y * width + x;
+            float g = std::clamp(grayData[srcIdx], 0.0f, 1.0f);
+            pixels[dstIdx] = static_cast<uint8_t>(std::round(g * 255.0f));
+        }
     }
 
     size_t pngLen = 0;
