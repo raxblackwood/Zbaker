@@ -6,6 +6,8 @@
 #include "BakerUI.h"
 #include <string>
 #include <vector>
+#include <mutex>
+#include <atomic>
 
 namespace Baker {
 
@@ -82,6 +84,12 @@ private:
     std::string m_bakeStatus = "Ready";
     std::vector<std::string> m_logEntries;
     BakerUI::ShellState m_shellState;
+
+    // Background Thread Ingestion State
+    std::mutex m_meshMutex;
+    std::atomic<bool> m_isLoadingHighPoly{false};
+    std::atomic<bool> m_pendingMeshUpload{false};
+    std::string m_loadingStatusText;
 };
 
 } // namespace Baker

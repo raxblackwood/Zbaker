@@ -171,31 +171,48 @@ void UIManager::SelectOnlyUDIM(int tile) {
 }
 
 void UIManager::SetCommandLineHighPoly(const std::string& path) {
-    if (!path.empty()) {
-        m_highPolyPath = path;
-        m_logEntries.push_back("[ZBrush] Ingested High-Poly path: " + path);
-        std::string err;
-        if (MeshLoader::LoadHighPolyMesh(path, m_highPolyMesh, err)) {
-            m_hasHighPoly = true;
-            m_logEntries.push_back("[Mesh] Successfully loaded High-Poly (" +
-                std::to_string(m_highPolyMesh.positions.size()) + " verts, " +
-                std::to_string(m_highPolyMesh.indices.size() / 3) + " tris).");
-
-            m_viewportRenderer.SetHighPolyMesh(m_highPolyMesh);
-            m_viewportRenderer.FrameAll();
-
-            std::string bvhErr;
-            if (m_engine.BuildHighPolyBVH(m_highPolyMesh, bvhErr)) {
-                m_logEntries.push_back("[Embree] High-Poly BVH accelerated structure built.");
-            } else {
-                m_logEntries.push_back("[Error] Embree BVH build failed: " + bvhErr);
-            }
-
-            CheckScaleAndAutoCalibrate();
-        } else {
-            m_logEntries.push_back("[Error] Failed loading High-Poly: " + err);
-        }
+    if (path.empty()) return;
+    if (m_isLoadingHighPoly) {
+        m_logEntries.push_back("[Warning] A high-poly mesh is already being loaded in background.");
+        return;
     }
+
+    m_highPolyPath = path;
+    m_isLoadingHighPoly = true;
+    m_loadingStatusText = "Ingesting High-Poly Mesh...";
+    m_logEntries.push_back("[ZBrush] Ingesting High-Poly in background thread: " + path);
+
+    std::thread([this, path]() {
+        std::string err;
+        HighPolyMesh tempMesh;
+        bool ok = MeshLoader::LoadHighPolyMesh(path, tempMesh, err);
+
+        std::string bvhErr;
+        bool bvhOk = false;
+        if (ok) {
+            bvhOk = m_engine.BuildHighPolyBVH(tempMesh, bvhErr);
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(m_meshMutex);
+            if (ok) {
+                m_highPolyMesh = std::move(tempMesh);
+                m_hasHighPoly = true;
+                m_pendingMeshUpload = true;
+                m_logEntries.push_back("[Mesh] Successfully loaded High-Poly (" +
+                    std::to_string(m_highPolyMesh.positions.size()) + " verts, " +
+                    std::to_string(m_highPolyMesh.indices.size() / 3) + " tris).");
+                if (bvhOk) {
+                    m_logEntries.push_back("[Embree] High-Poly BVH accelerated structure built.");
+                } else {
+                    m_logEntries.push_back("[Error] Embree BVH build failed: " + bvhErr);
+                }
+            } else {
+                m_logEntries.push_back("[Error] Failed loading High-Poly: " + err);
+            }
+            m_isLoadingHighPoly = false;
+        }
+    }).detach();
 }
 
 void UIManager::SetCommandLineLowPoly(const std::string& path) {
@@ -323,8 +340,21 @@ void UIManager::CheckZBrushLiveSync() {
 void UIManager::RenderUI() {
     CheckZBrushLiveSync();
 
+    // 0. Check pending GPU mesh upload from background loader
+    if (m_pendingMeshUpload) {
+        std::lock_guard<std::mutex> lock(m_meshMutex);
+        m_viewportRenderer.SetHighPolyMesh(m_highPolyMesh);
+        m_viewportRenderer.FrameAll();
+        CheckScaleAndAutoCalibrate();
+        m_pendingMeshUpload = false;
+    }
+
     // 0. Synchronize shell state
-    if (m_isBaking) {
+    if (m_isLoadingHighPoly) {
+        m_shellState.statusText = "Ingesting High-Poly Mesh in background...";
+        m_shellState.statusColor = BakerUI::Col::Warn();
+        m_shellState.bakeProgress = 0.5f; // Pulses status bar activity
+    } else if (m_isBaking) {
         m_shellState.statusText = m_bakeStatus.c_str();
         m_shellState.statusColor = BakerUI::Col::Accent();
         m_shellState.bakeProgress = m_bakeProgress;
@@ -415,7 +445,10 @@ void UIManager::RenderOutlinerPanel() {
 
     if (hpOpen) {
         ImGui::Indent(18.0f);
-        if (m_hasHighPoly) {
+        if (m_isLoadingHighPoly) {
+            BakerUI::StatusPill("Loading in background...", BakerUI::Col::Warn());
+            ImGui::TextDisabled("Reading vertices & building BVH...");
+        } else if (m_hasHighPoly) {
             std::string hpName = std::filesystem::path(m_highPolyPath).stem().string();
             if (hpName.empty()) hpName = "ZBrush_Sculpt";
             ImGui::TextDisabled("Source: %s", hpName.c_str());
@@ -929,7 +962,11 @@ void UIManager::RenderMeshPanel() {
                 SetCommandLineHighPoly(path);
             }
         }
-        if (m_hasHighPoly) {
+        if (m_isLoadingHighPoly) {
+            ImGui::Spacing();
+            BakerUI::StatusPill("Ingesting in background...", BakerUI::Col::Warn());
+            ImGui::TextDisabled("Parsing mesh & building BVH tree...");
+        } else if (m_hasHighPoly) {
             ImGui::Spacing();
             if (BakerUI::gFontMono) ImGui::PushFont(BakerUI::gFontMono);
             ImGui::TextDisabled("%s", m_highPolyPath.c_str());
