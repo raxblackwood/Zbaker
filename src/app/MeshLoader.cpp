@@ -201,6 +201,7 @@ bool MeshLoader::LoadLowPolyFBX(
         outMesh.detectedUDIMs.push_back(1001);
     }
 
+    outMesh.SmoothNormalsIfMissing();
     MikkTSpaceBridge::CalculateTangents(outMesh);
     outMesh.ComputeWatertightCageNormals();
     return true;
@@ -465,6 +466,7 @@ bool MeshLoader::LoadLowPolyOBJ(
         outMesh.detectedUDIMs.push_back(1001);
     }
 
+    outMesh.SmoothNormalsIfMissing();
     MikkTSpaceBridge::CalculateTangents(outMesh);
     outMesh.ComputeWatertightCageNormals();
     return true;
@@ -613,7 +615,12 @@ bool MeshLoader::LoadHighPolyOBJ(
     }
 
     for (size_t i = 0; i < numVerts; ++i) {
-        outMesh.normals[i] = outMesh.normals[i].Normalized();
+        float len = outMesh.normals[i].Length();
+        if (len > 1e-20f) {
+            outMesh.normals[i] = outMesh.normals[i] * (1.0f / len);
+        } else {
+            outMesh.normals[i] = Vec3(0, 1, 0);
+        }
     }
 
     return true;

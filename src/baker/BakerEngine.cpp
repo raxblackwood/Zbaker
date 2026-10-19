@@ -163,7 +163,12 @@ bool BakerEngine::BuildMultiSubToolBVH(
                 smooth[i2] = smooth[i2] + fn;
             }
             for (size_t i = 0; i < numVerts; ++i) {
-                smooth[i] = smooth[i].Normalized();
+                float len = smooth[i].Length();
+                if (len > 1e-20f) {
+                    smooth[i] = smooth[i] * (1.0f / len);
+                } else {
+                    smooth[i] = Vec3(0, 1, 0);
+                }
             }
             m_geoms[geomID].normals = std::move(smooth);
         }
@@ -723,6 +728,9 @@ bool BakerEngine::ExecuteBake(
                                         uint32_t i1 = g.indices[pidIn * 3 + 1];
                                         uint32_t i2 = g.indices[pidIn * 3 + 2];
                                         hitNormIn = (g.normals[i0] * hitWIn + g.normals[i1] * hitUIn + g.normals[i2] * hitVIn).Normalized();
+                                        if (hitNormIn.Length() < 1e-4f) {
+                                            hitNormIn = Vec3(rayhitIn.hit.Ng_x, rayhitIn.hit.Ng_y, rayhitIn.hit.Ng_z).Normalized();
+                                        }
                                     } else {
                                         hitNormIn = Vec3(rayhitIn.hit.Ng_x, rayhitIn.hit.Ng_y, rayhitIn.hit.Ng_z).Normalized();
                                     }
@@ -734,7 +742,9 @@ bool BakerEngine::ExecuteBake(
 
                                     bool valid = true;
                                     if (settings.discardBackfaceHits) {
-                                        if (hitNormIn.Dot(rayDir) >= -1e-4f || hitNormIn.Dot(n) < minCos) {
+                                        bool isBackface = (hitNormIn.Dot(rayDir) >= -1e-4f);
+                                        bool exceedsAngle = (settings.angleThreshold < 89.9f) && (hitNormIn.Dot(n) < minCos);
+                                        if (isBackface || exceedsAngle) {
                                             valid = false;
                                         }
                                     }
@@ -786,6 +796,9 @@ bool BakerEngine::ExecuteBake(
                                             uint32_t i1 = g.indices[pidOut * 3 + 1];
                                             uint32_t i2 = g.indices[pidOut * 3 + 2];
                                             hitNormOut = (g.normals[i0] * hitWOut + g.normals[i1] * hitUOut + g.normals[i2] * hitVOut).Normalized();
+                                            if (hitNormOut.Length() < 1e-4f) {
+                                                hitNormOut = Vec3(rayhitOut.hit.Ng_x, rayhitOut.hit.Ng_y, rayhitOut.hit.Ng_z).Normalized();
+                                            }
                                         } else {
                                             hitNormOut = Vec3(rayhitOut.hit.Ng_x, rayhitOut.hit.Ng_y, rayhitOut.hit.Ng_z).Normalized();
                                         }
@@ -797,7 +810,9 @@ bool BakerEngine::ExecuteBake(
 
                                         bool valid = true;
                                         if (settings.discardBackfaceHits) {
-                                            if (hitNormOut.Dot(rayDirOut) >= -1e-4f || hitNormOut.Dot(n) < minCos) {
+                                            bool isBackface = (hitNormOut.Dot(rayDirOut) >= -1e-4f);
+                                            bool exceedsAngle = (settings.angleThreshold < 89.9f) && (hitNormOut.Dot(n) < minCos);
+                                            if (isBackface || exceedsAngle) {
                                                 valid = false;
                                             }
                                         }

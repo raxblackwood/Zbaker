@@ -41,7 +41,7 @@ struct Vec3 {
     float Length() const { return std::sqrt(x * x + y * y + z * z); }
     Vec3 Normalized() const {
         float len = Length();
-        if (len > 1e-7f) {
+        if (len > 1e-20f) {
             return *this * (1.0f / len);
         }
         return *this;
@@ -103,6 +103,89 @@ struct LowPolyMesh {
         return !cageNormals.empty() && cageNormals.size() == vertices.size();
     }
 
+    // Computes smooth area-weighted vertex normals across shared 3D positions
+    void ComputeSmoothVertexNormals() {
+        if (vertices.empty() || triangles.empty()) return;
+
+        struct PosKey {
+            int64_t x, y, z;
+            bool operator==(const PosKey& o) const {
+                return x == o.x && y == o.y && z == o.z;
+            }
+        };
+        struct PosHasher {
+            size_t operator()(const PosKey& k) const {
+                size_t h = 14695981039346656037ULL;
+                h ^= static_cast<size_t>(k.x); h *= 1099511628211ULL;
+                h ^= static_cast<size_t>(k.y); h *= 1099511628211ULL;
+                h ^= static_cast<size_t>(k.z); h *= 1099511628211ULL;
+                return h;
+            }
+        };
+
+        // Quantize position: 0.01 mm precision (100000 units per meter)
+        auto Quantize = [](const Vec3& p) -> PosKey {
+            return PosKey{
+                static_cast<int64_t>(std::floor(p.x * 100000.0f + 0.5f)),
+                static_cast<int64_t>(std::floor(p.y * 100000.0f + 0.5f)),
+                static_cast<int64_t>(std::floor(p.z * 100000.0f + 0.5f))
+            };
+        };
+
+        std::unordered_map<PosKey, Vec3, PosHasher> posNormals;
+        posNormals.reserve(vertices.size());
+
+        for (const auto& tri : triangles) {
+            const auto& p0 = vertices[tri.indices[0]].position;
+            const auto& p1 = vertices[tri.indices[1]].position;
+            const auto& p2 = vertices[tri.indices[2]].position;
+
+            Vec3 e1 = p1 - p0;
+            Vec3 e2 = p2 - p0;
+            Vec3 fn = e1.Cross(e2); // Area-weighted face normal
+            if (fn.Length() > 1e-20f) {
+                posNormals[Quantize(p0)] = posNormals[Quantize(p0)] + fn;
+                posNormals[Quantize(p1)] = posNormals[Quantize(p1)] + fn;
+                posNormals[Quantize(p2)] = posNormals[Quantize(p2)] + fn;
+            }
+        }
+
+        for (size_t i = 0; i < vertices.size(); ++i) {
+            PosKey k = Quantize(vertices[i].position);
+            auto it = posNormals.find(k);
+            if (it != posNormals.end() && it->second.Length() > 1e-20f) {
+                vertices[i].normal = it->second.Normalized();
+            }
+        }
+    }
+
+    void SmoothNormalsIfMissing() {
+        bool needsSmoothing = false;
+        for (const auto& v : vertices) {
+            if (v.normal.Length() < 1e-4f) {
+                needsSmoothing = true;
+                break;
+            }
+        }
+        if (!needsSmoothing && triangles.size() > 1) {
+            int flatTriCount = 0;
+            for (const auto& tri : triangles) {
+                const Vec3& n0 = vertices[tri.indices[0]].normal;
+                const Vec3& n1 = vertices[tri.indices[1]].normal;
+                const Vec3& n2 = vertices[tri.indices[2]].normal;
+                if (std::abs(n0.Dot(n1) - 1.0f) < 1e-4f && std::abs(n0.Dot(n2) - 1.0f) < 1e-4f) {
+                    flatTriCount++;
+                }
+            }
+            if (flatTriCount == (int)triangles.size()) {
+                needsSmoothing = true;
+            }
+        }
+        if (needsSmoothing) {
+            ComputeSmoothVertexNormals();
+        }
+    }
+
     // Computes continuous, watertight cage normals by welding positions across UV seams
     // Eliminates cracks/wedges in the cage where rays would otherwise miss high-poly surfaces
     void ComputeWatertightCageNormals() {
@@ -125,12 +208,12 @@ struct LowPolyMesh {
             }
         };
 
-        // Quantize position: 0.1 mm precision (10000 units per meter)
+        // Quantize position: 0.01 mm precision (100000 units per meter)
         auto Quantize = [](const Vec3& p) -> PosKey {
             return PosKey{
-                static_cast<int64_t>(std::floor(p.x * 10000.0f + 0.5f)),
-                static_cast<int64_t>(std::floor(p.y * 10000.0f + 0.5f)),
-                static_cast<int64_t>(std::floor(p.z * 10000.0f + 0.5f))
+                static_cast<int64_t>(std::floor(p.x * 100000.0f + 0.5f)),
+                static_cast<int64_t>(std::floor(p.y * 100000.0f + 0.5f)),
+                static_cast<int64_t>(std::floor(p.z * 100000.0f + 0.5f))
             };
         };
 
@@ -146,7 +229,7 @@ struct LowPolyMesh {
             Vec3 e2 = p2 - p0;
             Vec3 fn = e1.Cross(e2); // Area-weighted face normal
             float len = fn.Length();
-            if (len > 1e-9f) {
+            if (len > 1e-20f) {
                 posNormals[Quantize(p0)] = posNormals[Quantize(p0)] + fn;
                 posNormals[Quantize(p1)] = posNormals[Quantize(p1)] + fn;
                 posNormals[Quantize(p2)] = posNormals[Quantize(p2)] + fn;
@@ -156,9 +239,9 @@ struct LowPolyMesh {
         for (size_t i = 0; i < vertices.size(); ++i) {
             PosKey k = Quantize(vertices[i].position);
             auto it = posNormals.find(k);
-            if (it != posNormals.end() && it->second.Length() > 1e-6f) {
+            if (it != posNormals.end() && it->second.Length() > 1e-20f) {
                 cageNormals[i] = it->second.Normalized();
-            } else if (vertices[i].normal.Length() > 1e-6f) {
+            } else if (vertices[i].normal.Length() > 1e-20f) {
                 cageNormals[i] = vertices[i].normal.Normalized();
             } else {
                 cageNormals[i] = Vec3(0, 1, 0);
