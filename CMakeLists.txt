@@ -94,6 +94,43 @@ if(EXISTS "${ZBRUSH_DIR}/embree3.dll")
 endif()
 
 # -------------------------------------------------------------
+# 3. Standalone Baker Application (For non-ZBrush users)
+# -------------------------------------------------------------
+set(STANDALONE_SOURCES
+    src/app/StandaloneMain.cpp
+    src/app/StandaloneUIManager.cpp
+    src/app/ViewportRenderer.cpp
+    src/app/MeshLoader.cpp
+    src/baker/BakerEngine.cpp
+    src/baker/GoZReader.cpp
+    src/baker/MikkTSpaceBridge.cpp
+    src/baker/ExrWriter.cpp
+    include/mikktspace.c
+    include/miniz.c
+    include/ufbx.c
+)
+
+add_executable(StandaloneBaker WIN32
+    ${STANDALONE_SOURCES}
+    ${IMGUI_SOURCES}
+)
+
+target_include_directories(StandaloneBaker PRIVATE
+    src/app
+    src/baker
+)
+
+target_link_libraries(StandaloneBaker PRIVATE
+    d3d11
+    dxgi
+    d3dcompiler
+    comdlg32
+    shell32
+    ole32
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/embree3.lib
+)
+
+# -------------------------------------------------------------
 # 4. Standalone Test Executable
 # -------------------------------------------------------------
 add_executable(TestBaker
