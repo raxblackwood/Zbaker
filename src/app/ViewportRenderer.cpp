@@ -113,6 +113,8 @@ void ViewportRenderer::Release() {
     m_lowPolyGPU.Release();
     m_cageGPU.Release();
     m_gridGPU.Release();
+    m_axisXGPU.Release();
+    m_axisYGPU.Release();
 
     if (m_colorSRV) { m_colorSRV->Release(); m_colorSRV = nullptr; }
     if (m_colorRTV) { m_colorRTV->Release(); m_colorRTV = nullptr; }
@@ -254,43 +256,107 @@ void ViewportRenderer::CreateGridBuffers() {
     std::vector<ViewportVertex> gridVerts;
     std::vector<uint32_t> gridIndices;
 
-    float extent = 50.0f;
-    int steps = 20;
+    std::vector<ViewportVertex> axisXVerts;
+    std::vector<uint32_t> axisXIndices;
+
+    std::vector<ViewportVertex> axisYVerts;
+    std::vector<uint32_t> axisYIndices;
+
+    float extent = 60.0f;
+    int steps = 60;
     float stepSize = extent * 2.0f / steps;
 
     for (int i = 0; i <= steps; ++i) {
         float c = -extent + i * stepSize;
+        bool isCenter = std::abs(c) < 1e-4f;
 
         // Line along X
-        uint32_t idx = (uint32_t)gridVerts.size();
-        gridVerts.push_back({ { -extent, 0.0f, c }, { 0.0f, 1.0f, 0.0f } });
-        gridVerts.push_back({ {  extent, 0.0f, c }, { 0.0f, 1.0f, 0.0f } });
-        gridIndices.push_back(idx);
-        gridIndices.push_back(idx + 1);
+        if (isCenter) {
+            uint32_t idx = (uint32_t)axisXVerts.size();
+            axisXVerts.push_back({ { -extent, 0.0f, c }, { 0.0f, 1.0f, 0.0f } });
+            axisXVerts.push_back({ {  extent, 0.0f, c }, { 0.0f, 1.0f, 0.0f } });
+            axisXIndices.push_back(idx);
+            axisXIndices.push_back(idx + 1);
+        } else {
+            uint32_t idx = (uint32_t)gridVerts.size();
+            gridVerts.push_back({ { -extent, 0.0f, c }, { 0.0f, 1.0f, 0.0f } });
+            gridVerts.push_back({ {  extent, 0.0f, c }, { 0.0f, 1.0f, 0.0f } });
+            gridIndices.push_back(idx);
+            gridIndices.push_back(idx + 1);
+        }
 
         // Line along Z
-        idx = (uint32_t)gridVerts.size();
-        gridVerts.push_back({ { c, 0.0f, -extent }, { 0.0f, 1.0f, 0.0f } });
-        gridVerts.push_back({ { c, 0.0f,  extent }, { 0.0f, 1.0f, 0.0f } });
-        gridIndices.push_back(idx);
-        gridIndices.push_back(idx + 1);
+        if (isCenter) {
+            uint32_t idx = (uint32_t)axisYVerts.size();
+            axisYVerts.push_back({ { c, 0.0f, -extent }, { 0.0f, 1.0f, 0.0f } });
+            axisYVerts.push_back({ { c, 0.0f,  extent }, { 0.0f, 1.0f, 0.0f } });
+            axisYIndices.push_back(idx);
+            axisYIndices.push_back(idx + 1);
+        } else {
+            uint32_t idx = (uint32_t)gridVerts.size();
+            gridVerts.push_back({ { c, 0.0f, -extent }, { 0.0f, 1.0f, 0.0f } });
+            gridVerts.push_back({ { c, 0.0f,  extent }, { 0.0f, 1.0f, 0.0f } });
+            gridIndices.push_back(idx);
+            gridIndices.push_back(idx + 1);
+        }
     }
 
-    D3D11_BUFFER_DESC vbd = {};
-    vbd.ByteWidth = (UINT)(gridVerts.size() * sizeof(ViewportVertex));
-    vbd.Usage = D3D11_USAGE_IMMUTABLE;
-    vbd.BindFlags = D3D11_BIND_VERTEX_BUFFER;
-    D3D11_SUBRESOURCE_DATA vInit = { gridVerts.data() };
-    m_device->CreateBuffer(&vbd, &vInit, &m_gridGPU.vertexBuffer);
+    // 1. Grid Buffer
+    if (!gridVerts.empty()) {
+        D3D11_BUFFER_DESC vbd = {};
+        vbd.ByteWidth = (UINT)(gridVerts.size() * sizeof(ViewportVertex));
+        vbd.Usage = D3D11_USAGE_IMMUTABLE;
+        vbd.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+        D3D11_SUBRESOURCE_DATA vInit = { gridVerts.data() };
+        m_device->CreateBuffer(&vbd, &vInit, &m_gridGPU.vertexBuffer);
 
-    D3D11_BUFFER_DESC ibd = {};
-    ibd.ByteWidth = (UINT)(gridIndices.size() * sizeof(uint32_t));
-    ibd.Usage = D3D11_USAGE_IMMUTABLE;
-    ibd.BindFlags = D3D11_BIND_INDEX_BUFFER;
-    D3D11_SUBRESOURCE_DATA iInit = { gridIndices.data() };
-    m_device->CreateBuffer(&ibd, &iInit, &m_gridGPU.indexBuffer);
+        D3D11_BUFFER_DESC ibd = {};
+        ibd.ByteWidth = (UINT)(gridIndices.size() * sizeof(uint32_t));
+        ibd.Usage = D3D11_USAGE_IMMUTABLE;
+        ibd.BindFlags = D3D11_BIND_INDEX_BUFFER;
+        D3D11_SUBRESOURCE_DATA iInit = { gridIndices.data() };
+        m_device->CreateBuffer(&ibd, &iInit, &m_gridGPU.indexBuffer);
 
-    m_gridGPU.indexCount = (uint32_t)gridIndices.size();
+        m_gridGPU.indexCount = (uint32_t)gridIndices.size();
+    }
+
+    // 2. Axis X (Red) Buffer
+    if (!axisXVerts.empty()) {
+        D3D11_BUFFER_DESC vbd = {};
+        vbd.ByteWidth = (UINT)(axisXVerts.size() * sizeof(ViewportVertex));
+        vbd.Usage = D3D11_USAGE_IMMUTABLE;
+        vbd.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+        D3D11_SUBRESOURCE_DATA vInit = { axisXVerts.data() };
+        m_device->CreateBuffer(&vbd, &vInit, &m_axisXGPU.vertexBuffer);
+
+        D3D11_BUFFER_DESC ibd = {};
+        ibd.ByteWidth = (UINT)(axisXIndices.size() * sizeof(uint32_t));
+        ibd.Usage = D3D11_USAGE_IMMUTABLE;
+        ibd.BindFlags = D3D11_BIND_INDEX_BUFFER;
+        D3D11_SUBRESOURCE_DATA iInit = { axisXIndices.data() };
+        m_device->CreateBuffer(&ibd, &iInit, &m_axisXGPU.indexBuffer);
+
+        m_axisXGPU.indexCount = (uint32_t)axisXIndices.size();
+    }
+
+    // 3. Axis Y (Green) Buffer
+    if (!axisYVerts.empty()) {
+        D3D11_BUFFER_DESC vbd = {};
+        vbd.ByteWidth = (UINT)(axisYVerts.size() * sizeof(ViewportVertex));
+        vbd.Usage = D3D11_USAGE_IMMUTABLE;
+        vbd.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+        D3D11_SUBRESOURCE_DATA vInit = { axisYVerts.data() };
+        m_device->CreateBuffer(&vbd, &vInit, &m_axisYGPU.vertexBuffer);
+
+        D3D11_BUFFER_DESC ibd = {};
+        ibd.ByteWidth = (UINT)(axisYIndices.size() * sizeof(uint32_t));
+        ibd.Usage = D3D11_USAGE_IMMUTABLE;
+        ibd.BindFlags = D3D11_BIND_INDEX_BUFFER;
+        D3D11_SUBRESOURCE_DATA iInit = { axisYIndices.data() };
+        m_device->CreateBuffer(&ibd, &iInit, &m_axisYGPU.indexBuffer);
+
+        m_axisYGPU.indexCount = (uint32_t)axisYIndices.size();
+    }
 }
 
 void ViewportRenderer::Resize(int width, int height) {
@@ -676,8 +742,8 @@ void ViewportRenderer::Render() {
     vp.MaxDepth = 1.0f;
     m_context->RSSetViewports(1, &vp);
 
-    // Blender 4.x neutral dark gray viewport background (#303030)
-    const float clearColor[4] = { 0.19f, 0.19f, 0.19f, 1.0f };
+    // Blender 4.x/5.x open medium slate viewport background
+    const float clearColor[4] = { 0.30f, 0.305f, 0.315f, 1.0f };
     m_context->ClearRenderTargetView(m_colorRTV, clearColor);
     m_context->ClearDepthStencilView(m_depthDSV, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
 
@@ -705,16 +771,35 @@ void ViewportRenderer::Render() {
     UINT stride = sizeof(ViewportVertex);
     UINT offset = 0;
 
-    // 1. Render Ground Grid (Blender subtle grid)
-    if (showGrid && m_gridGPU.vertexBuffer) {
+    // 1. Render Ground Grid (Blender subtle grid + colored X/Y axes)
+    if (showGrid) {
         m_context->OMSetBlendState(m_alphaBlendState, nullptr, 0xFFFFFFFF);
         m_context->RSSetState(m_solidNoCullRS);
         m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_LINELIST);
 
-        UpdateConstantBuffer(identity, { 0.26f, 0.26f, 0.26f, 0.40f }, 5);
-        m_context->IASetVertexBuffers(0, 1, &m_gridGPU.vertexBuffer, &stride, &offset);
-        m_context->IASetIndexBuffer(m_gridGPU.indexBuffer, DXGI_FORMAT_R32_UINT, 0);
-        m_context->DrawIndexed(m_gridGPU.indexCount, 0, 0);
+        // Subtle slate grid lines
+        if (m_gridGPU.vertexBuffer) {
+            UpdateConstantBuffer(identity, { 0.42f, 0.42f, 0.44f, 0.50f }, 5);
+            m_context->IASetVertexBuffers(0, 1, &m_gridGPU.vertexBuffer, &stride, &offset);
+            m_context->IASetIndexBuffer(m_gridGPU.indexBuffer, DXGI_FORMAT_R32_UINT, 0);
+            m_context->DrawIndexed(m_gridGPU.indexCount, 0, 0);
+        }
+
+        // Blender Red X Axis
+        if (m_axisXGPU.vertexBuffer) {
+            UpdateConstantBuffer(identity, { 0.88f, 0.22f, 0.22f, 0.95f }, 5);
+            m_context->IASetVertexBuffers(0, 1, &m_axisXGPU.vertexBuffer, &stride, &offset);
+            m_context->IASetIndexBuffer(m_axisXGPU.indexBuffer, DXGI_FORMAT_R32_UINT, 0);
+            m_context->DrawIndexed(m_axisXGPU.indexCount, 0, 0);
+        }
+
+        // Blender Green Y/Z Axis
+        if (m_axisYGPU.vertexBuffer) {
+            UpdateConstantBuffer(identity, { 0.25f, 0.82f, 0.25f, 0.95f }, 5);
+            m_context->IASetVertexBuffers(0, 1, &m_axisYGPU.vertexBuffer, &stride, &offset);
+            m_context->IASetIndexBuffer(m_axisYGPU.indexBuffer, DXGI_FORMAT_R32_UINT, 0);
+            m_context->DrawIndexed(m_axisYGPU.indexCount, 0, 0);
+        }
     }
 
     m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);

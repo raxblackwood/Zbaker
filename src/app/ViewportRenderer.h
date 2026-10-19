@@ -115,6 +115,8 @@ private:
     MeshGPUBuffer m_lowPolyGPU;
     MeshGPUBuffer m_cageGPU;
     MeshGPUBuffer m_gridGPU;
+    MeshGPUBuffer m_axisXGPU;
+    MeshGPUBuffer m_axisYGPU;
 
     // Camera State
     DirectX::XMFLOAT3 m_cameraTarget = { 0.0f, 0.0f, 0.0f };
