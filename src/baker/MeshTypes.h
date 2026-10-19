@@ -210,11 +210,13 @@ struct HighPolyMesh {
     std::string name;
     unsigned int maskId = 1; // Ray mask (1, 2, 4, 8, etc.) for Bake Groups
     bool isVisible = true;
+    bool isQuadMesh = false;
     std::vector<Vec3> positions;
     std::vector<Vec3> normals;
     std::vector<Vec3> colors; // Polypaint / Vertex Colors (RGB in [0, 1])
     std::vector<uint32_t> polygroupPerFace; // Polygroup ID per triangle face (for Material ID map)
     std::vector<uint32_t> indices; // Triangulated
+    std::vector<uint32_t> quadIndices; // 4 indices per quad (for Embree quad geometry)
 
     Vec3 GetBoundingBoxMin() const {
         if (positions.empty()) return Vec3(0, 0, 0);
@@ -247,11 +249,13 @@ struct HighPolyMesh {
     }
     
     void Clear() {
+        isQuadMesh = false;
         positions.clear();
         normals.clear();
         colors.clear();
         polygroupPerFace.clear();
         indices.clear();
+        quadIndices.clear();
     }
 };
 

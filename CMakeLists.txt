@@ -52,6 +52,7 @@ set(BAKER_SOURCES
     src/app/ViewportRenderer.cpp
     src/app/MeshLoader.cpp
     src/baker/BakerEngine.cpp
+    src/baker/GoZReader.cpp
     src/baker/MikkTSpaceBridge.cpp
     src/baker/ExrWriter.cpp
     include/mikktspace.c
@@ -146,5 +147,18 @@ target_include_directories(UserBakeTest PRIVATE
 target_link_libraries(UserBakeTest PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include/embree3.lib
 )
+
+# -------------------------------------------------------------
+# 5. GoZ Reader Unit Test
+# -------------------------------------------------------------
+add_executable(TestGoZReader
+    test/TestGoZReader.cpp
+    src/baker/GoZReader.cpp
+)
+
+target_include_directories(TestGoZReader PRIVATE
+    src/baker
+)
+
 
 

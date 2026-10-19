@@ -1,0 +1,71 @@
+// ZPlugin: UDIM Baker - Diagnostic Spike Kit
+// Tests: (a) GoZ vs OBJ Export Time, (b) Hidden-Polygroup Face Count, (c) Scripted GoZ Trigger, (d) SDiv Level
+[ISubPalette, "Zplugin:UDIM Baker Spike"]
+
+[VarDef, g_BridgeDll, "C:/Program Files/Maxon ZBrush 2026/ZStartup/ZPlugs64/UDIMBakerData/UDIMBakerBridge.dll"]
+[VarDef, g_BenchObj, "C:/Users/Public/Pixologic/GoZProjects/Default/spike_bench.obj"]
+[VarDef, g_BenchTxt, "C:/Users/Public/Pixologic/GoZProjects/Default/spike_bench_results.txt"]
+[VarDef, g_InspectPy, "E:/CODES/zbrush plugins/baker/spike_kit/inspect_goz.py"]
+[VarDef, g_ObjTime, 0]
+[VarDef, g_GozTime, 0]
+[VarDef, g_CurSDiv, 1]
+[VarDef, g_MaxSDiv, 1]
+
+// ============================================================================
+// Button 1: Test (a) Benchmark GoZ vs OBJ Export Time
+// ============================================================================
+[IButton, "Zplugin:UDIM Baker Spike:1. Benchmark GoZ vs OBJ", "Measures export time of active SubTool via OBJ vs GoZ binary",
+    // 1. Benchmark ASCII OBJ Export
+    [VarSet, g_ObjTime, [Time]]
+    [FileNameSetNext, [Var, g_BenchObj]]
+    [IPress, "Tool:Export"]
+    [VarSet, g_ObjTime, [Time] - [Var, g_ObjTime]]
+
+    // 2. Benchmark Binary GoZ Export
+    [VarSet, g_GozTime, [Time]]
+    [IPress, "Tool:GoZ"]
+    [VarSet, g_GozTime, [Time] - [Var, g_GozTime]]
+
+    // 3. Show Results Note
+    [Note, [StrMerge, 
+        "--- UDIM Baker Spike Test (a) Results ---\n\n",
+        "ASCII OBJ Export Time:  ", [StrFormat, "%.2f", [Var, g_ObjTime]], " seconds\n",
+        "Binary GoZ Export Time: ", [StrFormat, "%.2f", [Var, g_GozTime]], " seconds\n\n",
+        "Check C:/Users/Public/Pixologic/GoZProjects/Default for files."
+    ], , 10]
+]
+
+// ============================================================================
+// Button 2: Test (b) Export Active GoZ for Hidden-Polygroup Face Count Test
+// ============================================================================
+[IButton, "Zplugin:UDIM Baker Spike:2. Test (b) Hidden Polygroup", "Export active SubTool (with hidden polygroups) to GoZ and inspect face count",
+    [Note, "Make sure you have hidden at least one polygroup using Shift+Ctrl+Click on the canvas, then press OK to export GoZ.", , 0]
+    [IPress, "Tool:GoZ"]
+    [Note, "GoZ export finished! Run: python spike_kit/inspect_goz.py to check if face count matches visible or total faces.", , 5]
+]
+
+// ============================================================================
+// Button 3: Test (c) Programmatic GoZ Trigger
+// ============================================================================
+[IButton, "Zplugin:UDIM Baker Spike:3. Test (c) Scripted GoZ Trigger", "Verify that ZScript can invoke Tool:GoZ programmatically",
+    [IPress, "Tool:GoZ"]
+    [Note, "Tool:GoZ successfully triggered from ZScript without modal interruption!", , 3]
+]
+
+// ============================================================================
+// Button 4: Test (d) SDiv Level in GoZ
+// ============================================================================
+[IButton, "Zplugin:UDIM Baker Spike:4. Test (d) SDiv Level Export", "Checks what SDiv level GoZ sends when pressed at current subdivision level",
+    [If, [IsEnabled, "Tool:Geometry:SDiv"],
+        [VarSet, g_CurSDiv, [IGet, "Tool:Geometry:SDiv"]]
+        [VarSet, g_MaxSDiv, [IGetMax, "Tool:Geometry:SDiv"]]
+    ,
+        [VarSet, g_CurSDiv, 1]
+        [VarSet, g_MaxSDiv, 1]
+    ]
+    [IPress, "Tool:GoZ"]
+    [Note, [StrMerge, 
+        "Exported GoZ while active at SDiv Level ", [StrFormat, "%d", [Var, g_CurSDiv]], " of ", [StrFormat, "%d", [Var, g_MaxSDiv]], ".\n\n",
+        "Run python spike_kit/inspect_goz.py to see the exact vertex & face count in the exported file!"
+    ], , 5]
+]
