@@ -25,6 +25,7 @@ public:
     void CheckZBrushLiveSync();
     void ClearLowPoly();
     void ClearHighPoly();
+    void ClearCage();
     void ClearScene();
 
     enum class ViewportMode {

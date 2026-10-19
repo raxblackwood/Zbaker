@@ -676,8 +676,8 @@ void ViewportRenderer::Render() {
     vp.MaxDepth = 1.0f;
     m_context->RSSetViewports(1, &vp);
 
-    // Warm Charcoal Dark Studio clear color (Substance Painter / Marmoset aesthetic)
-    const float clearColor[4] = { 0.12f, 0.13f, 0.15f, 1.0f };
+    // Blender 4.x neutral dark gray viewport background (#303030)
+    const float clearColor[4] = { 0.19f, 0.19f, 0.19f, 1.0f };
     m_context->ClearRenderTargetView(m_colorRTV, clearColor);
     m_context->ClearDepthStencilView(m_depthDSV, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
 
@@ -705,13 +705,13 @@ void ViewportRenderer::Render() {
     UINT stride = sizeof(ViewportVertex);
     UINT offset = 0;
 
-    // 1. Render Ground Grid
+    // 1. Render Ground Grid (Blender subtle grid)
     if (showGrid && m_gridGPU.vertexBuffer) {
         m_context->OMSetBlendState(m_alphaBlendState, nullptr, 0xFFFFFFFF);
         m_context->RSSetState(m_solidNoCullRS);
         m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_LINELIST);
 
-        UpdateConstantBuffer(identity, { 0.28f, 0.30f, 0.34f, 0.35f }, 5);
+        UpdateConstantBuffer(identity, { 0.26f, 0.26f, 0.26f, 0.40f }, 5);
         m_context->IASetVertexBuffers(0, 1, &m_gridGPU.vertexBuffer, &stride, &offset);
         m_context->IASetIndexBuffer(m_gridGPU.indexBuffer, DXGI_FORMAT_R32_UINT, 0);
         m_context->DrawIndexed(m_gridGPU.indexCount, 0, 0);

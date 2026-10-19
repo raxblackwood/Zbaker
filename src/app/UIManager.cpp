@@ -279,11 +279,17 @@ void UIManager::ClearHighPoly() {
     m_logEntries.push_back("[Scene] High-Poly mesh cleared.");
 }
 
+void UIManager::ClearCage() {
+    m_hasExplicitCage = false;
+    m_cagePath.clear();
+    m_viewportRenderer.UpdateCage(m_lowPolyMesh, m_settings.cageDistance, m_settings.lowPolyScale);
+    m_logEntries.push_back("[Scene] Explicit cage cleared. Using procedural extrusion.");
+}
+
 void UIManager::ClearScene() {
     ClearLowPoly();
     ClearHighPoly();
-    m_hasExplicitCage = false;
-    m_cagePath.clear();
+    ClearCage();
     m_viewportRenderer.FrameAll();
     m_logEntries.push_back("[Scene] Scene completely cleared.");
 }
@@ -473,168 +479,173 @@ void UIManager::RenderUI() {
 void UIManager::RenderOutlinerPanel() {
     ImGui::Begin("Scene Outliner###outliner", &m_shellState.showOutliner);
 
-    BakerUI::SectionLabel("SCENE HIERARCHY");
-    if (m_hasHighPoly || m_hasLowPoly) {
-        ImGui::SameLine();
-        if (ImGui::SmallButton("Clear All##scene_clr")) {
+    bool hasAnyObject = m_hasHighPoly || m_hasLowPoly || m_isLoadingHighPoly;
+
+    // Header with clear button if meshes exist
+    ImGui::BeginGroup();
+    BakerUI::SectionLabel("SCENE COLLECTION");
+    if (hasAnyObject) {
+        ImGui::SameLine(ImGui::GetWindowWidth() - 75.0f);
+        if (ImGui::SmallButton("Clear##outliner_clr")) {
             ClearScene();
         }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Clear all meshes from scene");
     }
+    ImGui::EndGroup();
 
-    // 1. High-Poly Sculpt Node
-    bool hpOpen = ImGui::TreeNodeEx("##hp_node", ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth, "High-Poly Sculpt");
-    ImGui::SameLine();
-    BakerUI::ToggleChip("View##hp_vis", &m_viewportRenderer.showHighPoly);
-    if (m_hasHighPoly) {
-        ImGui::SameLine();
-        if (ImGui::SmallButton("Clear##hp_clr")) {
-            ClearHighPoly();
-        }
-    }
-
-    if (hpOpen) {
-        ImGui::Indent(18.0f);
-        if (m_isLoadingHighPoly) {
-            BakerUI::StatusPill("Loading in background...", BakerUI::Col::Warn());
-            ImGui::TextDisabled("Reading vertices & building BVH...");
-        } else if (m_hasHighPoly) {
-            std::string hpName = std::filesystem::path(m_highPolyPath).stem().string();
-            if (hpName.empty()) hpName = "ZBrush_Sculpt";
-            ImGui::TextDisabled("Source: %s", hpName.c_str());
-            ImGui::Text("Verts: %zu | Tris: %zu", m_highPolyMesh.positions.size(), m_highPolyMesh.indices.size() / 3);
-
-            // Polypaint badge
-            if (!m_highPolyMesh.colors.empty()) {
-                BakerUI::StatusPill("Polypaint: Yes", BakerUI::Col::Ok());
-            } else {
-                BakerUI::StatusPill("Polypaint: None", BakerUI::Col::TextDim());
-            }
-            ImGui::SameLine();
-            // Polygroups badge
-            if (!m_highPolyMesh.polygroupPerFace.empty()) {
-                BakerUI::StatusPill("Polygroups: Yes", BakerUI::Col::Ok());
-            } else {
-                BakerUI::StatusPill("Polygroups: None", BakerUI::Col::TextDim());
-            }
-
-            ImGui::SetNextItemWidth(140);
-            ImGui::SliderFloat("Opacity##hp_op", &m_viewportRenderer.highPolyOpacity, 0.05f, 1.0f, "%.2f");
-        } else {
-            ImGui::TextDisabled("No High-Poly Mesh loaded.");
-        }
-        ImGui::Unindent(18.0f);
-        ImGui::TreePop();
-    }
-
-    ImGui::Spacing();
-
-    // 2. Low-Poly Target Node
-    bool lpOpen = ImGui::TreeNodeEx("##lp_node", ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth, "Low-Poly Target (UDIM)");
-    ImGui::SameLine();
-    BakerUI::ToggleChip("View##lp_vis", &m_viewportRenderer.showLowPoly);
-    ImGui::SameLine();
-    BakerUI::ToggleChip("Wire##lp_wire", &m_viewportRenderer.showLowPolyWireframe);
-    if (m_hasLowPoly) {
-        ImGui::SameLine();
-        if (ImGui::SmallButton("Clear##lp_clr")) {
-            ClearLowPoly();
-        }
-    }
-
-    if (lpOpen) {
-        ImGui::Indent(18.0f);
-        if (m_hasLowPoly) {
-            std::string lpName = std::filesystem::path(m_lowPolyPath).stem().string();
-            if (lpName.empty()) lpName = "LowPoly_UDIM";
-            ImGui::TextDisabled("Source: %s", lpName.c_str());
-            ImGui::Text("Verts: %zu | Tris: %zu", m_lowPolyMesh.vertices.size(), m_lowPolyMesh.triangles.size());
-            ImGui::Text("UDIM Tiles: %zu", m_lowPolyMesh.detectedUDIMs.size());
-
-            ImGui::SetNextItemWidth(140);
-            ImGui::SliderFloat("Opacity##lp_op", &m_viewportRenderer.lowPolyOpacity, 0.05f, 1.0f, "%.2f");
-        } else {
-            ImGui::TextDisabled("No Low-Poly Mesh loaded.");
-        }
-        ImGui::Unindent(18.0f);
-        ImGui::TreePop();
-    }
-
-    ImGui::Spacing();
-
-    // 3. Cage Shell Node
-    bool cageOpen = ImGui::TreeNodeEx("##cage_node", ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth, "Cage Shell");
-    ImGui::SameLine();
-    BakerUI::ToggleChip("View##cage_vis", &m_viewportRenderer.showCage);
-
-    if (cageOpen) {
-        ImGui::Indent(18.0f);
-        if (m_hasExplicitCage) {
-            ImGui::TextDisabled("Type: Explicit File");
-        } else {
-            ImGui::TextDisabled("Type: Vertex Normal Extrusion");
-            ImGui::Text("Distance: %.4f", m_settings.cageDistance);
-        }
-        ImGui::SetNextItemWidth(140);
-        ImGui::SliderFloat("Opacity##cage_op", &m_viewportRenderer.cageOpacity, 0.05f, 1.0f, "%.2f");
-        ImGui::Unindent(18.0f);
-        ImGui::TreePop();
-    }
-
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    // 4. ZBrush Live SubTools Node
-    BakerUI::SectionLabel("ZBRUSH LIVE SUBTOOLS");
-    bool zbOpen = ImGui::TreeNodeEx("##zb_live_node", ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth, "ZBrush Active SubTools");
-    if (zbOpen) {
-        ImGui::Indent(18.0f);
-        std::string cacheLow = "C:/Users/Public/Documents/ZBrushData2026/ZPluginData/UDIMBaker/UDIM_LowPoly.obj";
-        std::string cacheHigh = "C:/Users/Public/Documents/ZBrushData2026/ZPluginData/UDIMBaker/UDIM_HighPoly.obj";
-
-        // High-Poly live cache
-        DWORD attrHP = GetFileAttributesA(cacheHigh.c_str());
-        if (attrHP != INVALID_FILE_ATTRIBUTES && !(attrHP & FILE_ATTRIBUTE_DIRECTORY)) {
-            uintmax_t sz = 0;
-            try { sz = std::filesystem::file_size(cacheHigh); } catch (...) {}
-            char szBuf[64];
-            if (sz > 1024 * 1024 * 1024) {
-                snprintf(szBuf, sizeof(szBuf), "%.2f GB", sz / (1024.0 * 1024.0 * 1024.0));
-            } else {
-                snprintf(szBuf, sizeof(szBuf), "%.1f MB", sz / (1024.0 * 1024.0));
-            }
-            ImGui::Text("Active Sculpt Cache: %s", szBuf);
-            if (BakerUI::PrimaryButton("<- Ingest Active High-Poly")) {
-                SetCommandLineHighPoly(cacheHigh);
-            }
-        } else {
-            ImGui::TextDisabled("No High-Poly cached in ZBrush.");
-        }
-
+    if (!hasAnyObject) {
+        ImGui::Spacing();
+        ImGui::PushStyleColor(ImGuiCol_Text, BakerUI::Col::TextDim());
+        ImGui::TextUnformatted("Scene is empty.");
+        ImGui::PopStyleColor();
         ImGui::Spacing();
 
-        // Low-Poly live cache
-        DWORD attrLP = GetFileAttributesA(cacheLow.c_str());
-        if (attrLP != INVALID_FILE_ATTRIBUTES && !(attrLP & FILE_ATTRIBUTE_DIRECTORY)) {
-            uintmax_t sz = 0;
-            try { sz = std::filesystem::file_size(cacheLow); } catch (...) {}
-            char szBuf[64];
-            snprintf(szBuf, sizeof(szBuf), "%.1f MB", sz / (1024.0 * 1024.0));
-            ImGui::Text("Active Low-Poly Cache: %s", szBuf);
-            if (BakerUI::SecondaryButton("<- Ingest Active Low-Poly")) {
-                SetCommandLineLowPoly(cacheLow);
-            }
-        } else {
-            ImGui::TextDisabled("No Low-Poly cached in ZBrush.");
+        if (BakerUI::SecondaryButton("+ Ingest Low-Poly (UDIM)...")) {
+            m_shellState.openLowPoly = true;
         }
-
-        ImGui::Spacing();
-        if (BakerUI::SecondaryButton("Sync All from ZBrush")) {
+        if (BakerUI::SecondaryButton("+ Ingest High-Poly Sculpt...")) {
+            m_shellState.openHighPoly = true;
+        }
+        if (BakerUI::SecondaryButton("Sync Active ZBrush SubTools")) {
             AutoDetectZBrushCache(true);
         }
+        ImGui::End();
+        return;
+    }
 
-        ImGui::Unindent(18.0f);
-        ImGui::TreePop();
+    // 1. High-Poly Sculpt Node (Only if loaded or loading)
+    if (m_hasHighPoly || m_isLoadingHighPoly) {
+        std::string hpName = std::filesystem::path(m_highPolyPath).stem().string();
+        if (hpName.empty()) hpName = "HighPoly_Sculpt";
+
+        ImGui::PushID("hp_node_hdr");
+        bool hpOpen = ImGui::TreeNodeEx("##hp_tree", ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth,
+                                        "[HP] %s", hpName.c_str());
+        ImGui::SameLine(ImGui::GetWindowWidth() - 95.0f);
+        BakerUI::ToggleChip("View", &m_viewportRenderer.showHighPoly);
+        ImGui::SameLine();
+        if (ImGui::SmallButton("X##hp_del")) {
+            ClearHighPoly();
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Unload high-poly sculpt");
+        ImGui::PopID();
+
+        if (hpOpen) {
+            ImGui::Indent(16.0f);
+            if (m_isLoadingHighPoly) {
+                BakerUI::StatusPill("Ingesting & building BVH...", BakerUI::Col::Warn());
+            } else {
+                ImGui::TextDisabled("Verts: %zu  |  Tris: %zu", m_highPolyMesh.positions.size(), m_highPolyMesh.indices.size() / 3);
+
+                // Badges
+                if (!m_highPolyMesh.colors.empty()) {
+                    BakerUI::StatusPill("Polypaint", BakerUI::Col::Ok());
+                } else {
+                    BakerUI::StatusPill("No Polypaint", BakerUI::Col::TextDim());
+                }
+                ImGui::SameLine();
+                if (!m_highPolyMesh.polygroupPerFace.empty()) {
+                    BakerUI::StatusPill("Polygroups", BakerUI::Col::Ok());
+                } else {
+                    BakerUI::StatusPill("No Polygroups", BakerUI::Col::TextDim());
+                }
+
+                ImGui::SetNextItemWidth(120);
+                ImGui::SliderFloat("Opacity##hp_op", &m_viewportRenderer.highPolyOpacity, 0.05f, 1.0f, "%.2f");
+
+                ImGui::SetNextItemWidth(120);
+                const char* shadingModes[] = { "Clay", "Wax Red", "Normals", "Flat" };
+                int currentShading = (int)m_viewportRenderer.highPolyShading;
+                if (ImGui::Combo("Shading##hp_shade", &currentShading, shadingModes, IM_ARRAYSIZE(shadingModes))) {
+                    m_viewportRenderer.highPolyShading = (ShadingMode)currentShading;
+                }
+            }
+            ImGui::Unindent(16.0f);
+            ImGui::TreePop();
+        }
+        ImGui::Spacing();
+    }
+
+    // 2. Low-Poly Target Node (Only if loaded)
+    if (m_hasLowPoly) {
+        std::string lpName = std::filesystem::path(m_lowPolyPath).stem().string();
+        if (lpName.empty()) lpName = "LowPoly_UDIM";
+
+        ImGui::PushID("lp_node_hdr");
+        bool lpOpen = ImGui::TreeNodeEx("##lp_tree", ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth,
+                                        "[LP] %s", lpName.c_str());
+        ImGui::SameLine(ImGui::GetWindowWidth() - 145.0f);
+        BakerUI::ToggleChip("View", &m_viewportRenderer.showLowPoly);
+        ImGui::SameLine();
+        BakerUI::ToggleChip("Wire", &m_viewportRenderer.showLowPolyWireframe);
+        ImGui::SameLine();
+        if (ImGui::SmallButton("X##lp_del")) {
+            ClearLowPoly();
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Unload low-poly mesh");
+        ImGui::PopID();
+
+        if (lpOpen) {
+            ImGui::Indent(16.0f);
+            ImGui::TextDisabled("Verts: %zu  |  Tris: %zu", m_lowPolyMesh.vertices.size(), m_lowPolyMesh.triangles.size());
+            ImGui::SetNextItemWidth(120);
+            ImGui::SliderFloat("Opacity##lp_op", &m_viewportRenderer.lowPolyOpacity, 0.05f, 1.0f, "%.2f");
+
+            // UDIM tiles checklist
+            char udimHeader[64];
+            snprintf(udimHeader, sizeof(udimHeader), "UDIM Tiles (%zu)###lp_udims", m_lowPolyMesh.detectedUDIMs.size());
+            if (ImGui::TreeNodeEx(udimHeader, ImGuiTreeNodeFlags_DefaultOpen)) {
+                if (ImGui::SmallButton("All##sel_all")) SelectAllUDIMs();
+                ImGui::SameLine();
+                if (ImGui::SmallButton("None##sel_none")) m_selectedUDIMs.clear();
+
+                for (int tile : m_lowPolyMesh.detectedUDIMs) {
+                    bool sel = IsUDIMSelected(tile);
+                    char tLabel[32];
+                    snprintf(tLabel, sizeof(tLabel), "Tile %d", tile);
+                    if (ImGui::Checkbox(tLabel, &sel)) {
+                        ToggleUDIM(tile);
+                    }
+                }
+                ImGui::TreePop();
+            }
+            ImGui::Unindent(16.0f);
+            ImGui::TreePop();
+        }
+        ImGui::Spacing();
+
+        // 3. Cage Shell Node (Only visible when low-poly is present)
+        ImGui::PushID("cage_node_hdr");
+        const char* cageLabel = m_hasExplicitCage ? "[Cage] Explicit Cage" : "[Cage] Normal Push Shell";
+        bool cageOpen = ImGui::TreeNodeEx("##cage_tree", ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth,
+                                          "%s", cageLabel);
+        ImGui::SameLine(ImGui::GetWindowWidth() - (m_hasExplicitCage ? 95.0f : 65.0f));
+        BakerUI::ToggleChip("View##cage_v", &m_viewportRenderer.showCage);
+        if (m_hasExplicitCage) {
+            ImGui::SameLine();
+            if (ImGui::SmallButton("X##cage_del")) {
+                ClearCage();
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Clear explicit cage");
+        }
+        ImGui::PopID();
+
+        if (cageOpen) {
+            ImGui::Indent(16.0f);
+            if (!m_hasExplicitCage) {
+                ImGui::SetNextItemWidth(120);
+                if (ImGui::DragFloat("Offset##cage_dist", &m_settings.cageDistance, 0.001f, 0.0f, 2.0f, "%.4f")) {
+                    m_viewportRenderer.UpdateCage(m_lowPolyMesh, m_settings.cageDistance, m_settings.lowPolyScale);
+                }
+            } else {
+                std::string cName = std::filesystem::path(m_cagePath).stem().string();
+                ImGui::TextDisabled("File: %s", cName.c_str());
+            }
+            ImGui::SetNextItemWidth(120);
+            ImGui::SliderFloat("Opacity##cage_op", &m_viewportRenderer.cageOpacity, 0.05f, 1.0f, "%.2f");
+            ImGui::Unindent(16.0f);
+            ImGui::TreePop();
+        }
     }
 
     ImGui::End();
@@ -936,6 +947,16 @@ void UIManager::RenderViewportPanel() {
         }
 
         ImGui::EndGroup();
+    }
+
+    // Floating Bake Button at the bottom of the 3D viewport canvas
+    int udimCount = m_lowPolyMesh.detectedUDIMs.empty() ? 1 : (int)m_lowPolyMesh.detectedUDIMs.size();
+    bool canBake = m_hasLowPoly && m_hasHighPoly && !m_isBaking && !m_isLoadingHighPoly;
+    if (BakerUI::FloatingBakeBar(origin, avail, canBake, m_isBaking, m_bakeProgress, m_bakeStatus.c_str(),
+                                 udimCount, m_settings.resolution, m_settings.resolution)) {
+        if (canBake) {
+            TriggerBake();
+        }
     }
 
     ImGui::End();
