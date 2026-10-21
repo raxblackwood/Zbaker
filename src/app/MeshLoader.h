@@ -35,6 +35,13 @@ public:
         std::string& outError
     );
 
+    // Exports the low-poly mesh with explicit vn vertex normals matching the baker exactly
+    static bool SaveLowPolyOBJWithNormals(
+        const std::string& filePath,
+        const LowPolyMesh& mesh,
+        std::string& outError
+    );
+
     static bool LoadCageOBJ(
         const std::string& filePath,
         LowPolyMesh& lowPoly,

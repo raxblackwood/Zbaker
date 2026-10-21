@@ -103,9 +103,12 @@ struct LowPolyMesh {
         return !cageNormals.empty() && cageNormals.size() == vertices.size();
     }
 
-    // Computes smooth area-weighted vertex normals across shared 3D positions
-    void ComputeSmoothVertexNormals() {
+    // Computes angle-aware smooth vertex normals respecting creaseAngleDeg (default 180 deg for standard smooth shading)
+    // Preserves sharp edges when specified, or smoothly averages continuous surfaces matching DCC smooth shading
+    void ComputeSmoothVertexNormals(float creaseAngleDeg = 180.0f) {
         if (vertices.empty() || triangles.empty()) return;
+
+        float minCos = std::cos(creaseAngleDeg * 3.14159265f / 180.0f);
 
         struct PosKey {
             int64_t x, y, z;
@@ -123,7 +126,6 @@ struct LowPolyMesh {
             }
         };
 
-        // Quantize position: 0.01 mm precision (100000 units per meter)
         auto Quantize = [](const Vec3& p) -> PosKey {
             return PosKey{
                 static_cast<int64_t>(std::floor(p.x * 100000.0f + 0.5f)),
@@ -132,34 +134,58 @@ struct LowPolyMesh {
             };
         };
 
-        std::unordered_map<PosKey, Vec3, PosHasher> posNormals;
-        posNormals.reserve(vertices.size());
+        struct TriFaceInfo {
+            Vec3 areaNormal; // Unnormalized area-weighted face normal
+            Vec3 unitNormal; // Unit face normal
+        };
+        std::vector<TriFaceInfo> triFaces(triangles.size());
+        std::unordered_map<PosKey, std::vector<uint32_t>, PosHasher> posToTriangles;
+        posToTriangles.reserve(vertices.size());
 
-        for (const auto& tri : triangles) {
+        for (size_t t = 0; t < triangles.size(); ++t) {
+            const auto& tri = triangles[t];
             const auto& p0 = vertices[tri.indices[0]].position;
             const auto& p1 = vertices[tri.indices[1]].position;
             const auto& p2 = vertices[tri.indices[2]].position;
 
-            Vec3 e1 = p1 - p0;
-            Vec3 e2 = p2 - p0;
-            Vec3 fn = e1.Cross(e2); // Area-weighted face normal
-            if (fn.Length() > 1e-20f) {
-                posNormals[Quantize(p0)] = posNormals[Quantize(p0)] + fn;
-                posNormals[Quantize(p1)] = posNormals[Quantize(p1)] + fn;
-                posNormals[Quantize(p2)] = posNormals[Quantize(p2)] + fn;
-            }
+            Vec3 fn = (p1 - p0).Cross(p2 - p0);
+            triFaces[t].areaNormal = fn;
+            triFaces[t].unitNormal = fn.Normalized();
+
+            posToTriangles[Quantize(p0)].push_back(static_cast<uint32_t>(t));
+            posToTriangles[Quantize(p1)].push_back(static_cast<uint32_t>(t));
+            posToTriangles[Quantize(p2)].push_back(static_cast<uint32_t>(t));
         }
 
-        for (size_t i = 0; i < vertices.size(); ++i) {
-            PosKey k = Quantize(vertices[i].position);
-            auto it = posNormals.find(k);
-            if (it != posNormals.end() && it->second.Length() > 1e-20f) {
-                vertices[i].normal = it->second.Normalized();
+        for (size_t t = 0; t < triangles.size(); ++t) {
+            const auto& tri = triangles[t];
+            const Vec3& myUnitNorm = triFaces[t].unitNormal;
+
+            for (int c = 0; c < 3; ++c) {
+                uint32_t vIdx = tri.indices[c];
+                PosKey k = Quantize(vertices[vIdx].position);
+
+                Vec3 accum(0, 0, 0);
+                auto it = posToTriangles.find(k);
+                if (it != posToTriangles.end()) {
+                    for (uint32_t adjTri : it->second) {
+                        const Vec3& adjUnitNorm = triFaces[adjTri].unitNormal;
+                        if (myUnitNorm.Dot(adjUnitNorm) >= minCos) {
+                            accum = accum + triFaces[adjTri].areaNormal;
+                        }
+                    }
+                }
+
+                if (accum.Length() > 1e-20f) {
+                    vertices[vIdx].normal = accum.Normalized();
+                } else if (myUnitNorm.Length() > 1e-20f) {
+                    vertices[vIdx].normal = myUnitNorm;
+                }
             }
         }
     }
 
-    void SmoothNormalsIfMissing() {
+    void SmoothNormalsIfMissing(float creaseAngleDeg = 180.0f) {
         bool needsSmoothing = false;
         for (const auto& v : vertices) {
             if (v.normal.Length() < 1e-4f) {
@@ -182,15 +208,17 @@ struct LowPolyMesh {
             }
         }
         if (needsSmoothing) {
-            ComputeSmoothVertexNormals();
+            ComputeSmoothVertexNormals(creaseAngleDeg);
         }
     }
 
     // Computes continuous, watertight cage normals by welding positions across UV seams
-    // Eliminates cracks/wedges in the cage where rays would otherwise miss high-poly surfaces
-    void ComputeWatertightCageNormals() {
+    // Respects maxWeldAngleDeg (default 40 deg) to prevent rays from crossing bevels and 90-deg sharp corners
+    void ComputeWatertightCageNormals(float maxWeldAngleDeg = 40.0f) {
         cageNormals.assign(vertices.size(), Vec3(0, 0, 0));
         if (vertices.empty() || triangles.empty()) return;
+
+        float minCos = std::cos(maxWeldAngleDeg * 3.14159265f / 180.0f);
 
         struct PosKey {
             int64_t x, y, z;
@@ -208,7 +236,6 @@ struct LowPolyMesh {
             }
         };
 
-        // Quantize position: 0.01 mm precision (100000 units per meter)
         auto Quantize = [](const Vec3& p) -> PosKey {
             return PosKey{
                 static_cast<int64_t>(std::floor(p.x * 100000.0f + 0.5f)),
@@ -217,34 +244,55 @@ struct LowPolyMesh {
             };
         };
 
-        std::unordered_map<PosKey, Vec3, PosHasher> posNormals;
-        posNormals.reserve(vertices.size());
+        struct TriFaceInfo {
+            Vec3 areaNormal;
+            Vec3 unitNormal;
+        };
+        std::vector<TriFaceInfo> triFaces(triangles.size());
+        std::unordered_map<PosKey, std::vector<uint32_t>, PosHasher> posToTriangles;
+        posToTriangles.reserve(vertices.size());
 
-        for (const auto& tri : triangles) {
+        for (size_t t = 0; t < triangles.size(); ++t) {
+            const auto& tri = triangles[t];
             const auto& p0 = vertices[tri.indices[0]].position;
             const auto& p1 = vertices[tri.indices[1]].position;
             const auto& p2 = vertices[tri.indices[2]].position;
 
-            Vec3 e1 = p1 - p0;
-            Vec3 e2 = p2 - p0;
-            Vec3 fn = e1.Cross(e2); // Area-weighted face normal
-            float len = fn.Length();
-            if (len > 1e-20f) {
-                posNormals[Quantize(p0)] = posNormals[Quantize(p0)] + fn;
-                posNormals[Quantize(p1)] = posNormals[Quantize(p1)] + fn;
-                posNormals[Quantize(p2)] = posNormals[Quantize(p2)] + fn;
-            }
+            Vec3 fn = (p1 - p0).Cross(p2 - p0);
+            triFaces[t].areaNormal = fn;
+            triFaces[t].unitNormal = fn.Normalized();
+
+            posToTriangles[Quantize(p0)].push_back(static_cast<uint32_t>(t));
+            posToTriangles[Quantize(p1)].push_back(static_cast<uint32_t>(t));
+            posToTriangles[Quantize(p2)].push_back(static_cast<uint32_t>(t));
         }
 
-        for (size_t i = 0; i < vertices.size(); ++i) {
-            PosKey k = Quantize(vertices[i].position);
-            auto it = posNormals.find(k);
-            if (it != posNormals.end() && it->second.Length() > 1e-20f) {
-                cageNormals[i] = it->second.Normalized();
-            } else if (vertices[i].normal.Length() > 1e-20f) {
-                cageNormals[i] = vertices[i].normal.Normalized();
-            } else {
-                cageNormals[i] = Vec3(0, 1, 0);
+        for (size_t t = 0; t < triangles.size(); ++t) {
+            const auto& tri = triangles[t];
+            const Vec3& myUnitNorm = triFaces[t].unitNormal;
+
+            for (int c = 0; c < 3; ++c) {
+                uint32_t vIdx = tri.indices[c];
+                PosKey k = Quantize(vertices[vIdx].position);
+
+                Vec3 accum(0, 0, 0);
+                auto it = posToTriangles.find(k);
+                if (it != posToTriangles.end()) {
+                    for (uint32_t adjTri : it->second) {
+                        const Vec3& adjUnitNorm = triFaces[adjTri].unitNormal;
+                        if (myUnitNorm.Dot(adjUnitNorm) >= minCos) {
+                            accum = accum + triFaces[adjTri].areaNormal;
+                        }
+                    }
+                }
+
+                if (accum.Length() > 1e-20f) {
+                    cageNormals[vIdx] = accum.Normalized();
+                } else if (vertices[vIdx].normal.Length() > 1e-20f) {
+                    cageNormals[vIdx] = vertices[vIdx].normal.Normalized();
+                } else {
+                    cageNormals[vIdx] = myUnitNorm;
+                }
             }
         }
     }

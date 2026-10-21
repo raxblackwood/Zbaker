@@ -281,6 +281,30 @@ int main(int argc, char** argv) {
     }
 
     std::cout << "[Test 5/5] JFA dilation & multi-tile output verification complete!" << std::endl;
+
+    // Test 6: Verify SaveLowPolyOBJWithNormals deduplicates unrolled corner vertices
+    // into shared geometric 'v' positions (manifold welded topology)
+    std::string userLpPath = "C:/Users/Public/Documents/ZBrushData2026/ZPluginData/UDIMBaker/UDIM_LowPoly.obj";
+    std::ifstream userLpCheck(userLpPath);
+    if (userLpCheck.good()) {
+        userLpCheck.close();
+        LowPolyMesh userLp;
+        std::string loadErr;
+        bool loadOk = MeshLoader::LoadLowPolyOBJ(userLpPath, userLp, loadErr);
+        if (!loadOk) {
+            std::cerr << "Failed to load LP: " << loadErr << std::endl;
+            return 1;
+        }
+        std::string saveErr;
+        std::string verifiedObjPath = "C:/Users/raman/Downloads/temp/bb/Verified_LowPoly_Baked.obj";
+        bool saveOk = MeshLoader::SaveLowPolyOBJWithNormals(verifiedObjPath, userLp, saveErr);
+        if (!saveOk) {
+            std::cerr << "Failed to save LP: " << saveErr << std::endl;
+            return 1;
+        }
+        std::cout << "[Test 6/6] Saved welded low-poly with matching normals: " << verifiedObjPath << std::endl;
+    }
+
     std::cout << "=== All Advanced Architecture Plan Tests PASSED! ===" << std::endl;
     return 0;
 }

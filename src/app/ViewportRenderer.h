@@ -50,12 +50,18 @@ public:
     DirectX::XMFLOAT3 GetHighPolyExtents() const;
     DirectX::XMFLOAT3 GetLowPolyExtents() const;
 
+    // Normal Map Preview
+    void SetBakedNormalMap(const float* r, const float* g, const float* b, int width, int height);
+    void ClearBakedNormalMap();
+    bool HasBakedNormalMap() const { return m_hasBakedNormalMap; }
+
     // Display Toggles & Settings
     bool showHighPoly = true;
     bool showLowPoly = true;
     bool showLowPolyWireframe = true;
     bool showCage = false;
     bool showGrid = true;
+    bool showBakedNormals = true;
     ShadingMode highPolyShading = ShadingMode::ClayMatcap;
     float highPolyOpacity = 1.0f;
     float lowPolyOpacity = 0.85f;
@@ -69,7 +75,7 @@ private:
     bool CreateShaders();
     bool CreateRasterizerAndBlendStates();
     void CreateGridBuffers();
-    void UpdateConstantBuffer(const DirectX::XMMATRIX& world, const DirectX::XMFLOAT4& color, int mode);
+    void UpdateConstantBuffer(const DirectX::XMMATRIX& world, const DirectX::XMFLOAT4& color, int mode, int hasNormalMap = 0);
 
     ID3D11Device* m_device = nullptr;
     ID3D11DeviceContext* m_context = nullptr;
@@ -96,6 +102,12 @@ private:
     ID3D11DepthStencilState* m_depthBiasState = nullptr;
     ID3D11BlendState* m_alphaBlendState = nullptr;
     ID3D11BlendState* m_opaqueBlendState = nullptr;
+    ID3D11SamplerState* m_linearSampler = nullptr;
+
+    // Normal map preview resource
+    ID3D11Texture2D* m_bakedNormalTex = nullptr;
+    ID3D11ShaderResourceView* m_bakedNormalSRV = nullptr;
+    bool m_hasBakedNormalMap = false;
 
     // Mesh GPU Buffers
     struct MeshGPUBuffer {

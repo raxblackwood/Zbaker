@@ -112,7 +112,25 @@ If your low-poly mesh was scaled or translated differently in an external DCC:
 
 ---
 
-## 5. Codebase Maintenance & File Index
+## 5. UI Architecture & Design System Handoff
+
+For redesigning, evaluating, or auditing the user interface without launching the application, refer to the dedicated UI documentation:
+
+1. **[UI Architecture Specification](file:///e:/CODES/zbrush%20plugins/baker/docs/UI_ARCHITECTURE.md)**:
+   - Full overview of the Blender Dark visual identity, theme system, color palettes, and Dear ImGui 1.93.1 docking hierarchy.
+   - Complete application state machine (`Empty`, `Ingesting`, `Loaded`, `Baking`, `Results`, `Error`).
+   - Specification of the Direct3D 11 viewport render target integration and the floating bake bar HUD.
+
+2. **[UI Handoff Package](file:///e:/CODES/zbrush%20plugins/baker/docs/ui_handoff/)**:
+   - [`UI_INVENTORY.md`](file:///e:/CODES/zbrush%20plugins/baker/docs/ui_handoff/UI_INVENTORY.md): Comprehensive inventory of every window, card, button, slider, checkbox, driving variable, callback action, and shortcut.
+   - [`KNOWN_ISSUES.md`](file:///e:/CODES/zbrush%20plugins/baker/docs/ui_handoff/KNOWN_ISSUES.md): Full audit of layout collisions, hard-coded pixel sizing, high-DPI scaling defects, and docking tab glitches.
+   - [`DOCKING_LAYOUT.md`](file:///e:/CODES/zbrush%20plugins/baker/docs/ui_handoff/DOCKING_LAYOUT.md) & [`imgui.ini`](file:///e:/CODES/zbrush%20plugins/baker/docs/ui_handoff/imgui.ini): Exact docking node IDs, split ratios, and persistent window coordinates.
+   - [`SCREENSHOTS/SCREENSHOT_GUIDE.md`](file:///e:/CODES/zbrush%20plugins/baker/docs/ui_handoff/SCREENSHOTS/SCREENSHOT_GUIDE.md): Setup checklist and resolution guide (`1920x1080` and `1280x720`) for capturing all 7 application states.
+   - [`SOURCE/`](file:///e:/CODES/zbrush%20plugins/baker/docs/ui_handoff/SOURCE/): Standalone archive containing all UI source code and viewport rendering implementations.
+
+---
+
+## 6. Codebase Maintenance & File Index
 
 | Directory / File | Description |
 |---|---|

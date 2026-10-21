@@ -11,10 +11,10 @@ struct BakeSettings {
     int resolution = 2048;            // 1024, 2048, 4096, 8192
     float cageDistance = 0.05f;       // Normal push distance for ray start (used if no explicit cage)
     float maxRayDistance = 0.2f;      // Max ray length
-    int seamPadding = 16;             // Dilation pixels (JFA nearest-texel)
+    int seamPadding = 32;             // Dilation pixels (JFA nearest-texel)
     int antiAliasing = 2;             // 1 = 1x (Draft), 2 = 2x2 (4 rays/pixel), 4 = 4x4 (16 rays/pixel)
     bool discardBackfaceHits = true;  // Discard backfaces & grazing hits to prevent inverted border artifacts
-    float angleThreshold = 90.0f;     // Max angle (degrees) between LP and HP normal (90 allows all front faces and steep crevices)
+    float angleThreshold = 75.0f;     // Max angle (degrees) between LP and HP normal (rejects cross-corner grazing hits)
     bool useBidirectionalRays = true; // Cast both inward from cage and outward from surface (Marmoset/xNormal standard)
     float maxOutwardDistance = 0.2f;  // Maximum distance to search along +normal for protruding sculpt peaks
     bool isolateMeshParts = false;    // Ray mask isolation per mesh/subtool part (prevents bleeding between adjacent stones)
@@ -35,7 +35,7 @@ struct BakeSettings {
     bool bakeDiagnosticMap = true;    // Diagnostic map (Miss=Red, Hit=Green, Clamp=Yellow)
     bool exportPNG = true;            // Save 8-bit PNG for instant preview & game engines
     bool exportEXR = true;            // Save 16-bit half / 32-bit float EXR
-    bool flipYNormal = false;         // DirectX (-Y) vs OpenGL (+Y)
+    bool flipYNormal = false;         // Normal map format: false = OpenGL (+Y) (Blender/Maya/Unity), true = DirectX (-Y) (Unreal/3ds Max)
     bool useCompactBVH = false;       // Compact/low build quality for 50M-100M polys to conserve memory
     unsigned int groupMask = 0xFFFFFFFF; // SubTool ray mask for bake group isolation
     float lowPolyScale = 1.0f;        // Scale multiplier for low-poly (uniform)

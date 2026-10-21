@@ -83,9 +83,9 @@ UIManager::UIManager() {
     m_settings.resolution = 2048;
     m_settings.cageDistance = 0.05f;
     m_settings.maxRayDistance = 0.2f;
-    m_settings.seamPadding = 16;
+    m_settings.seamPadding = 32;
     m_settings.discardBackfaceHits = true;
-    m_settings.angleThreshold = 90.0f;
+    m_settings.angleThreshold = 75.0f;
     m_settings.useBidirectionalRays = true;
     m_settings.isolateMeshParts = false;
     m_settings.bakeDisplacement = true;
@@ -382,6 +382,13 @@ void UIManager::RenderUI() {
         m_viewportRenderer.FrameAll();
         CheckScaleAndAutoCalibrate();
         m_pendingMeshUpload = false;
+    }
+
+    // 0b. Check pending GPU baked normal map upload from bake worker
+    if (m_pendingNormalUpload) {
+        std::lock_guard<std::mutex> lock(m_normalMutex);
+        m_viewportRenderer.SetBakedNormalMap(m_stagedNormalR.data(), m_stagedNormalG.data(), m_stagedNormalB.data(), m_stagedNormalW, m_stagedNormalH);
+        m_pendingNormalUpload = false;
     }
 
     // 0. Synchronize shell state
@@ -913,6 +920,9 @@ void UIManager::RenderViewportPanel() {
         BakerUI::ToggleChip("Wire", &m_viewportRenderer.showLowPolyWireframe); ImGui::SameLine();
         BakerUI::ToggleChip("Cage", &m_viewportRenderer.showCage); ImGui::SameLine();
         BakerUI::ToggleChip("Grid", &m_viewportRenderer.showGrid); ImGui::SameLine();
+        if (m_viewportRenderer.HasBakedNormalMap()) {
+            BakerUI::ToggleChip("Baked Normals", &m_viewportRenderer.showBakedNormals); ImGui::SameLine();
+        }
 
         ImGui::SetNextItemWidth(100);
         const char* shadingModes[] = { "Clay", "Wax Red", "Normals", "Flat" };
@@ -1215,7 +1225,7 @@ void UIManager::RenderMeshPanel() {
 void UIManager::RenderSettingsPanel() {
     ImGui::Begin("Bake Parameters###params", nullptr);
 
-    static const char* kRes[] = { "1024", "2048", "4096", "8192" };
+    static const char* kRes[] = { "1024", "2048", "4096", "8192 (8K)", "16384 (16K)" };
     static int currentResIdx = 1; // 2048
 
     static const char* kAA[] = { "1x (Draft)", "2x2 (4 Samples - Prod)", "4x4 (16 Samples - Max)" };
@@ -1226,8 +1236,8 @@ void UIManager::RenderSettingsPanel() {
 
     BakerUI::SectionLabel("PROJECTION");
     if (BakerUI::BeginProps("##proj")) {
-        if (BakerUI::PropCombo("Resolution", &currentResIdx, kRes, 4)) {
-            int resMap[] = { 1024, 2048, 4096, 8192 };
+        if (BakerUI::PropCombo("Resolution", &currentResIdx, kRes, 5)) {
+            int resMap[] = { 1024, 2048, 4096, 8192, 16384 };
             m_settings.resolution = resMap[currentResIdx];
         }
         if (BakerUI::PropCombo("Antialiasing", &currentAAIdx, kAA, 3)) {
@@ -1289,7 +1299,11 @@ void UIManager::RenderSettingsPanel() {
         BakerUI::PropCheck("Material ID (Polygroups)", &m_settings.bakeMaterialID, "Distinct color per ZBrush polygroup ID");
         BakerUI::PropCheck("Base Color (Polypaint)", &m_settings.bakeBaseColor, "ZBrush vertex colors baked directly to UDIM texture");
         BakerUI::PropCheck("Diagnostic map", &m_settings.bakeDiagnosticMap, "Missed rays and ray coverage analysis");
-        BakerUI::PropCheck("Flip Normal Y (DX/GL)", &m_settings.flipYNormal);
+        static const char* const kNormalFormats[] = { "OpenGL (+Y) (Blender/Maya)", "DirectX (-Y) (Unreal/Max)" };
+        int curNormalFmt = m_settings.flipYNormal ? 1 : 0;
+        if (BakerUI::PropCombo("Normal Format", &curNormalFmt, kNormalFormats, 2)) {
+            m_settings.flipYNormal = (curNormalFmt == 1);
+        }
         BakerUI::PropCheck("Compact BVH", &m_settings.useCompactBVH, "For dense 50M-100M poly sculpts");
         BakerUI::EndProps();
     }
@@ -1696,12 +1710,36 @@ void UIManager::TriggerBake() {
                 }
             }
 
+            // 3. Low-Poly OBJ with exact matching baked vertex normals
+            std::string lpObjPath = (outFolder / (m_settings.baseFilename + "_LowPoly_Baked.obj")).string();
+            std::string objErr;
+            if (MeshLoader::SaveLowPolyOBJWithNormals(lpObjPath, m_lowPolyMesh, objErr)) {
+                m_logEntries.push_back("[OBJ] Exported baked low-poly mesh with matching normals: " + lpObjPath);
+                allSavedFiles.push_back(lpObjPath);
+            }
+
             // Synchronize timestamps of all generated files across all UDIMs to identical timestamp
             // Guarantees consistent side-by-side ordering in Windows File Explorer regardless of sorting mode
             auto syncTime = std::filesystem::file_time_type::clock::now();
             for (const auto& fp : allSavedFiles) {
                 std::error_code sec;
                 std::filesystem::last_write_time(fp, syncTime, sec);
+            }
+
+            // Stage baked normal map for real-time 3D viewport preview
+            if (m_settings.bakeNormal && !results.empty()) {
+                for (const auto& res : results) {
+                    if (!res.normalMapR.empty()) {
+                        std::lock_guard<std::mutex> lock(m_normalMutex);
+                        m_stagedNormalR = res.normalMapR;
+                        m_stagedNormalG = res.normalMapG;
+                        m_stagedNormalB = res.normalMapB;
+                        m_stagedNormalW = res.width;
+                        m_stagedNormalH = res.height;
+                        m_pendingNormalUpload = true;
+                        break;
+                    }
+                }
             }
 
             m_logEntries.push_back("[Bake] All UDIM tiles successfully baked and written!");

@@ -94,6 +94,15 @@ private:
     std::atomic<bool> m_isLoadingHighPoly{false};
     std::atomic<bool> m_pendingMeshUpload{false};
     std::string m_loadingStatusText;
+
+    // Background Staged Baked Normal Map State
+    std::mutex m_normalMutex;
+    std::vector<float> m_stagedNormalR;
+    std::vector<float> m_stagedNormalG;
+    std::vector<float> m_stagedNormalB;
+    int m_stagedNormalW = 0;
+    int m_stagedNormalH = 0;
+    std::atomic<bool> m_pendingNormalUpload{false};
 };
 
 } // namespace Baker

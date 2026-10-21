@@ -201,9 +201,9 @@ bool MeshLoader::LoadLowPolyFBX(
         outMesh.detectedUDIMs.push_back(1001);
     }
 
-    outMesh.SmoothNormalsIfMissing();
+    outMesh.SmoothNormalsIfMissing(180.0f);
     MikkTSpaceBridge::CalculateTangents(outMesh);
-    outMesh.ComputeWatertightCageNormals();
+    outMesh.ComputeWatertightCageNormals(180.0f);
     return true;
 }
 
@@ -414,12 +414,6 @@ bool MeshLoader::LoadLowPolyOBJ(
             Vec3 edge2 = v2.position - v0.position;
             Vec3 faceNormal = edge1.Cross(edge2).Normalized();
 
-            for (size_t v = 0; v < fv; ++v) {
-                if (outMesh.vertices[faceIndices[v]].normal.Length() < 1e-4f) {
-                    outMesh.vertices[faceIndices[v]].normal = faceNormal;
-                }
-            }
-
             faceU /= (float)fv;
             faceV /= (float)fv;
             int tileId = CalculateUDIMTile(faceU, faceV);
@@ -466,9 +460,112 @@ bool MeshLoader::LoadLowPolyOBJ(
         outMesh.detectedUDIMs.push_back(1001);
     }
 
-    outMesh.SmoothNormalsIfMissing();
+    outMesh.SmoothNormalsIfMissing(180.0f);
     MikkTSpaceBridge::CalculateTangents(outMesh);
-    outMesh.ComputeWatertightCageNormals();
+    outMesh.ComputeWatertightCageNormals(180.0f);
+    return true;
+}
+
+bool MeshLoader::SaveLowPolyOBJWithNormals(
+    const std::string& filePath,
+    const LowPolyMesh& mesh,
+    std::string& outError
+) {
+    if (mesh.vertices.empty() || mesh.triangles.empty()) {
+        outError = "Cannot save empty mesh to OBJ";
+        return false;
+    }
+
+    std::ofstream out(filePath);
+    if (!out.is_open()) {
+        outError = "Failed to open destination OBJ file: " + filePath;
+        return false;
+    }
+
+    // Deduplicate geometric vertex positions so adjacent faces share 'v' indices,
+    // preserving watertight topology and smooth edge continuity in DCCs / Blender
+    struct PosKey {
+        int64_t x, y, z;
+        bool operator==(const PosKey& o) const {
+            return x == o.x && y == o.y && z == o.z;
+        }
+    };
+    struct PosHasher {
+        size_t operator()(const PosKey& k) const {
+            size_t h = 14695981039346656037ULL;
+            h ^= static_cast<size_t>(k.x); h *= 1099511628211ULL;
+            h ^= static_cast<size_t>(k.y); h *= 1099511628211ULL;
+            h ^= static_cast<size_t>(k.z); h *= 1099511628211ULL;
+            return h;
+        }
+    };
+
+    auto Quantize = [](const Vec3& p) -> PosKey {
+        return PosKey{
+            static_cast<int64_t>(std::floor(p.x * 100000.0f + 0.5f)),
+            static_cast<int64_t>(std::floor(p.y * 100000.0f + 0.5f)),
+            static_cast<int64_t>(std::floor(p.z * 100000.0f + 0.5f))
+        };
+    };
+
+    std::unordered_map<PosKey, uint32_t, PosHasher> posMap;
+    std::vector<Vec3> uniquePositions;
+    std::vector<uint32_t> vertToPos(mesh.vertices.size());
+
+    for (size_t i = 0; i < mesh.vertices.size(); ++i) {
+        PosKey k = Quantize(mesh.vertices[i].position);
+        auto it = posMap.find(k);
+        if (it == posMap.end()) {
+            uint32_t pIdx = static_cast<uint32_t>(uniquePositions.size());
+            posMap[k] = pIdx;
+            uniquePositions.push_back(mesh.vertices[i].position);
+            vertToPos[i] = pIdx;
+        } else {
+            vertToPos[i] = it->second;
+        }
+    }
+
+    out << "# Low-Poly Mesh with matching vertex normals baked by ZBrush UDIM Baker\n";
+    out << "# Geometric Vertex Count: " << uniquePositions.size() << "\n";
+    out << "# Corner Vertex Count: " << mesh.vertices.size() << "\n";
+    out << "# Triangle Count: " << mesh.triangles.size() << "\n";
+
+    // 1. Shared Geometric Vertices (v)
+    for (const auto& pos : uniquePositions) {
+        out << "v " << pos.x << " " << pos.y << " " << pos.z << "\n";
+    }
+
+    // 2. Texture Coordinates per face corner (vt)
+    for (const auto& v : mesh.vertices) {
+        out << "vt " << v.uv.u << " " << v.uv.v << "\n";
+    }
+
+    // 3. Vertex Normals per face corner (vn)
+    for (const auto& v : mesh.vertices) {
+        out << "vn " << v.normal.x << " " << v.normal.y << " " << v.normal.z << "\n";
+    }
+
+    // 4. Triangles with 1-based indexing f v/vt/vn
+    out << "s 1\n";
+    for (const auto& tri : mesh.triangles) {
+        uint32_t c0 = tri.indices[0];
+        uint32_t c1 = tri.indices[1];
+        uint32_t c2 = tri.indices[2];
+
+        uint32_t p0 = vertToPos[c0] + 1;
+        uint32_t p1 = vertToPos[c1] + 1;
+        uint32_t p2 = vertToPos[c2] + 1;
+
+        uint32_t l0 = c0 + 1;
+        uint32_t l1 = c1 + 1;
+        uint32_t l2 = c2 + 1;
+
+        out << "f " << p0 << "/" << l0 << "/" << l0 << " "
+                    << p1 << "/" << l1 << "/" << l1 << " "
+                    << p2 << "/" << l2 << "/" << l2 << "\n";
+    }
+
+    out.close();
     return true;
 }
 
