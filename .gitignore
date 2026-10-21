@@ -11,3 +11,4 @@ build/
 *.dll
 *.user
 .vs/
+docs/refs/
