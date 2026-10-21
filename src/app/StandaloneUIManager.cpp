@@ -636,12 +636,25 @@ void StandaloneUIManager::RenderViewportPanel() {
     ImGuiIO& io = ImGui::GetIO();
 
     if (ImGui::IsWindowHovered()) {
-        int btnState = 0;
-        if (io.MouseDown[0]) btnState |= 1;
-        if (io.MouseDown[1]) btnState |= 2;
-        if (io.MouseDown[2]) btnState |= 4;
+        int button = 0;
+        if (io.KeyAlt) {
+            if (ImGui::IsMouseDragging(ImGuiMouseButton_Left)) button = 1;       // Maya Alt + LMB: Tumble/Orbit
+            else if (ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) button = 2; // Maya Alt + MMB: Track/Pan
+            else if (ImGui::IsMouseDragging(ImGuiMouseButton_Right)) button = 3;  // Maya Alt + RMB: Dolly/Zoom
+        } else {
+            if (m_toolMode == ToolMode::Navigate) {
+                if (ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) button = 2;      // MMB: Track/Pan
+                else if (ImGui::IsMouseDragging(ImGuiMouseButton_Right)) button = 3; // RMB: Dolly/Zoom
+                else if (ImGui::IsMouseDragging(ImGuiMouseButton_Left)) button = 1;  // LMB: Orbit
+            } else {
+                if (ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) button = 2;      // MMB: Track/Pan
+                else if (ImGui::IsMouseDragging(ImGuiMouseButton_Right)) button = 3; // RMB: Dolly/Zoom
+            }
+        }
 
-        m_viewportRenderer.HandleMouseInput(io.MouseDelta.x, io.MouseDelta.y, btnState, io.MouseWheel);
+        if (button != 0 || io.MouseWheel != 0.0f) {
+            m_viewportRenderer.HandleMouseInput(io.MouseDelta.x, io.MouseDelta.y, button, io.MouseWheel);
+        }
 
         if (ImGui::IsKeyPressed(ImGuiKey_F)) {
             m_viewportRenderer.FrameAll();
@@ -653,6 +666,89 @@ void StandaloneUIManager::RenderViewportPanel() {
     ID3D11ShaderResourceView* srv = m_viewportRenderer.GetViewportSRV();
     if (srv) {
         ImGui::Image((ImTextureID)srv, avail);
+    }
+
+    // Marmoset-style 3D interactive brush ray-casting & reticle
+    if (m_toolMode != ToolMode::Navigate && !io.KeyAlt && m_hasLowPoly && (m_viewportMode == ViewportMode::View3D || m_viewportMode == ViewportMode::SplitBoth)) {
+        float maxActiveW = (m_viewportMode == ViewportMode::SplitBoth) ? avail.x * 0.5f : avail.x;
+        float relX = io.MousePos.x - screenPos.x;
+        float relY = io.MousePos.y - screenPos.y;
+
+        if (relX >= 0.0f && relX <= maxActiveW && relY >= 0.0f && relY <= avail.y) {
+            DirectX::XMFLOAT3 rOrgW, rDirW;
+            if (m_viewportRenderer.UnprojectRay(relX, relY, rOrgW, rDirW)) {
+                DirectX::XMMATRIX invWorld = DirectX::XMMatrixInverse(nullptr, m_viewportRenderer.GetLowPolyWorldMatrix());
+                DirectX::XMVECTOR vOrg = DirectX::XMVector3TransformCoord(DirectX::XMLoadFloat3(&rOrgW), invWorld);
+                DirectX::XMVECTOR vDir = DirectX::XMVector3Normalize(DirectX::XMVector3TransformNormal(DirectX::XMLoadFloat3(&rDirW), invWorld));
+                Vec3 localOrg(DirectX::XMVectorGetX(vOrg), DirectX::XMVectorGetY(vOrg), DirectX::XMVectorGetZ(vOrg));
+                Vec3 localDir(DirectX::XMVectorGetX(vDir), DirectX::XMVectorGetY(vDir), DirectX::XMVectorGetZ(vDir));
+
+                float hitT = 0.0f;
+                Vec3 hitPos, hitNormal;
+                int hitTriIdx = -1;
+                if (m_lowPolyMesh.Raycast(localOrg, localDir, hitT, hitPos, hitNormal, hitTriIdx)) {
+                    // Visual screen-space reticle ring
+                    DirectX::XMFLOAT3 p1(hitPos.x, hitPos.y, hitPos.z);
+                    DirectX::XMFLOAT3 p2(hitPos.x + m_brushRadius, hitPos.y, hitPos.z);
+                    float s1X, s1Y, s2X, s2Y;
+                    m_viewportRenderer.ProjectToScreen(p1, s1X, s1Y);
+                    m_viewportRenderer.ProjectToScreen(p2, s2X, s2Y);
+                    float screenBrushR = std::hypot(s2X - s1X, s2Y - s1Y);
+                    if (screenBrushR < 6.0f) screenBrushR = 6.0f;
+                    if (screenBrushR > 400.0f) screenBrushR = 400.0f;
+
+                    ImDrawList* drawList = ImGui::GetWindowDrawList();
+                    ImU32 reticleCol = (m_toolMode == ToolMode::PaintCage)
+                        ? IM_COL32(40, 190, 255, 230)
+                        : IM_COL32(255, 175, 40, 230);
+                    drawList->AddCircle(io.MousePos, screenBrushR, reticleCol, 36, 2.0f);
+                    drawList->AddCircleFilled(io.MousePos, 3.5f, IM_COL32(255, 255, 255, 255));
+
+                    // Interactive dragging stroke
+                    if (io.MouseDown[0]) {
+                        bool invert = io.KeyCtrl || m_brushInvert;
+                        if (m_toolMode == ToolMode::PaintCage) {
+                            EnsureCageInitialized();
+                            float baseDist = m_settings.cageDistance;
+                            float deltaStep = m_brushStrength * (m_brushRadius * 0.04f);
+                            for (size_t i = 0; i < m_lowPolyMesh.vertices.size(); ++i) {
+                                float d = (m_lowPolyMesh.vertices[i].position - hitPos).Length();
+                                if (d <= m_brushRadius) {
+                                    float sNorm = d / m_brushRadius;
+                                    float falloff = (1.0f - sNorm * sNorm);
+                                    falloff = falloff * falloff;
+                                    if (invert) {
+                                        m_lowPolyMesh.cageOffsets[i] -= deltaStep * falloff;
+                                    } else {
+                                        m_lowPolyMesh.cageOffsets[i] += deltaStep * falloff;
+                                    }
+                                    Vec3 n = m_lowPolyMesh.HasWatertightCageNormals() ? m_lowPolyMesh.cageNormals[i] : m_lowPolyMesh.vertices[i].normal;
+                                    m_lowPolyMesh.cagePositions[i] = m_lowPolyMesh.vertices[i].position + n * (baseDist + m_lowPolyMesh.cageOffsets[i]);
+                                }
+                            }
+                            m_viewportRenderer.UpdateCage(m_lowPolyMesh, m_settings.cageDistance, 1.0f);
+                        } else if (m_toolMode == ToolMode::PaintSkew) {
+                            EnsureSkewInitialized();
+                            float deltaStep = m_brushStrength * 0.08f;
+                            for (size_t i = 0; i < m_lowPolyMesh.vertices.size(); ++i) {
+                                float d = (m_lowPolyMesh.vertices[i].position - hitPos).Length();
+                                if (d <= m_brushRadius) {
+                                    float sNorm = d / m_brushRadius;
+                                    float falloff = (1.0f - sNorm * sNorm);
+                                    falloff = falloff * falloff;
+                                    if (invert) {
+                                        m_lowPolyMesh.vertexSkew[i] = (std::max)(0.0f, m_lowPolyMesh.vertexSkew[i] - deltaStep * falloff);
+                                    } else {
+                                        m_lowPolyMesh.vertexSkew[i] = (std::min)(1.0f, m_lowPolyMesh.vertexSkew[i] + deltaStep * falloff);
+                                    }
+                                }
+                            }
+                            m_viewportRenderer.UpdateSkew(m_lowPolyMesh, 1.0f);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     // Viewport Mode overlay buttons (Top Left)
@@ -683,6 +779,38 @@ void StandaloneUIManager::RenderViewportPanel() {
         }
 
         ImGui::SameLine();
+        BakerUI::ToggleChip("Cage", &m_viewportRenderer.showCage);
+
+        ImGui::SameLine();
+        ImGui::Dummy(ImVec2(10.0f, 0.0f));
+        ImGui::SameLine();
+
+        bool isNav = (m_toolMode == ToolMode::Navigate);
+        if (BakerUI::ToggleChip("Navigate", &isNav)) {
+            m_toolMode = ToolMode::Navigate;
+        }
+        ImGui::SameLine();
+        bool isPaintCage = (m_toolMode == ToolMode::PaintCage);
+        if (BakerUI::ToggleChip("Paint Cage", &isPaintCage)) {
+            m_toolMode = isPaintCage ? ToolMode::PaintCage : ToolMode::Navigate;
+            if (m_toolMode == ToolMode::PaintCage) {
+                m_viewportRenderer.showCage = true;
+                EnsureCageInitialized();
+            }
+        }
+        ImGui::SameLine();
+        bool isPaintSkew = (m_toolMode == ToolMode::PaintSkew);
+        if (BakerUI::ToggleChip("Paint Skew", &isPaintSkew)) {
+            m_toolMode = isPaintSkew ? ToolMode::PaintSkew : ToolMode::Navigate;
+            if (m_toolMode == ToolMode::PaintSkew) {
+                EnsureSkewInitialized();
+                m_viewportRenderer.showSkew = true;
+            } else {
+                m_viewportRenderer.showSkew = false;
+            }
+        }
+
+        ImGui::SameLine();
         ImGui::Dummy(ImVec2(16.0f, 0.0f));
         ImGui::SameLine();
 
@@ -694,6 +822,46 @@ void StandaloneUIManager::RenderViewportPanel() {
         }
     }
     ImGui::EndGroup();
+
+    // Floating Marmoset 3D Brush Settings Bar
+    if (m_toolMode != ToolMode::Navigate && (m_viewportMode == ViewportMode::View3D || m_viewportMode == ViewportMode::SplitBoth)) {
+        ImGui::SetCursorScreenPos(ImVec2(screenPos.x + 12.0f, screenPos.y + 44.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8.0f, 4.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.14f, 0.15f, 0.18f, 0.94f));
+        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.30f, 0.32f, 0.38f, 0.85f));
+        float barW = (std::min)(580.0f, avail.x - 24.0f);
+        ImGui::BeginChild("##brush_bar", ImVec2(barW, 36.0f), true, ImGuiWindowFlags_NoScrollbar);
+        {
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextColored(m_toolMode == ToolMode::PaintCage ? ImVec4(0.3f, 0.8f, 1.0f, 1.0f) : ImVec4(1.0f, 0.7f, 0.2f, 1.0f),
+                               m_toolMode == ToolMode::PaintCage ? "CAGE BRUSH" : "SKEW BRUSH");
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(90.0f);
+            ImGui::SliderFloat("Radius##b", &m_brushRadius, 0.02f, 10.0f, "%.2f");
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(90.0f);
+            ImGui::SliderFloat("Strength##b", &m_brushStrength, 0.05f, 1.0f, "%.2f");
+            ImGui::SameLine();
+            ImGui::Checkbox("Invert (Ctrl)", &m_brushInvert);
+            ImGui::SameLine();
+
+            if (m_toolMode == ToolMode::PaintCage) {
+                if (ImGui::Button("Reset Cage")) {
+                    ResetPaintedCage();
+                }
+            } else if (m_toolMode == ToolMode::PaintSkew) {
+                BakerUI::ToggleChip("Heatmap", &m_viewportRenderer.showSkew);
+                ImGui::SameLine();
+                if (ImGui::Button("Reset Skew")) {
+                    ResetPaintedSkew();
+                }
+            }
+        }
+        ImGui::EndChild();
+        ImGui::PopStyleColor(2);
+        ImGui::PopStyleVar(2);
+    }
 
     // 2D UV Canvas overlay if 2D or Split mode is active
     if (m_viewportMode == ViewportMode::View2D) {
@@ -771,6 +939,18 @@ void StandaloneUIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& s
                                          ImGui::GetColorU32(ImVec4(0.12f, 0.14f, 0.16f, 0.15f)));
 
             drawList->AddRectFilled(ImVec2(x0, y0), ImVec2(x1, y1), tileBg);
+
+            // Live Baked Texture Display (xNormal / Substance 2D canvas style)
+            if (m_viewportRenderer.GetBakedNormalSRV() && (udim == 1001 || (isDetected && isSelected))) {
+                drawList->AddImage(
+                    (ImTextureID)m_viewportRenderer.GetBakedNormalSRV(),
+                    ImVec2(x0, y0),
+                    ImVec2(x1, y1),
+                    ImVec2(0.0f, 0.0f),
+                    ImVec2(1.0f, 1.0f)
+                );
+            }
+
             drawList->AddRect(ImVec2(x0, y0), ImVec2(x1, y1), isSelected ? ImGui::GetColorU32(BakerUI::Col::Accent()) : ImGui::GetColorU32(BakerUI::Col::Border()));
 
             char tileStr[16];
@@ -1187,9 +1367,25 @@ void StandaloneUIManager::TriggerBake() {
             this->m_bakeStatus = status;
         };
 
+        auto livePreviewCb = [this](int tile, int width, int height, const float* r, const float* g, const float* b) {
+            std::lock_guard<std::mutex> lock(this->m_normalMutex);
+            size_t count = static_cast<size_t>(width) * height;
+            if (this->m_stagedNormalR.size() != count) {
+                this->m_stagedNormalR.resize(count);
+                this->m_stagedNormalG.resize(count);
+                this->m_stagedNormalB.resize(count);
+            }
+            std::memcpy(this->m_stagedNormalR.data(), r, count * sizeof(float));
+            std::memcpy(this->m_stagedNormalG.data(), g, count * sizeof(float));
+            std::memcpy(this->m_stagedNormalB.data(), b, count * sizeof(float));
+            this->m_stagedNormalW = width;
+            this->m_stagedNormalH = height;
+            this->m_pendingNormalUpload = true;
+        };
+
         auto startTime = std::chrono::high_resolution_clock::now();
 
-        bool success = m_engine.ExecuteBake(m_lowPolyMesh, settingsCopy, results, progressCb, err);
+        bool success = m_engine.ExecuteBake(m_lowPolyMesh, settingsCopy, results, progressCb, err, livePreviewCb);
 
         auto endTime = std::chrono::high_resolution_clock::now();
         double elapsedSec = std::chrono::duration<double>(endTime - startTime).count();
@@ -1315,6 +1511,50 @@ void StandaloneUIManager::TriggerBake() {
         m_bakeProgress = 1.0f;
         m_isBaking = false;
     }).detach();
+}
+
+void StandaloneUIManager::EnsureCageInitialized() {
+    if (!m_hasLowPoly || m_lowPolyMesh.vertices.empty()) return;
+    if (m_lowPolyMesh.cagePositions.size() != m_lowPolyMesh.vertices.size()) {
+        m_lowPolyMesh.cagePositions.resize(m_lowPolyMesh.vertices.size());
+        m_lowPolyMesh.cageOffsets.assign(m_lowPolyMesh.vertices.size(), 0.0f);
+        if (!m_lowPolyMesh.HasWatertightCageNormals()) {
+            m_lowPolyMesh.ComputeWatertightCageNormals(180.0f);
+        }
+        for (size_t i = 0; i < m_lowPolyMesh.vertices.size(); ++i) {
+            Vec3 n = m_lowPolyMesh.HasWatertightCageNormals() ? m_lowPolyMesh.cageNormals[i] : m_lowPolyMesh.vertices[i].normal;
+            m_lowPolyMesh.cagePositions[i] = m_lowPolyMesh.vertices[i].position + n * m_settings.cageDistance;
+        }
+    }
+    m_hasExplicitCage = true;
+    m_viewportRenderer.UpdateCage(m_lowPolyMesh, m_settings.cageDistance, 1.0f);
+}
+
+void StandaloneUIManager::EnsureSkewInitialized() {
+    if (!m_hasLowPoly || m_lowPolyMesh.vertices.empty()) return;
+    if (m_lowPolyMesh.vertexSkew.size() != m_lowPolyMesh.vertices.size()) {
+        m_lowPolyMesh.vertexSkew.assign(m_lowPolyMesh.vertices.size(), 0.0f);
+    }
+    m_viewportRenderer.UpdateSkew(m_lowPolyMesh, 1.0f);
+}
+
+void StandaloneUIManager::ResetPaintedCage() {
+    if (!m_hasLowPoly || m_lowPolyMesh.vertices.empty()) return;
+    m_lowPolyMesh.cageOffsets.assign(m_lowPolyMesh.vertices.size(), 0.0f);
+    if (!m_lowPolyMesh.HasWatertightCageNormals()) {
+        m_lowPolyMesh.ComputeWatertightCageNormals(180.0f);
+    }
+    for (size_t i = 0; i < m_lowPolyMesh.vertices.size(); ++i) {
+        Vec3 n = m_lowPolyMesh.HasWatertightCageNormals() ? m_lowPolyMesh.cageNormals[i] : m_lowPolyMesh.vertices[i].normal;
+        m_lowPolyMesh.cagePositions[i] = m_lowPolyMesh.vertices[i].position + n * m_settings.cageDistance;
+    }
+    m_viewportRenderer.UpdateCage(m_lowPolyMesh, m_settings.cageDistance, 1.0f);
+}
+
+void StandaloneUIManager::ResetPaintedSkew() {
+    if (!m_hasLowPoly || m_lowPolyMesh.vertices.empty()) return;
+    m_lowPolyMesh.vertexSkew.assign(m_lowPolyMesh.vertices.size(), 0.0f);
+    m_viewportRenderer.UpdateSkew(m_lowPolyMesh, 1.0f);
 }
 
 } // namespace Baker

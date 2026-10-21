@@ -34,6 +34,12 @@ public:
         SplitBoth = 2
     };
 
+    enum class ToolMode {
+        Navigate = 0,
+        PaintCage = 1,
+        PaintSkew = 2
+    };
+
 private:
     void RenderOutlinerPanel();
     void RenderViewportPanel();
@@ -51,6 +57,11 @@ private:
     void ResetTransforms();
     void CheckScaleAndAutoCalibrate();
 
+    void EnsureCageInitialized();
+    void EnsureSkewInitialized();
+    void ResetPaintedCage();
+    void ResetPaintedSkew();
+
     // Session State
     LowPolyMesh m_lowPolyMesh;
     HighPolyMesh m_highPolyMesh;
@@ -66,6 +77,10 @@ private:
     ViewportRenderer m_viewportRenderer;
 
     ViewportMode m_viewportMode = ViewportMode::View3D;
+    ToolMode m_toolMode = ToolMode::Navigate;
+    float m_brushRadius = 0.5f;
+    float m_brushStrength = 0.5f;
+    bool m_brushInvert = false;
     float m_uvZoom = 1.0f;
     ImVec2 m_uvPan = ImVec2(0.0f, 0.0f);
     int m_selectedUdimTile = 1001;

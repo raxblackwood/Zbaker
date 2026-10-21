@@ -93,13 +93,16 @@ public:
         std::string& outError
     );
 
+    using IntermediateCallback = std::function<void(int tile, int width, int height, const float* r, const float* g, const float* b)>;
+
     // Bakes all UDIM tiles detected on the low-poly mesh (with explicit cage support & ray masking)
     bool ExecuteBake(
         const LowPolyMesh& lowPoly,
         const BakeSettings& settings,
         std::vector<BakeResult>& outResults,
         std::function<void(float progress, const std::string& status)> progressCallback,
-        std::string& outError
+        std::string& outError,
+        IntermediateCallback livePreviewCallback = nullptr
     );
 
     // Jump Flooding Algorithm (JFA) exact nearest-texel dilation across all active bake result buffers

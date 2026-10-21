@@ -394,7 +394,8 @@ bool BakerEngine::ExecuteBake(
     const BakeSettings& settings,
     std::vector<BakeResult>& outResults,
     std::function<void(float progress, const std::string& status)> progressCallback,
-    std::string& outError
+    std::string& outError,
+    IntermediateCallback livePreviewCallback
 ) {
     if (!m_bvhReady || !m_embreeScene) {
         outError = "High-poly BVH is not initialized";
@@ -573,7 +574,14 @@ bool BakerEngine::ExecuteBake(
 
                     const auto& trisInRow = rowTriangles[y];
                     if (trisInRow.empty()) {
-                        completedRows.fetch_add(1);
+                        int c = completedRows.fetch_add(1) + 1;
+                        if (c % 16 == 0 || c == H) {
+                            float tileProg = static_cast<float>(c) / static_cast<float>(H);
+                            float overallProg = (static_cast<float>(tileIdx) + tileProg) / static_cast<float>(totalTiles);
+                            char pbuf[128];
+                            snprintf(pbuf, sizeof(pbuf), "Baking UDIM %d: %d/%d (%d%%)", tile, c, H, static_cast<int>(tileProg * 100.0f));
+                            if (progressCallback) progressCallback(overallProg, pbuf);
+                        }
                         continue;
                     }
 
@@ -650,6 +658,12 @@ bool BakerEngine::ExecuteBake(
                                 Vec3 rawFaceNorm = (v1.position - v0.position).Cross(v2.position - v0.position).Normalized();
                                 Vec3 geomFaceNormal = TransformDirection(rawFaceNorm, lpRot, lpScaleVec);
                                 float skew = std::clamp(settings.skewFactor, 0.0f, 1.0f);
+                                if (!lowPoly.vertexSkew.empty() && lowPoly.vertexSkew.size() == lowPoly.vertices.size()) {
+                                    float paintedSkew = lowPoly.vertexSkew[tri.indices[0]] * w0 +
+                                                        lowPoly.vertexSkew[tri.indices[1]] * w1 +
+                                                        lowPoly.vertexSkew[tri.indices[2]] * w2;
+                                    skew = std::clamp(skew + paintedSkew, 0.0f, 1.0f);
+                                }
                                 Vec3 rayNormal = (n * (1.0f - skew) + geomFaceNormal * skew).Normalized();
 
                                 // Watertight cage normal across UV seams and hard edges
@@ -1035,13 +1049,28 @@ bool BakerEngine::ExecuteBake(
                         }
                     }
 
-                    completedRows.fetch_add(1);
+                    int c = completedRows.fetch_add(1) + 1;
+                    if (c % 16 == 0 || c == H) {
+                        float tileProg = static_cast<float>(c) / static_cast<float>(H);
+                        float overallProg = (static_cast<float>(tileIdx) + tileProg) / static_cast<float>(totalTiles);
+                        char pbuf[128];
+                        snprintf(pbuf, sizeof(pbuf), "Baking UDIM %d: %d/%d (%d%%)", tile, c, H, static_cast<int>(tileProg * 100.0f));
+                        if (progressCallback) progressCallback(overallProg, pbuf);
+
+                        if (livePreviewCallback && settings.bakeNormal && (c % 32 == 0 || c == H)) {
+                            livePreviewCallback(tile, W, H, res.normalMapR.data(), res.normalMapG.data(), res.normalMapB.data());
+                        }
+                    }
                 }
             });
         }
 
         for (auto& w : workers) {
             w.join();
+        }
+
+        if (livePreviewCallback && settings.bakeNormal) {
+            livePreviewCallback(tile, W, H, res.normalMapR.data(), res.normalMapG.data(), res.normalMapB.data());
         }
 
         // Compute Cavity and Curvature maps from multi-scale tangent normal divergence & AO modulation
@@ -1123,6 +1152,10 @@ bool BakerEngine::ExecuteBake(
         // Apply Jump Flooding Algorithm nearest-texel dilation across tile boundaries
         if (settings.seamPadding > 0) {
             ApplyJumpFloodingDilation(res, settings.seamPadding);
+        }
+
+        if (livePreviewCallback && settings.bakeNormal) {
+            livePreviewCallback(tile, W, H, res.normalMapR.data(), res.normalMapG.data(), res.normalMapB.data());
         }
 
         outResults.push_back(std::move(res));

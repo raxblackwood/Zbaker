@@ -94,6 +94,7 @@ struct LowPolyMesh {
     Vec3 scale = Vec3(1, 1, 1);
     float skewFactor = 0.0f; // Marmoset skew correction (0 = smooth, 1 = flat)
     std::vector<float> cageOffsets; // Optional per-vertex cage offsets
+    std::vector<float> vertexSkew;  // Optional per-vertex painted skew correction factor [0..1]
 
     bool HasExplicitCage() const {
         return !cagePositions.empty() && cagePositions.size() == vertices.size();
@@ -101,6 +102,55 @@ struct LowPolyMesh {
 
     bool HasWatertightCageNormals() const {
         return !cageNormals.empty() && cageNormals.size() == vertices.size();
+    }
+
+    bool HasVertexSkew() const {
+        return !vertexSkew.empty() && vertexSkew.size() == vertices.size();
+    }
+
+    bool HasCageOffsets() const {
+        return !cageOffsets.empty() && cageOffsets.size() == vertices.size();
+    }
+
+    // Fast Möller-Trumbore ray-mesh intersection (returns true if hit, with hitT, hitPos, hitNormal, hitTriIdx)
+    bool Raycast(const Vec3& rayOrg, const Vec3& rayDir, float& hitT, Vec3& hitPos, Vec3& hitNormal, int& hitTriIdx) const {
+        hitT = 1e30f;
+        hitTriIdx = -1;
+        bool hasHit = false;
+
+        for (int i = 0; i < (int)triangles.size(); ++i) {
+            const auto& tri = triangles[i];
+            const Vec3& v0 = vertices[tri.indices[0]].position;
+            const Vec3& v1 = vertices[tri.indices[1]].position;
+            const Vec3& v2 = vertices[tri.indices[2]].position;
+
+            Vec3 e1 = v1 - v0;
+            Vec3 e2 = v2 - v0;
+            Vec3 pvec = rayDir.Cross(e2);
+            float det = e1.Dot(pvec);
+
+            if (std::abs(det) < 1e-8f) continue;
+            float invDet = 1.0f / det;
+
+            Vec3 tvec = rayOrg - v0;
+            float u = tvec.Dot(pvec) * invDet;
+            if (u < 0.0f || u > 1.0f) continue;
+
+            Vec3 qvec = tvec.Cross(e1);
+            float v = rayDir.Dot(qvec) * invDet;
+            if (v < 0.0f || u + v > 1.0f) continue;
+
+            float t = e2.Dot(qvec) * invDet;
+            if (t > 1e-4f && t < hitT) {
+                hitT = t;
+                hitTriIdx = i;
+                hasHit = true;
+                hitPos = rayOrg + rayDir * t;
+                hitNormal = e1.Cross(e2).Normalized();
+                if (det < 0.0f) hitNormal = hitNormal * -1.0f;
+            }
+        }
+        return hasHit;
     }
 
     // Computes angle-aware smooth vertex normals respecting creaseAngleDeg (default 180 deg for standard smooth shading)
@@ -335,6 +385,7 @@ struct LowPolyMesh {
         cagePositions.clear();
         cageNormals.clear();
         cageOffsets.clear();
+        vertexSkew.clear();
         quadCount = 0;
         triCount = 0;
         polyCount = 0;

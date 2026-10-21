@@ -305,6 +305,41 @@ int main(int argc, char** argv) {
         std::cout << "[Test 6/6] Saved welded low-poly with matching normals: " << verifiedObjPath << std::endl;
     }
 
+    // Test 7: Verify Marmoset Phase 2 Paint Cage & Paint Skew Ray-casting and baking
+    {
+        std::cout << "[Test 7/7] Testing Marmoset Paint Cage & Skew ray-casting and bake integration..." << std::endl;
+        // Cast ray from (0, 0.5, 10) downwards towards z = 0
+        Vec3 rayOrg(0.2f, 0.2f, 5.0f);
+        Vec3 rayDir(0.0f, 0.0f, -1.0f);
+        float hitT = 0.0f;
+        Vec3 hitPos, hitNormal;
+        int hitTriIdx = -1;
+        bool hit = lowPoly.Raycast(rayOrg, rayDir, hitT, hitPos, hitNormal, hitTriIdx);
+        assert(hit);
+        assert(hitTriIdx >= 0);
+        assert(std::abs(hitPos.z) < 1e-4f);
+
+        // Apply painted skew
+        lowPoly.vertexSkew.assign(lowPoly.vertices.size(), 0.8f);
+        assert(lowPoly.HasVertexSkew());
+
+        // Apply painted cage
+        lowPoly.cageOffsets.assign(lowPoly.vertices.size(), 0.02f);
+        assert(lowPoly.HasCageOffsets());
+        for (size_t i = 0; i < lowPoly.vertices.size(); ++i) {
+            Vec3 n = lowPoly.HasWatertightCageNormals() ? lowPoly.cageNormals[i] : lowPoly.vertices[i].normal;
+            lowPoly.cagePositions[i] = lowPoly.vertices[i].position + n * (settings.cageDistance + lowPoly.cageOffsets[i]);
+        }
+        assert(lowPoly.HasExplicitCage());
+
+        std::vector<BakeResult> phase2Results;
+        std::string phase2Err;
+        bool phase2Ok = engine.ExecuteBake(lowPoly, settings, phase2Results, nullptr, phase2Err);
+        assert(phase2Ok);
+        assert(!phase2Results.empty());
+        std::cout << "  Marmoset Phase 2 Paint Cage & Skew ray-casting and bake integration VERIFIED!" << std::endl;
+    }
+
     std::cout << "=== All Advanced Architecture Plan Tests PASSED! ===" << std::endl;
     return 0;
 }

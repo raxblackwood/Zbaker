@@ -12,7 +12,8 @@ enum class ShadingMode {
     ClayMatcap = 0,     // Substance/ZBrush warm clay
     WaxRed = 1,         // ZBrush classic wax preview
     NormalColor = 2,    // Visualized surface normals
-    FlatShaded = 3      // Clean flat shaded
+    FlatShaded = 3,     // Clean flat shaded
+    SkewHeatmap = 6     // Marmoset-style skew correction visualization
 };
 
 class ViewportRenderer {
@@ -30,6 +31,12 @@ public:
     void SetLowPolyMesh(const LowPolyMesh& mesh, float scaleMultiplier);
     void SetHighPolyMesh(const HighPolyMesh& mesh);
     void UpdateCage(const LowPolyMesh& mesh, float cageDistance, float scaleMultiplier);
+    void UpdateSkew(const LowPolyMesh& mesh, float scaleMultiplier = 1.0f);
+
+    // Marmoset 3D interactive brush ray-casting
+    bool UnprojectRay(float screenX, float screenY, DirectX::XMFLOAT3& outRayOrg, DirectX::XMFLOAT3& outRayDir) const;
+    bool ProjectToScreen(const DirectX::XMFLOAT3& worldPos, float& outScreenX, float& outScreenY) const;
+    DirectX::XMMATRIX GetLowPolyWorldMatrix() const;
 
     // Render 3D scene to offscreen texture
     void Render();
@@ -54,12 +61,14 @@ public:
     void SetBakedNormalMap(const float* r, const float* g, const float* b, int width, int height);
     void ClearBakedNormalMap();
     bool HasBakedNormalMap() const { return m_hasBakedNormalMap; }
+    ID3D11ShaderResourceView* GetBakedNormalSRV() const { return m_bakedNormalSRV; }
 
     // Display Toggles & Settings
     bool showHighPoly = true;
     bool showLowPoly = true;
     bool showLowPolyWireframe = true;
     bool showCage = false;
+    bool showSkew = false;
     bool showGrid = true;
     bool showBakedNormals = true;
     ShadingMode highPolyShading = ShadingMode::ClayMatcap;
@@ -107,6 +116,8 @@ private:
     // Normal map preview resource
     ID3D11Texture2D* m_bakedNormalTex = nullptr;
     ID3D11ShaderResourceView* m_bakedNormalSRV = nullptr;
+    int m_bakedNormalWidth = 0;
+    int m_bakedNormalHeight = 0;
     bool m_hasBakedNormalMap = false;
 
     // Mesh GPU Buffers
