@@ -6,6 +6,8 @@
 #include <cstdint>
 #include <unordered_map>
 #include <algorithm>
+#include <set>
+#include <utility>
 
 namespace Baker {
 
@@ -88,6 +90,8 @@ struct LowPolyMesh {
     uint32_t triCount = 0;
     uint32_t polyCount = 0;
     std::vector<uint32_t> wireframeLineIndices; // Perimeter line edges of original faces (NO internal diagonals!)
+    std::vector<uint32_t> seamLineIndices;      // Marked UV cut seams for 3D/2D viewport line rendering
+    std::set<std::pair<uint32_t, uint32_t>> cutSeams; // Set of edge pairs (vMin, vMax) marked as seams
 
     Vec3 translation = Vec3(0, 0, 0);
     Vec3 rotation = Vec3(0, 0, 0); // Pitch, Yaw, Roll in degrees
@@ -390,6 +394,8 @@ struct LowPolyMesh {
         triCount = 0;
         polyCount = 0;
         wireframeLineIndices.clear();
+        seamLineIndices.clear();
+        cutSeams.clear();
         translation = Vec3(0, 0, 0);
         rotation = Vec3(0, 0, 0);
         scale = Vec3(1, 1, 1);

@@ -409,6 +409,17 @@ void StandaloneUIManager::RenderUI() {
         PostQuitMessage(0);
     }
 
+    // Mode-specific tab activation & focus
+    if (m_shellState.activeTab == BakerUI::ShellState::AppTab::UVCutAndPack) {
+        if (!m_focusUVTab) {
+            ImGui::SetNextWindowFocus();
+            m_focusUVTab = true;
+        }
+        m_viewportRenderer.showSeams = true;
+    } else {
+        m_focusUVTab = false;
+    }
+
     // 0. Scene Outliner
     if (m_shellState.showOutliner) {
         RenderOutlinerPanel();
@@ -420,8 +431,13 @@ void StandaloneUIManager::RenderUI() {
     // 2. Left Column: Mesh Ingestion & Transforms
     RenderMeshPanel();
 
-    // 3. Right Column: Bake Settings
-    RenderSettingsPanel();
+    // 3. Right Column: Bake Settings & UV Tool
+    if (m_shellState.activeTab == BakerUI::ShellState::AppTab::Baking) {
+        RenderSettingsPanel();
+    }
+    if (m_shellState.showUVPanel) {
+        RenderUVCutAndPackPanel();
+    }
 
     // 4. Bottom Tab: UDIM Canvas
     if (m_shellState.showUdim) {
@@ -751,6 +767,71 @@ void StandaloneUIManager::RenderViewportPanel() {
         }
     }
 
+    // Interactive Seam Cutting mode
+    if (m_toolMode == ToolMode::CutSeam && !io.KeyAlt && m_hasLowPoly && (m_viewportMode == ViewportMode::View3D || m_viewportMode == ViewportMode::SplitBoth)) {
+        float maxActiveW = (m_viewportMode == ViewportMode::SplitBoth) ? avail.x * 0.5f : avail.x;
+        float relX = io.MousePos.x - screenPos.x;
+        float relY = io.MousePos.y - screenPos.y;
+
+        if (relX >= 0.0f && relX <= maxActiveW && relY >= 0.0f && relY <= avail.y) {
+            DirectX::XMFLOAT3 rOrgW, rDirW;
+            if (m_viewportRenderer.UnprojectRay(relX, relY, rOrgW, rDirW)) {
+                DirectX::XMMATRIX invWorld = DirectX::XMMatrixInverse(nullptr, m_viewportRenderer.GetLowPolyWorldMatrix());
+                DirectX::XMVECTOR vOrg = DirectX::XMVector3TransformCoord(DirectX::XMLoadFloat3(&rOrgW), invWorld);
+                DirectX::XMVECTOR vDir = DirectX::XMVector3Normalize(DirectX::XMVector3TransformNormal(DirectX::XMLoadFloat3(&rDirW), invWorld));
+                Vec3 localOrg(DirectX::XMVectorGetX(vOrg), DirectX::XMVectorGetY(vOrg), DirectX::XMVectorGetZ(vOrg));
+                Vec3 localDir(DirectX::XMVectorGetX(vDir), DirectX::XMVectorGetY(vDir), DirectX::XMVectorGetZ(vDir));
+
+                float hitT = 0.0f;
+                Vec3 hitPos, hitNormal;
+                int hitTriIdx = -1;
+                if (m_lowPolyMesh.Raycast(localOrg, localDir, hitT, hitPos, hitNormal, hitTriIdx) && hitTriIdx >= 0) {
+                    const auto& tri = m_lowPolyMesh.triangles[hitTriIdx];
+                    uint32_t bestV0 = 0, bestV1 = 0;
+                    float minEdgeDist = 1e9f;
+                    for (int e = 0; e < 3; ++e) {
+                        uint32_t ea = tri.indices[e];
+                        uint32_t eb = tri.indices[(e + 1) % 3];
+                        Vec3 A = m_lowPolyMesh.vertices[ea].position;
+                        Vec3 B = m_lowPolyMesh.vertices[eb].position;
+                        Vec3 AB = B - A;
+                        float lenSq = AB.Dot(AB);
+                        float t = (lenSq > 1e-12f) ? std::clamp((hitPos - A).Dot(AB) / lenSq, 0.0f, 1.0f) : 0.0f;
+                        Vec3 proj = A + AB * t;
+                        float d = (hitPos - proj).Length();
+                        if (d < minEdgeDist) {
+                            minEdgeDist = d;
+                            bestV0 = ea;
+                            bestV1 = eb;
+                        }
+                    }
+
+                    // Highlight edge under cursor in neon cyan
+                    Vec3 pA = m_lowPolyMesh.vertices[bestV0].position;
+                    Vec3 pB = m_lowPolyMesh.vertices[bestV1].position;
+                    float sAX, sAY, sBX, sBY;
+                    m_viewportRenderer.ProjectToScreen(DirectX::XMFLOAT3(pA.x, pA.y, pA.z), sAX, sAY);
+                    m_viewportRenderer.ProjectToScreen(DirectX::XMFLOAT3(pB.x, pB.y, pB.z), sBX, sBY);
+
+                    ImDrawList* drawList = ImGui::GetWindowDrawList();
+                    drawList->AddLine(ImVec2(sAX, sAY), ImVec2(sBX, sBY), IM_COL32(0, 255, 255, 255), 3.0f);
+                    drawList->AddCircle(io.MousePos, 7.0f, IM_COL32(0, 255, 255, 240), 16, 2.0f);
+
+                    if (ImGui::IsMouseClicked(0)) {
+                        UVCutter::ToggleEdgeSeam(m_lowPolyMesh, bestV0, bestV1);
+                        m_viewportRenderer.UpdateSeams(m_lowPolyMesh);
+                        m_viewportRenderer.showSeams = true;
+                        char msg[128];
+                        snprintf(msg, sizeof(msg), "Toggled seam on edge (%u, %u) - total %zu seams",
+                            bestV0, bestV1, m_lowPolyMesh.cutSeams.size());
+                        m_uvStatusMessage = msg;
+                        m_logEntries.push_back(std::string("[UV Cut] ") + msg);
+                    }
+                }
+            }
+        }
+    }
+
     // Viewport Mode overlay buttons (Top Left)
     ImGui::SetCursorScreenPos(ImVec2(screenPos.x + 12.0f, screenPos.y + 12.0f));
     ImGui::BeginGroup();
@@ -809,6 +890,14 @@ void StandaloneUIManager::RenderViewportPanel() {
                 m_viewportRenderer.showSkew = false;
             }
         }
+        ImGui::SameLine();
+        bool isCutSeam = (m_toolMode == ToolMode::CutSeam);
+        if (BakerUI::ToggleChip("Cut Seam", &isCutSeam)) {
+            m_toolMode = isCutSeam ? ToolMode::CutSeam : ToolMode::Navigate;
+            if (m_toolMode == ToolMode::CutSeam) {
+                m_viewportRenderer.showSeams = true;
+            }
+        }
 
         ImGui::SameLine();
         ImGui::Dummy(ImVec2(16.0f, 0.0f));
@@ -833,28 +922,39 @@ void StandaloneUIManager::RenderViewportPanel() {
         float barW = (std::min)(580.0f, avail.x - 24.0f);
         ImGui::BeginChild("##brush_bar", ImVec2(barW, 36.0f), true, ImGuiWindowFlags_NoScrollbar);
         {
-            ImGui::AlignTextToFramePadding();
-            ImGui::TextColored(m_toolMode == ToolMode::PaintCage ? ImVec4(0.3f, 0.8f, 1.0f, 1.0f) : ImVec4(1.0f, 0.7f, 0.2f, 1.0f),
-                               m_toolMode == ToolMode::PaintCage ? "CAGE BRUSH" : "SKEW BRUSH");
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(90.0f);
-            ImGui::SliderFloat("Radius##b", &m_brushRadius, 0.02f, 10.0f, "%.2f");
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(90.0f);
-            ImGui::SliderFloat("Strength##b", &m_brushStrength, 0.05f, 1.0f, "%.2f");
-            ImGui::SameLine();
-            ImGui::Checkbox("Invert (Ctrl)", &m_brushInvert);
-            ImGui::SameLine();
-
-            if (m_toolMode == ToolMode::PaintCage) {
-                if (ImGui::Button("Reset Cage")) {
-                    ResetPaintedCage();
-                }
-            } else if (m_toolMode == ToolMode::PaintSkew) {
-                BakerUI::ToggleChip("Heatmap", &m_viewportRenderer.showSkew);
+            if (m_toolMode == ToolMode::CutSeam) {
+                ImGui::AlignTextToFramePadding();
+                ImGui::TextColored(ImVec4(0.0f, 0.95f, 1.0f, 1.0f), "SEAM CUTTER");
                 ImGui::SameLine();
-                if (ImGui::Button("Reset Skew")) {
-                    ResetPaintedSkew();
+                ImGui::TextDisabled("Click low-poly edges in 3D to toggle seams");
+                ImGui::SameLine();
+                if (ImGui::Button("Clear Seams")) {
+                    ClearSeams();
+                }
+            } else {
+                ImGui::AlignTextToFramePadding();
+                ImGui::TextColored(m_toolMode == ToolMode::PaintCage ? ImVec4(0.3f, 0.8f, 1.0f, 1.0f) : ImVec4(1.0f, 0.7f, 0.2f, 1.0f),
+                                   m_toolMode == ToolMode::PaintCage ? "CAGE BRUSH" : "SKEW BRUSH");
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(90.0f);
+                ImGui::SliderFloat("Radius##b", &m_brushRadius, 0.02f, 10.0f, "%.2f");
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(90.0f);
+                ImGui::SliderFloat("Strength##b", &m_brushStrength, 0.05f, 1.0f, "%.2f");
+                ImGui::SameLine();
+                ImGui::Checkbox("Invert (Ctrl)", &m_brushInvert);
+                ImGui::SameLine();
+
+                if (m_toolMode == ToolMode::PaintCage) {
+                    if (ImGui::Button("Reset Cage")) {
+                        ResetPaintedCage();
+                    }
+                } else if (m_toolMode == ToolMode::PaintSkew) {
+                    BakerUI::ToggleChip("Heatmap", &m_viewportRenderer.showSkew);
+                    ImGui::SameLine();
+                    if (ImGui::Button("Reset Skew")) {
+                        ResetPaintedSkew();
+                    }
                 }
             }
         }
@@ -972,6 +1072,38 @@ void StandaloneUIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& s
             ImVec2 p2(origin.x + m_uvPan.x + v2.uv.u * currentTileSize, origin.y + m_uvPan.y + (1.0f - v2.uv.v) * currentTileSize);
 
             drawList->AddTriangle(p0, p1, p2, uvWireCol, 1.0f);
+        }
+    }
+
+    // Draw marked cut seams on 2D UV canvas (Neon Cyan)
+    if (m_hasLowPoly && !m_lowPolyMesh.seamLineIndices.empty()) {
+        ImU32 seamCol = IM_COL32(0, 240, 255, 230);
+        for (size_t i = 0; i + 1 < m_lowPolyMesh.seamLineIndices.size(); i += 2) {
+            uint32_t i0 = m_lowPolyMesh.seamLineIndices[i];
+            uint32_t i1 = m_lowPolyMesh.seamLineIndices[i + 1];
+            if (i0 < m_lowPolyMesh.vertices.size() && i1 < m_lowPolyMesh.vertices.size()) {
+                const auto& v0 = m_lowPolyMesh.vertices[i0];
+                const auto& v1 = m_lowPolyMesh.vertices[i1];
+                ImVec2 p0(origin.x + m_uvPan.x + v0.uv.u * currentTileSize, origin.y + m_uvPan.y + (1.0f - v0.uv.v) * currentTileSize);
+                ImVec2 p1(origin.x + m_uvPan.x + v1.uv.u * currentTileSize, origin.y + m_uvPan.y + (1.0f - v1.uv.v) * currentTileSize);
+                drawList->AddLine(p0, p1, seamCol, 2.0f);
+            }
+        }
+    }
+
+    // Draw packed island bounds
+    if (m_hasUnwrappedIslands && !m_currentIslands.empty()) {
+        for (const auto& isl : m_currentIslands) {
+            int uTile = (isl.targetUDIM - 1001) % 10;
+            int vTile = (isl.targetUDIM - 1001) / 10;
+            float tileX = origin.x + m_uvPan.x + uTile * currentTileSize;
+            float tileY = origin.y + m_uvPan.y + (1.0f - (vTile + 1)) * currentTileSize;
+
+            ImVec2 b0(tileX + isl.bounds.minU * currentTileSize, tileY + (1.0f - isl.bounds.maxV) * currentTileSize);
+            ImVec2 b1(tileX + isl.bounds.maxU * currentTileSize, tileY + (1.0f - isl.bounds.minV) * currentTileSize);
+
+            drawList->AddRectFilled(b0, b1, IM_COL32(0, 180, 255, 22), 2.0f);
+            drawList->AddRect(b0, b1, IM_COL32(0, 200, 255, 120), 2.0f, 0, 1.0f);
         }
     }
 
@@ -1284,6 +1416,301 @@ void StandaloneUIManager::RenderSettingsPanel() {
     if (!canBake && !m_isBaking) {
         ImGui::EndDisabled();
     }
+
+    ImGui::End();
+}
+
+void StandaloneUIManager::MarkSeamsByAngle() {
+    if (!m_hasLowPoly) {
+        m_uvStatusMessage = "Please load a low-poly mesh first.";
+        return;
+    }
+    UVCutter::MarkSeamsByAngle(m_lowPolyMesh, m_seamAngleThreshold);
+    m_viewportRenderer.UpdateSeams(m_lowPolyMesh);
+    m_viewportRenderer.showSeams = true;
+    char msg[128];
+    snprintf(msg, sizeof(msg), "Marked %zu seams by angle (%.1f deg)", m_lowPolyMesh.cutSeams.size(), m_seamAngleThreshold);
+    m_uvStatusMessage = msg;
+    m_logEntries.push_back(std::string("[UV Cut] ") + msg);
+}
+
+void StandaloneUIManager::MarkSeamsByPolygroup() {
+    if (!m_hasLowPoly) {
+        m_uvStatusMessage = "Please load a low-poly mesh first.";
+        return;
+    }
+    UVCutter::MarkSeamsByPolygroup(m_lowPolyMesh);
+    m_viewportRenderer.UpdateSeams(m_lowPolyMesh);
+    m_viewportRenderer.showSeams = true;
+    char msg[128];
+    snprintf(msg, sizeof(msg), "Marked %zu seams along Polygroup boundaries", m_lowPolyMesh.cutSeams.size());
+    m_uvStatusMessage = msg;
+    m_logEntries.push_back(std::string("[UV Cut] ") + msg);
+}
+
+void StandaloneUIManager::MarkSeamsByUVBorders() {
+    if (!m_hasLowPoly) {
+        m_uvStatusMessage = "Please load a low-poly mesh first.";
+        return;
+    }
+    UVCutter::MarkSeamsByUVBorders(m_lowPolyMesh);
+    m_viewportRenderer.UpdateSeams(m_lowPolyMesh);
+    m_viewportRenderer.showSeams = true;
+    char msg[128];
+    snprintf(msg, sizeof(msg), "Detected %zu seams from existing UV borders", m_lowPolyMesh.cutSeams.size());
+    m_uvStatusMessage = msg;
+    m_logEntries.push_back(std::string("[UV Cut] ") + msg);
+}
+
+void StandaloneUIManager::ClearSeams() {
+    UVCutter::ClearSeams(m_lowPolyMesh);
+    m_viewportRenderer.UpdateSeams(m_lowPolyMesh);
+    m_uvStatusMessage = "Cleared all seams.";
+    m_logEntries.push_back("[UV Cut] Cleared all seams.");
+}
+
+void StandaloneUIManager::UnwrapMesh() {
+    if (!m_hasLowPoly) {
+        m_uvStatusMessage = "Please load a low-poly mesh first.";
+        return;
+    }
+    auto islandsTris = UVCutter::SegmentIslands(m_lowPolyMesh);
+    if (islandsTris.empty()) {
+        m_uvStatusMessage = "No islands segmented. Mark seams first or unwrap whole mesh.";
+        return;
+    }
+    m_currentIslands = UVUnwrapper::UnwrapMesh(m_lowPolyMesh, islandsTris);
+    m_hasUnwrappedIslands = true;
+    char msg[128];
+    snprintf(msg, sizeof(msg), "Unwrapped %zu islands successfully", m_currentIslands.size());
+    m_uvStatusMessage = msg;
+    m_logEntries.push_back(std::string("[UV Unwrap] ") + msg);
+}
+
+void StandaloneUIManager::PackUVs() {
+    if (!m_hasLowPoly) {
+        m_uvStatusMessage = "Please load a low-poly mesh first.";
+        return;
+    }
+    if (!m_hasUnwrappedIslands || m_currentIslands.empty()) {
+        UnwrapMesh();
+    }
+    if (m_currentIslands.empty()) {
+        m_uvStatusMessage = "No islands to pack.";
+        return;
+    }
+    m_packStats = UVPacker::PackIslands(m_currentIslands, m_packSettings);
+    UVPacker::ApplyToMesh(m_lowPolyMesh, m_currentIslands);
+    m_viewportRenderer.SetLowPolyMesh(m_lowPolyMesh, m_settings.lowPolyScale);
+    m_viewportRenderer.UpdateSeams(m_lowPolyMesh);
+
+    m_selectedUDIMs = m_lowPolyMesh.detectedUDIMs;
+
+    char msg[256];
+    snprintf(msg, sizeof(msg), "Packed %d islands across %d tile(s). Efficiency: %.1f%%",
+        m_packStats.packedIslands, m_packStats.udimTilesUsed, m_packStats.packingEfficiency * 100.0f);
+    m_uvStatusMessage = msg;
+    m_logEntries.push_back(std::string("[UV Pack] ") + msg);
+}
+
+void StandaloneUIManager::AutoCutUnwrapAndPack() {
+    if (!m_hasLowPoly) {
+        m_uvStatusMessage = "Please load a low-poly mesh first.";
+        return;
+    }
+    // 1. Mark seams by angle
+    UVCutter::MarkSeamsByAngle(m_lowPolyMesh, m_seamAngleThreshold);
+    if (m_packSettings.packByPolygroup) {
+        UVCutter::MarkSeamsByPolygroup(m_lowPolyMesh);
+    }
+    m_viewportRenderer.UpdateSeams(m_lowPolyMesh);
+    m_viewportRenderer.showSeams = true;
+
+    // 2. Segment islands
+    auto islandsTris = UVCutter::SegmentIslands(m_lowPolyMesh);
+
+    // 3. Conformal unwrap
+    m_currentIslands = UVUnwrapper::UnwrapMesh(m_lowPolyMesh, islandsTris);
+    m_hasUnwrappedIslands = true;
+
+    // 4. MaxRects BSSF multi-rotation packing
+    m_packStats = UVPacker::PackIslands(m_currentIslands, m_packSettings);
+    UVPacker::ApplyToMesh(m_lowPolyMesh, m_currentIslands);
+    m_viewportRenderer.SetLowPolyMesh(m_lowPolyMesh, m_settings.lowPolyScale);
+    m_viewportRenderer.UpdateSeams(m_lowPolyMesh);
+
+    m_selectedUDIMs = m_lowPolyMesh.detectedUDIMs;
+
+    char msg[256];
+    snprintf(msg, sizeof(msg), "Auto Cut & Pack complete! %d islands packed across %d tile(s) (%.1f%% efficiency)",
+        m_packStats.packedIslands, m_packStats.udimTilesUsed, m_packStats.packingEfficiency * 100.0f);
+    m_uvStatusMessage = msg;
+    m_logEntries.push_back(std::string("[UV Auto] ") + msg);
+}
+
+void StandaloneUIManager::ExportUnwrappedOBJ() {
+    if (!m_hasLowPoly) {
+        m_uvStatusMessage = "No low-poly mesh to export.";
+        return;
+    }
+    std::string outPath = m_lowPolyPath;
+    if (outPath.empty()) {
+        outPath = "./Unwrapped_LowPoly.obj";
+    } else {
+        std::filesystem::path p(outPath);
+        p.replace_filename(p.stem().string() + "_Unwrapped.obj");
+        outPath = p.string();
+    }
+    std::string err;
+    if (MeshLoader::SaveLowPolyOBJWithNormals(outPath, m_lowPolyMesh, err)) {
+        char msg[256];
+        snprintf(msg, sizeof(msg), "Saved unwrapped low-poly OBJ to: %s", outPath.c_str());
+        m_uvStatusMessage = msg;
+        m_logEntries.push_back(std::string("[Export] ") + msg);
+    } else {
+        m_uvStatusMessage = "Failed to export OBJ: " + err;
+        m_logEntries.push_back("[Error] " + m_uvStatusMessage);
+    }
+}
+
+void StandaloneUIManager::RenderUVCutAndPackPanel() {
+    ImGui::Begin("UV Tool###uvpanel", &m_shellState.showUVPanel);
+
+    // 1. One-Click Header Card
+    BakerUI::SectionLabel("ONE-CLICK UV WORKFLOW");
+    bool openAuto = BakerUI::BeginCard("##auto_uv_card");
+    if (openAuto) {
+        ImGui::TextWrapped("Automatically mark seams by angle/polygroup, unwrap conformal islands, and pack with multi-rotation MaxRects BSSF.");
+        ImGui::Spacing();
+        if (BakerUI::PrimaryButton("ONE-CLICK AUTO CUT, UNWRAP & PACK", -FLT_MIN, 36.0f)) {
+            AutoCutUnwrapAndPack();
+        }
+        ImGui::Spacing();
+        BakerUI::StatusPill(m_uvStatusMessage.c_str(), BakerUI::Col::Accent());
+    }
+    BakerUI::EndCard();
+
+    // 2. Seam Cutting Section (Zen UV Inspired)
+    BakerUI::SectionLabel("1. SEAM CUTTING");
+    bool openSeams = BakerUI::BeginCard("##seam_card");
+    if (openSeams) {
+        if (BakerUI::BeginProps("##seam_props")) {
+            BakerUI::PropFloat("Angle Threshold", &m_seamAngleThreshold, 0.5f, 5.0f, 175.0f, "%.1f deg",
+                "Dihedral angle threshold between triangle face normals");
+            BakerUI::EndProps();
+        }
+
+        ImGui::Spacing();
+        if (BakerUI::SecondaryButton("Mark Seams by Angle")) {
+            MarkSeamsByAngle();
+        }
+        if (BakerUI::SecondaryButton("Mark Seams by Polygroup")) {
+            MarkSeamsByPolygroup();
+        }
+        if (BakerUI::SecondaryButton("Detect from Current UV Borders")) {
+            MarkSeamsByUVBorders();
+        }
+
+        ImGui::Spacing();
+        bool isCutting = (m_toolMode == ToolMode::CutSeam);
+        if (BakerUI::ToggleChip(isCutting ? "Exit Interactive Seam Mode" : "Interactive Seam Mode (Click Edges)", &isCutting)) {
+            m_toolMode = isCutting ? ToolMode::CutSeam : ToolMode::Navigate;
+            if (m_toolMode == ToolMode::CutSeam) {
+                m_viewportRenderer.showSeams = true;
+            }
+        }
+
+        ImGui::Spacing();
+        if (ImGui::Button("Clear All Seams")) {
+            ClearSeams();
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("Seams: %zu edges", m_lowPolyMesh.cutSeams.size());
+    }
+    BakerUI::EndCard();
+
+    // 3. Unwrap Section
+    BakerUI::SectionLabel("2. CONFORMAL UNWRAP");
+    bool openUnwrap = BakerUI::BeginCard("##unwrap_card");
+    if (openUnwrap) {
+        if (BakerUI::BeginProps("##unwrap_props")) {
+            BakerUI::PropInt("Spring Iterations", &m_relaxIterations, 5, 200, "Relaxation passes to minimize texture distortion");
+            BakerUI::EndProps();
+        }
+        ImGui::Spacing();
+        if (BakerUI::SecondaryButton("Unwrap Islands (Conformal + Relax)")) {
+            UnwrapMesh();
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("Islands: %zu", m_currentIslands.size());
+    }
+    BakerUI::EndCard();
+
+    // 4. Advanced Packing Section (UVPackmaster 4 Inspired)
+    BakerUI::SectionLabel("3. ADVANCED PACKING (UVPACKMASTER)");
+    bool openPack = BakerUI::BeginCard("##pack_card");
+    if (openPack) {
+        static const char* kResOptions[] = { "512", "1024", "2048", "4096", "8192", "16384" };
+        static int resIdx = 2; // 2048
+        if (BakerUI::BeginProps("##pack_props")) {
+            if (BakerUI::PropCombo("Target Resolution", &resIdx, kResOptions, IM_ARRAYSIZE(kResOptions))) {
+                if (resIdx == 0) m_packSettings.resolution = 512;
+                else if (resIdx == 1) m_packSettings.resolution = 1024;
+                else if (resIdx == 2) m_packSettings.resolution = 2048;
+                else if (resIdx == 3) m_packSettings.resolution = 4096;
+                else if (resIdx == 4) m_packSettings.resolution = 8192;
+                else if (resIdx == 5) m_packSettings.resolution = 16384;
+            }
+
+            BakerUI::PropInt("Island Padding (px)", &m_packSettings.paddingPixels, 0, 64, "Spacing between UV islands in pixels");
+            BakerUI::PropInt("Tile Margin (px)", &m_packSettings.marginPixels, 0, 64, "Margin from the outer UDIM border in pixels");
+
+            static const char* kRotOptions[] = { "None (0 deg)", "90 deg Steps (4x)", "45 deg Steps (8x)", "Free Rotation (32x)" };
+            int rotIdx = (int)m_packSettings.rotation;
+            if (BakerUI::PropCombo("Rotation Search", &rotIdx, kRotOptions, IM_ARRAYSIZE(kRotOptions))) {
+                m_packSettings.rotation = (PackSettings::RotationMode)rotIdx;
+            }
+
+            BakerUI::PropCheck("Normalize Texel Density", &m_packSettings.normalizeTexelDensity, "Equalizes UV area relative to 3D world surface area");
+            BakerUI::PropCheck("Multi-UDIM Packing", &m_packSettings.multiUDIM, "Automatically pack across tiles 1001, 1002, 1003...");
+            if (m_packSettings.multiUDIM) {
+                BakerUI::PropInt("Max UDIM Tiles", &m_packSettings.maxUDIMCount, 1, 10, "Maximum number of UDIM tiles allowed");
+            }
+            BakerUI::PropCheck("Pack by Polygroup", &m_packSettings.packByPolygroup, "Keep islands of the same polygroup grouped on dedicated tiles");
+
+            BakerUI::EndProps();
+        }
+
+        ImGui::Spacing();
+        if (BakerUI::PrimaryButton("PACK UVs (MaxRects BSSF)")) {
+            PackUVs();
+        }
+    }
+    BakerUI::EndCard();
+
+    // 5. Packing Statistics Card
+    if (m_packStats.packedIslands > 0) {
+        BakerUI::SectionLabel("PACKING METRICS");
+        bool openStats = BakerUI::BeginCard("##stats_card");
+        if (openStats) {
+            ImGui::Text("Packed Islands: %d", m_packStats.packedIslands);
+            ImGui::Text("UDIM Tiles Used: %d", m_packStats.udimTilesUsed);
+            ImGui::Text("Packing Efficiency: %.1f%%", m_packStats.packingEfficiency * 100.0f);
+            float udimProg = m_packStats.packingEfficiency;
+            ImGui::ProgressBar(udimProg, ImVec2(-FLT_MIN, 0.0f));
+        }
+        BakerUI::EndCard();
+    }
+
+    // 6. Export Card
+    BakerUI::SectionLabel("EXPORT MESH");
+    bool openExp = BakerUI::BeginCard("##exp_card");
+    if (openExp) {
+        if (BakerUI::SecondaryButton("Export Low-Poly OBJ (with New UVs)...")) {
+            ExportUnwrappedOBJ();
+        }
+    }
+    BakerUI::EndCard();
 
     ImGui::End();
 }

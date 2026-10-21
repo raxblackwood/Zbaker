@@ -435,11 +435,16 @@ inline bool FloatingBakeBar(
 
 // ---------------------------------------------------------------- app shell
 struct ShellState {
+    enum class AppTab {
+        Baking = 0,
+        UVCutAndPack = 1
+    };
+    AppTab      activeTab = AppTab::Baking;
     const char* statusText = "Ready";
     ImVec4      statusColor = Col::Ok();
     float       bakeProgress = -1.f;     // -1 idle
     bool        resetLayout = false;     // View > Reset Layout
-    bool        showLog = true, showUdim = true, showOutliner = true;
+    bool        showLog = true, showUdim = true, showOutliner = true, showUVPanel = true;
     bool        openLowPoly = false;
     bool        openHighPoly = false;
     bool        openCage = false;
@@ -462,6 +467,7 @@ inline void BuildDefaultLayout(ImGuiID ds, ImVec2 size) {
 
     ImGui::DockBuilderDockWindow("Scene Outliner###outliner", rightTop);
     ImGui::DockBuilderDockWindow("Bake Parameters###params",  rightBottom);
+    ImGui::DockBuilderDockWindow("UV Tool###uvpanel",         rightBottom);
     ImGui::DockBuilderDockWindow("Mesh Ingestion###ingest",   rightBottom);
     ImGui::DockBuilderDockWindow("Viewport###viewport",       center);
     ImGui::DockBuilderDockWindow("UDIM Layout###udim",        bottom);   // tabbed with log
@@ -493,6 +499,7 @@ inline void BeginFrameHost(ShellState& st) {
         }
         if (ImGui::BeginMenu("View")) {
             ImGui::MenuItem("Scene Outliner", nullptr, &st.showOutliner);
+            ImGui::MenuItem("UV Cut & Pack Tool", nullptr, &st.showUVPanel);
             ImGui::MenuItem("Output Log", nullptr, &st.showLog);
             ImGui::MenuItem("UDIM Layout", nullptr, &st.showUdim);
             ImGui::Separator();
@@ -520,6 +527,48 @@ inline void BeginFrameHost(ShellState& st) {
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("Help")) { ImGui::MenuItem("About"); ImGui::EndMenu(); }
+
+        ImGui::SameLine();
+        ImGui::Dummy(ImVec2(18.0f, 0.0f));
+        ImGui::SameLine();
+
+        // Workspace mode tabs (Blender style)
+        bool isBaking = (st.activeTab == ShellState::AppTab::Baking);
+        bool isUV = (st.activeTab == ShellState::AppTab::UVCutAndPack);
+
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(14.0f, 3.0f));
+
+        if (isBaking) {
+            ImGui::PushStyleColor(ImGuiCol_Button, Hex(0xE87D0D));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, Hex(0xF68E28));
+            ImGui::PushStyleColor(ImGuiCol_Text, Hex(0xFFFFFF));
+        } else {
+            ImGui::PushStyleColor(ImGuiCol_Button, Hex(0x282828));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, Hex(0x383838));
+            ImGui::PushStyleColor(ImGuiCol_Text, Hex(0x9E9E9E));
+        }
+        if (ImGui::Button("Bake Project")) {
+            st.activeTab = ShellState::AppTab::Baking;
+        }
+        ImGui::PopStyleColor(3);
+
+        ImGui::SameLine(0, 4.0f);
+
+        if (isUV) {
+            ImGui::PushStyleColor(ImGuiCol_Button, Hex(0x00A8FF));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, Hex(0x28BAFF));
+            ImGui::PushStyleColor(ImGuiCol_Text, Hex(0xFFFFFF));
+        } else {
+            ImGui::PushStyleColor(ImGuiCol_Button, Hex(0x282828));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, Hex(0x383838));
+            ImGui::PushStyleColor(ImGuiCol_Text, Hex(0x9E9E9E));
+        }
+        if (ImGui::Button("UV Cut & Pack")) {
+            st.activeTab = ShellState::AppTab::UVCutAndPack;
+        }
+        ImGui::PopStyleColor(3);
+        ImGui::PopStyleVar(2);
 
         const char* titleBadge = "ZBrush UDIM Baker  |  Embree 3  *  D3D11";
         float badgeW = ImGui::CalcTextSize(titleBadge).x + 24.0f;

@@ -2,6 +2,10 @@
 
 #include "../baker/MeshTypes.h"
 #include "../baker/BakerEngine.h"
+#include "../uv/UVTypes.h"
+#include "../uv/UVCutter.h"
+#include "../uv/UVUnwrapper.h"
+#include "../uv/UVPacker.h"
 #include "ViewportRenderer.h"
 #include "BakerUI.h"
 #include <string>
@@ -37,7 +41,8 @@ public:
     enum class ToolMode {
         Navigate = 0,
         PaintCage = 1,
-        PaintSkew = 2
+        PaintSkew = 2,
+        CutSeam = 3
     };
 
 private:
@@ -46,9 +51,20 @@ private:
     void Render2DUVCanvas(const ImVec2& origin, const ImVec2& size);
     void RenderMeshPanel();
     void RenderSettingsPanel();
+    void RenderUVCutAndPackPanel();
     void RenderUDIMCanvasPanel();
     void RenderBakeProgressPanel();
     void RenderLogPanel();
+
+    // UV Cutting & Packing Actions
+    void MarkSeamsByAngle();
+    void MarkSeamsByPolygroup();
+    void MarkSeamsByUVBorders();
+    void ClearSeams();
+    void UnwrapMesh();
+    void PackUVs();
+    void AutoCutUnwrapAndPack();
+    void ExportUnwrappedOBJ();
 
     void TriggerBake();
     void SyncTransforms();
@@ -104,6 +120,16 @@ private:
     std::string m_bakeStatus = "Ready";
     std::vector<std::string> m_logEntries;
     BakerUI::ShellState m_shellState;
+
+    // UV Cutting & Packing State
+    float m_seamAngleThreshold = 60.0f;
+    PackSettings m_packSettings;
+    PackStats m_packStats;
+    std::vector<UVIsland> m_currentIslands;
+    bool m_hasUnwrappedIslands = false;
+    std::string m_uvStatusMessage = "Ready";
+    int m_relaxIterations = 40;
+    bool m_focusUVTab = false;
 
     // Background Thread Ingestion State
     std::mutex m_meshMutex;

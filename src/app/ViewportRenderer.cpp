@@ -228,6 +228,7 @@ void ViewportRenderer::Release() {
     m_lowPolyWireGPU.Release();
     m_cageGPU.Release();
     m_cageWireGPU.Release();
+    m_seamLineGPU.Release();
     m_groundPlaneGPU.Release();
 
     if (m_colorSRV) { m_colorSRV->Release(); m_colorSRV = nullptr; }
@@ -997,6 +998,21 @@ void ViewportRenderer::Render() {
                 m_context->DrawIndexed(m_lowPolyGPU.indexCount, 0, 0);
             }
         }
+
+        // 3b. Marked Cut Seams (Vivid Neon Cyan)
+        if (showSeams && m_seamLineGPU.indexBuffer && m_seamLineGPU.indexCount > 0) {
+            m_context->OMSetBlendState(m_alphaBlendState, nullptr, 0xFFFFFFFF);
+            m_context->RSSetState(m_wireframeRS);
+
+            DirectX::XMFLOAT4 seamColor = { 0.12f, 0.90f, 1.0f, 1.0f }; // Neon Cyan
+            UpdateConstantBuffer(worldLP, seamColor, 4);
+
+            m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_LINELIST);
+            m_context->IASetVertexBuffers(0, 1, &m_lowPolyGPU.vertexBuffer, &stride, &offset);
+            m_context->IASetIndexBuffer(m_seamLineGPU.indexBuffer, DXGI_FORMAT_R32_UINT, 0);
+            m_context->DrawIndexed(m_seamLineGPU.indexCount, 0, 0);
+            m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        }
     }
 
     // 4. Render Cage Shell (Marmoset Toolbag Warm Amber Cage)
@@ -1132,6 +1148,19 @@ void ViewportRenderer::UpdateSkew(const LowPolyMesh& mesh, float scaleMultiplier
     if (m_context && m_lowPolyGPU.vertexBuffer && m_lowPolyGPU.vertexCount == verts.size()) {
         m_context->UpdateSubresource(m_lowPolyGPU.vertexBuffer, 0, nullptr, verts.data(), 0, 0);
     }
+}
+
+void ViewportRenderer::UpdateSeams(const LowPolyMesh& mesh) {
+    m_seamLineGPU.Release();
+    if (mesh.seamLineIndices.empty() || !m_device) return;
+
+    D3D11_BUFFER_DESC sibd = {};
+    sibd.ByteWidth = static_cast<UINT>(mesh.seamLineIndices.size() * sizeof(uint32_t));
+    sibd.Usage = D3D11_USAGE_DEFAULT;
+    sibd.BindFlags = D3D11_BIND_INDEX_BUFFER;
+    D3D11_SUBRESOURCE_DATA siInit = { mesh.seamLineIndices.data() };
+    m_device->CreateBuffer(&sibd, &siInit, &m_seamLineGPU.indexBuffer);
+    m_seamLineGPU.indexCount = static_cast<uint32_t>(mesh.seamLineIndices.size());
 }
 
 DirectX::XMMATRIX ViewportRenderer::GetLowPolyWorldMatrix() const {

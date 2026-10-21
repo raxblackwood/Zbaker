@@ -3,6 +3,9 @@
 #include "../src/baker/MikkTSpaceBridge.h"
 #include "../src/baker/ExrWriter.h"
 #include "../src/app/MeshLoader.h"
+#include "../src/uv/UVCutter.h"
+#include "../src/uv/UVUnwrapper.h"
+#include "../src/uv/UVPacker.h"
 
 #include <iostream>
 #include <fstream>
@@ -338,6 +341,124 @@ int main(int argc, char** argv) {
         assert(phase2Ok);
         assert(!phase2Results.empty());
         std::cout << "  Marmoset Phase 2 Paint Cage & Skew ray-casting and bake integration VERIFIED!" << std::endl;
+    }
+
+    // Test 8: UV Cutting, Island Segmentation, Spring Relaxation Unwrap, and MaxRects Packing
+    {
+        std::cout << "[Test 8/8] Testing UV Cutting, Island Segmentation, Unwrapping, and MaxRects Packing..." << std::endl;
+
+        // Create a cube mesh with sharp 90-degree corners to test dihedral seam marking
+        LowPolyMesh cubeMesh;
+        // 8 vertices for a cube [-1, 1]
+        std::vector<Vec3> corners = {
+            {-1, -1, -1}, { 1, -1, -1}, { 1,  1, -1}, {-1,  1, -1},
+            {-1, -1,  1}, { 1, -1,  1}, { 1,  1,  1}, {-1,  1,  1}
+        };
+        // 6 faces * 2 tris = 12 triangles
+        int cubeQuads[6][4] = {
+            {0, 3, 2, 1}, // Front (Z = -1)
+            {4, 5, 6, 7}, // Back  (Z = +1)
+            {0, 1, 5, 4}, // Bottom(Y = -1)
+            {2, 3, 7, 6}, // Top   (Y = +1)
+            {0, 4, 7, 3}, // Left  (X = -1)
+            {1, 2, 6, 5}  // Right (X = +1)
+        };
+
+        for (int f = 0; f < 6; ++f) {
+            uint32_t i0 = static_cast<uint32_t>(cubeMesh.vertices.size());
+            Vertex v0, v1, v2, v3;
+            v0.position = corners[cubeQuads[f][0]];
+            v1.position = corners[cubeQuads[f][1]];
+            v2.position = corners[cubeQuads[f][2]];
+            v3.position = corners[cubeQuads[f][3]];
+            cubeMesh.vertices.push_back(v0);
+            cubeMesh.vertices.push_back(v1);
+            cubeMesh.vertices.push_back(v2);
+            cubeMesh.vertices.push_back(v3);
+
+            LowPolyTriangle t1, t2;
+            t1.indices[0] = i0;     t1.indices[1] = i0 + 1; t1.indices[2] = i0 + 2;
+            t1.meshIndex = static_cast<uint32_t>(f); // Polygroup per face
+            t2.indices[0] = i0;     t2.indices[1] = i0 + 2; t2.indices[2] = i0 + 3;
+            t2.meshIndex = static_cast<uint32_t>(f);
+            cubeMesh.triangles.push_back(t1);
+            cubeMesh.triangles.push_back(t2);
+        }
+
+        // 1. Mark seams by dihedral angle (threshold 60 degrees - cube has 90 degree edges)
+        UVCutter::MarkSeamsByAngle(cubeMesh, 60.0f);
+        assert(!cubeMesh.cutSeams.empty());
+        assert(!cubeMesh.seamLineIndices.empty());
+        std::cout << "  Marked " << cubeMesh.cutSeams.size() << " seam edges via angle threshold." << std::endl;
+
+        // 2. Segment into islands (each face should be its own island -> 6 islands)
+        auto islandsTris = UVCutter::SegmentIslands(cubeMesh);
+        assert(islandsTris.size() == 6);
+        std::cout << "  Segmented cube into " << islandsTris.size() << " separate UV islands." << std::endl;
+
+        // 3. Unwrap all islands
+        auto islands = UVUnwrapper::UnwrapMesh(cubeMesh, islandsTris);
+        assert(islands.size() == 6);
+        for (const auto& isl : islands) {
+            assert(isl.bounds.Width() > 0.0f);
+            assert(isl.bounds.Height() > 0.0f);
+            assert(isl.area3D > 0.0f);
+        }
+        std::cout << "  Unwrapped " << islands.size() << " islands successfully." << std::endl;
+
+        // 4. Pack islands with MaxRects BSSF
+        PackSettings packCfg;
+        packCfg.resolution = 1024;
+        packCfg.paddingPixels = 4;
+        packCfg.marginPixels = 4;
+        packCfg.rotation = PackSettings::RotationMode::Steps90;
+        packCfg.normalizeTexelDensity = true;
+        packCfg.multiUDIM = false;
+
+        PackStats stats = UVPacker::PackIslands(islands, packCfg);
+        assert(stats.packedIslands == 6);
+        assert(stats.udimTilesUsed == 1);
+        std::cout << "  Packed 6 islands into tile 1001 with efficiency: " 
+                  << (stats.packingEfficiency * 100.0f) << "%." << std::endl;
+
+        // Verify bounds are within [0, 1]
+        for (const auto& isl : islands) {
+            assert(isl.bounds.minU >= 0.0f && isl.bounds.maxU <= 1.0f);
+            assert(isl.bounds.minV >= 0.0f && isl.bounds.maxV <= 1.0f);
+        }
+
+        // Verify non-overlapping bounding boxes (with margin/padding considered)
+        for (size_t a = 0; a < islands.size(); ++a) {
+            for (size_t b = a + 1; b < islands.size(); ++b) {
+                // Shrink slightly to avoid edge-to-edge floating point false-positives
+                float eps = 1e-4f;
+                bool xOverlap = (islands[a].bounds.maxU - eps > islands[b].bounds.minU + eps) &&
+                                (islands[a].bounds.minU + eps < islands[b].bounds.maxU - eps);
+                bool yOverlap = (islands[a].bounds.maxV - eps > islands[b].bounds.minV + eps) &&
+                                (islands[a].bounds.minV + eps < islands[b].bounds.maxV - eps);
+                assert(!(xOverlap && yOverlap));
+            }
+        }
+        std::cout << "  Verified non-overlapping bounding boxes for all packed islands." << std::endl;
+
+        // 5. Apply packed UVs back to mesh
+        UVPacker::ApplyToMesh(cubeMesh, islands);
+        for (const auto& v : cubeMesh.vertices) {
+            assert(v.uv.x >= 0.0f && v.uv.x <= 1.0f);
+            assert(v.uv.y >= 0.0f && v.uv.y <= 1.0f);
+        }
+        std::cout << "  UV coordinates applied to mesh vertices successfully." << std::endl;
+
+        // 6. Test Multi-UDIM distribution
+        PackSettings udimCfg = packCfg;
+        udimCfg.multiUDIM = true;
+        udimCfg.maxUDIMCount = 3;
+        udimCfg.packByPolygroup = true;
+        PackStats udimStats = UVPacker::PackIslands(islands, udimCfg);
+        assert(udimStats.packedIslands == 6);
+        std::cout << "  Multi-UDIM packed across " << udimStats.udimTilesUsed << " tiles." << std::endl;
+
+        std::cout << "  UV Cutting, Segmentation, Unwrapping, and MaxRects Packing VERIFIED!" << std::endl;
     }
 
     std::cout << "=== All Advanced Architecture Plan Tests PASSED! ===" << std::endl;

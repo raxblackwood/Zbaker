@@ -32,6 +32,7 @@ public:
     void SetHighPolyMesh(const HighPolyMesh& mesh);
     void UpdateCage(const LowPolyMesh& mesh, float cageDistance, float scaleMultiplier);
     void UpdateSkew(const LowPolyMesh& mesh, float scaleMultiplier = 1.0f);
+    void UpdateSeams(const LowPolyMesh& mesh);
 
     // Marmoset 3D interactive brush ray-casting
     bool UnprojectRay(float screenX, float screenY, DirectX::XMFLOAT3& outRayOrg, DirectX::XMFLOAT3& outRayDir) const;
@@ -69,6 +70,7 @@ public:
     bool showLowPolyWireframe = true;
     bool showCage = false;
     bool showSkew = false;
+    bool showSeams = true;
     bool showGrid = true;
     bool showBakedNormals = true;
     ShadingMode highPolyShading = ShadingMode::ClayMatcap;
@@ -140,6 +142,7 @@ private:
     MeshGPUBuffer m_lowPolyWireGPU; // Pure polygon edges (no internal triangulation diagonals!)
     MeshGPUBuffer m_cageGPU;
     MeshGPUBuffer m_cageWireGPU;
+    MeshGPUBuffer m_seamLineGPU;
     MeshGPUBuffer m_groundPlaneGPU; // Blender-style procedural anti-aliased ground plane
 
     // Camera State
