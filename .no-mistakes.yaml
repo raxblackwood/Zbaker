@@ -1,0 +1,8 @@
+commands:
+  test: powershell -Command "& 'E:\CODES\zbrush plugins\baker\build\bin\Release\TestBaker.exe'"
+
+auto_fix:
+  test: 0
+  review: 0
+  document: 0
+  lint: 0
