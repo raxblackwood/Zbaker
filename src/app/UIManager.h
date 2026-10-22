@@ -144,6 +144,17 @@ private:
     bool m_curveCutTopology = false; // false = snap to mesh edges, true = cut into topology
     int m_draggingPointIndex = -1;
 
+    // Maya-Style Marking Menu State
+    struct MarkingMenuState {
+        bool active = false;
+        ImVec2 centerPos = ImVec2(0, 0);
+        int armedWedge = -1; // 0=North(Cut), 1=South(Sew), 2=East(Loop), 3=West(Unwrap), 4=NE(SelectSeams), 5=SW(Clear)
+        float dragDist = 0.0f;
+    } m_markingMenu;
+
+    void RenderMarkingMenu();
+    void ExecuteMarkingMenuAction(int wedge);
+
     // Background Thread Ingestion State
     std::mutex m_meshMutex;
     std::atomic<bool> m_isLoadingHighPoly{false};

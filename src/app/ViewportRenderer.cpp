@@ -267,6 +267,7 @@ void ViewportRenderer::Release() {
     m_cageGPU.Release();
     m_cageWireGPU.Release();
     m_seamLineGPU.Release();
+    m_selectedEdgeGPU.Release();
     m_groundPlaneGPU.Release();
 
     if (m_colorSRV) { m_colorSRV->Release(); m_colorSRV = nullptr; }
@@ -1057,6 +1058,21 @@ void ViewportRenderer::Render() {
             m_context->DrawIndexed(m_seamLineGPU.indexCount, 0, 0);
             m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         }
+
+        // 3c. Selected Edges (Bright Glowing Golden Yellow)
+        if (m_selectedEdgeGPU.indexBuffer && m_selectedEdgeGPU.indexCount > 0) {
+            m_context->OMSetBlendState(m_alphaBlendState, nullptr, 0xFFFFFFFF);
+            m_context->RSSetState(m_wireframeRS);
+
+            DirectX::XMFLOAT4 selColor = { 1.0f, 0.85f, 0.12f, 1.0f }; // Bright Golden Yellow
+            UpdateConstantBuffer(worldLP, selColor, 4);
+
+            m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_LINELIST);
+            m_context->IASetVertexBuffers(0, 1, &m_lowPolyGPU.vertexBuffer, &stride, &offset);
+            m_context->IASetIndexBuffer(m_selectedEdgeGPU.indexBuffer, DXGI_FORMAT_R32_UINT, 0);
+            m_context->DrawIndexed(m_selectedEdgeGPU.indexCount, 0, 0);
+            m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        }
     }
 
     // 4. Render Cage Shell (Marmoset Toolbag Warm Amber Cage)
@@ -1205,6 +1221,19 @@ void ViewportRenderer::UpdateSeams(const LowPolyMesh& mesh) {
     D3D11_SUBRESOURCE_DATA siInit = { mesh.seamLineIndices.data() };
     m_device->CreateBuffer(&sibd, &siInit, &m_seamLineGPU.indexBuffer);
     m_seamLineGPU.indexCount = static_cast<uint32_t>(mesh.seamLineIndices.size());
+}
+
+void ViewportRenderer::UpdateSelectedEdges(const LowPolyMesh& mesh) {
+    m_selectedEdgeGPU.Release();
+    if (mesh.selectedEdgeLineIndices.empty() || !m_device) return;
+
+    D3D11_BUFFER_DESC sibd = {};
+    sibd.ByteWidth = static_cast<UINT>(mesh.selectedEdgeLineIndices.size() * sizeof(uint32_t));
+    sibd.Usage = D3D11_USAGE_DEFAULT;
+    sibd.BindFlags = D3D11_BIND_INDEX_BUFFER;
+    D3D11_SUBRESOURCE_DATA siInit = { mesh.selectedEdgeLineIndices.data() };
+    m_device->CreateBuffer(&sibd, &siInit, &m_selectedEdgeGPU.indexBuffer);
+    m_selectedEdgeGPU.indexCount = static_cast<uint32_t>(mesh.selectedEdgeLineIndices.size());
 }
 
 DirectX::XMMATRIX ViewportRenderer::GetLowPolyWorldMatrix() const {

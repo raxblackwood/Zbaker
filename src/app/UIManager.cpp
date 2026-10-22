@@ -16,6 +16,12 @@
 
 namespace Baker {
 
+namespace {
+inline std::pair<uint32_t, uint32_t> MakeEdgeKey(uint32_t a, uint32_t b) {
+    return (a < b) ? std::make_pair(a, b) : std::make_pair(b, a);
+}
+} // namespace
+
 static std::string OpenFileDialog(const wchar_t* filter, HWND owner = nullptr) {
     wchar_t filename[MAX_PATH] = { 0 };
     OPENFILENAMEW ofn;
@@ -872,6 +878,103 @@ void UIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& size) {
         }
     }
 
+    // Draw selected edges on 2D UV canvas (Glowing Golden Yellow)
+    if (m_hasLowPoly && !m_lowPolyMesh.selectedEdges.empty()) {
+        ImU32 selCol = IM_COL32(255, 215, 20, 255);
+        for (const auto& edge : m_lowPolyMesh.selectedEdges) {
+            if (edge.first < m_lowPolyMesh.vertices.size() && edge.second < m_lowPolyMesh.vertices.size()) {
+                const auto& v0 = m_lowPolyMesh.vertices[edge.first];
+                const auto& v1 = m_lowPolyMesh.vertices[edge.second];
+                float p0x = originX + v0.uv.u * currentTileSize;
+                float p0y = originY + (maxRows - v0.uv.v) * currentTileSize;
+                float p1x = originX + v1.uv.u * currentTileSize;
+                float p1y = originY + (maxRows - v1.uv.v) * currentTileSize;
+                drawList->AddLine(ImVec2(p0x, p0y), ImVec2(p1x, p1y), selCol, 3.5f);
+            }
+        }
+    }
+
+    // 2D Interactive Edge Hover, Click, Double-Click Loop, and Shift+RMB Marking Menu
+    if (isHovered && m_hasLowPoly && !m_lowPolyMesh.triangles.empty()) {
+        int hoverV0 = -1, hoverV1 = -1;
+        float minEdgeDist2D = 12.0f;
+        ImVec2 hP0, hP1;
+
+        for (const auto& tri : m_lowPolyMesh.triangles) {
+            for (int e = 0; e < 3; ++e) {
+                uint32_t ea = tri.indices[e];
+                uint32_t eb = tri.indices[(e + 1) % 3];
+                const auto& v0 = m_lowPolyMesh.vertices[ea];
+                const auto& v1 = m_lowPolyMesh.vertices[eb];
+                float p0x = originX + v0.uv.u * currentTileSize;
+                float p0y = originY + (maxRows - v0.uv.v) * currentTileSize;
+                float p1x = originX + v1.uv.u * currentTileSize;
+                float p1y = originY + (maxRows - v1.uv.v) * currentTileSize;
+                ImVec2 p0(p0x, p0y);
+                ImVec2 p1(p1x, p1y);
+
+                float dx = p1.x - p0.x;
+                float dy = p1.y - p0.y;
+                float l2 = dx * dx + dy * dy;
+                if (l2 < 1e-4f) continue;
+                float t = std::clamp(((io.MousePos.x - p0.x) * dx + (io.MousePos.y - p0.y) * dy) / l2, 0.0f, 1.0f);
+                float qx = p0.x + t * dx;
+                float qy = p0.y + t * dy;
+                float dist = std::sqrt((io.MousePos.x - qx) * (io.MousePos.x - qx) + (io.MousePos.y - qy) * (io.MousePos.y - qy));
+
+                if (dist < minEdgeDist2D) {
+                    minEdgeDist2D = dist;
+                    hoverV0 = ea;
+                    hoverV1 = eb;
+                    hP0 = p0;
+                    hP1 = p1;
+                }
+            }
+        }
+
+        if (hoverV0 >= 0) {
+            drawList->AddLine(hP0, hP1, IM_COL32(0, 255, 255, 255), 3.0f);
+            drawList->AddCircle(io.MousePos, 6.0f, IM_COL32(0, 255, 255, 230), 16, 2.0f);
+
+            if (io.MouseDoubleClicked[0]) {
+                UVCutter::SelectEdgeLoop(m_lowPolyMesh, hoverV0, hoverV1, io.KeyShift);
+                m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
+                char msg[128];
+                snprintf(msg, sizeof(msg), "Selected edge loop in 2D: %zu edges selected", m_lowPolyMesh.selectedEdges.size());
+                m_uvStatusMessage = msg;
+            } else if (ImGui::IsMouseClicked(0)) {
+                auto edgeKey = MakeEdgeKey(hoverV0, hoverV1);
+                if (io.KeyShift) {
+                    if (m_lowPolyMesh.selectedEdges.count(edgeKey)) {
+                        m_lowPolyMesh.selectedEdges.erase(edgeKey);
+                    } else {
+                        m_lowPolyMesh.selectedEdges.insert(edgeKey);
+                    }
+                } else {
+                    m_lowPolyMesh.selectedEdges.clear();
+                    m_lowPolyMesh.selectedEdges.insert(edgeKey);
+                }
+                m_lowPolyMesh.GenerateSelectedEdgeLines();
+                m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
+            }
+
+            if (io.KeyShift && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+                if (m_lowPolyMesh.selectedEdges.empty()) {
+                    m_lowPolyMesh.selectedEdges.insert(MakeEdgeKey(hoverV0, hoverV1));
+                    m_lowPolyMesh.GenerateSelectedEdgeLines();
+                    m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
+                }
+                m_markingMenu.active = true;
+                m_markingMenu.centerPos = io.MousePos;
+                m_markingMenu.armedWedge = -1;
+            }
+        } else if (io.KeyShift && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+            m_markingMenu.active = true;
+            m_markingMenu.centerPos = io.MousePos;
+            m_markingMenu.armedWedge = -1;
+        }
+    }
+
     drawList->PopClipRect();
 
     // Bottom HUD info
@@ -1122,18 +1225,56 @@ void UIManager::RenderViewportPanel() {
                     drawList->AddLine(ImVec2(sAX, sAY), ImVec2(sBX, sBY), IM_COL32(0, 255, 255, 255), 3.0f);
                     drawList->AddCircle(io.MousePos, 7.0f, IM_COL32(0, 255, 255, 240), 16, 2.0f);
 
-                    if (ImGui::IsMouseClicked(0)) {
-                        UVCutter::ToggleEdgeSeam(m_lowPolyMesh, bestV0, bestV1);
-                        m_viewportRenderer.UpdateSeams(m_lowPolyMesh);
-                        m_viewportRenderer.showSeams = true;
+                    // Maya Double-Click: Select Edge Loop
+                    if (io.MouseDoubleClicked[0]) {
+                        UVCutter::SelectEdgeLoop(m_lowPolyMesh, bestV0, bestV1, io.KeyShift);
+                        m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
                         char msg[128];
-                        snprintf(msg, sizeof(msg), "Toggled seam on edge (%u, %u) - total %zu seams",
-                            bestV0, bestV1, m_lowPolyMesh.cutSeams.size());
+                        snprintf(msg, sizeof(msg), "Selected edge loop: %zu edges selected", m_lowPolyMesh.selectedEdges.size());
                         m_uvStatusMessage = msg;
-                        m_logEntries.push_back(std::string("[UV Cut] ") + msg);
+                    }
+                    // Maya Single-Click: Select Edge (or toggle with Shift)
+                    else if (ImGui::IsMouseClicked(0)) {
+                        auto edgeKey = MakeEdgeKey(bestV0, bestV1);
+                        if (io.KeyShift) {
+                            if (m_lowPolyMesh.selectedEdges.count(edgeKey)) {
+                                m_lowPolyMesh.selectedEdges.erase(edgeKey);
+                            } else {
+                                m_lowPolyMesh.selectedEdges.insert(edgeKey);
+                            }
+                        } else {
+                            m_lowPolyMesh.selectedEdges.clear();
+                            m_lowPolyMesh.selectedEdges.insert(edgeKey);
+                        }
+                        m_lowPolyMesh.GenerateSelectedEdgeLines();
+                        m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
+                    }
+
+                    // Maya Shift + Right-Click: Open Marking Menu
+                    if (io.KeyShift && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+                        if (m_lowPolyMesh.selectedEdges.empty()) {
+                            m_lowPolyMesh.selectedEdges.insert(MakeEdgeKey(bestV0, bestV1));
+                            m_lowPolyMesh.GenerateSelectedEdgeLines();
+                            m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
+                        }
+                        m_markingMenu.active = true;
+                        m_markingMenu.centerPos = io.MousePos;
+                        m_markingMenu.armedWedge = -1;
                     }
                 }
             }
+        }
+    }
+
+    // Maya Shift + Right-Click general 3D viewport trigger
+    if (io.KeyShift && ImGui::IsMouseClicked(ImGuiMouseButton_Right) && !m_markingMenu.active && (m_viewportMode == ViewportMode::View3D || m_viewportMode == ViewportMode::SplitBoth)) {
+        float maxActiveW = (m_viewportMode == ViewportMode::SplitBoth) ? std::floor(avail.x * 0.5f) : avail.x;
+        float relX = io.MousePos.x - origin.x;
+        float relY = io.MousePos.y - origin.y;
+        if (relX >= 0.0f && relX <= maxActiveW && relY >= 0.0f && relY <= avail.y) {
+            m_markingMenu.active = true;
+            m_markingMenu.centerPos = io.MousePos;
+            m_markingMenu.armedWedge = -1;
         }
     }
 
@@ -1379,11 +1520,27 @@ void UIManager::RenderViewportPanel() {
                     }
                 } else if (m_toolMode == ToolMode::CutSeam) {
                     ImGui::AlignTextToFramePadding();
-                    ImGui::TextColored(ImVec4(0.0f, 0.95f, 1.0f, 1.0f), "SEAM CUTTER");
+                    ImGui::TextColored(ImVec4(0.0f, 0.95f, 1.0f, 1.0f), "MAYA CUT/SEW");
                     ImGui::SameLine();
-                    ImGui::TextDisabled("Click low-poly edges in 3D to toggle seams");
+                    ImGui::TextDisabled("Shift+RMB: Marking Menu | 2xClick: Loop");
                     ImGui::SameLine();
-                    if (ImGui::Button("Clear Seams")) {
+                    if (ImGui::Button("Cut (Up)")) {
+                        ExecuteMarkingMenuAction(0);
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Sew (Down)")) {
+                        ExecuteMarkingMenuAction(1);
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Loop (Right)")) {
+                        ExecuteMarkingMenuAction(2);
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Clear Sel")) {
+                        ExecuteMarkingMenuAction(5);
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Clear All Seams")) {
                         ClearSeams();
                     }
                 } else {
@@ -1461,7 +1618,187 @@ void UIManager::RenderViewportPanel() {
         }
     }
 
+    RenderMarkingMenu();
+
     ImGui::End();
+}
+
+void UIManager::RenderMarkingMenu() {
+    if (!m_markingMenu.active) return;
+
+    ImGuiIO& io = ImGui::GetIO();
+    ImDrawList* drawList = ImGui::GetForegroundDrawList();
+
+    ImVec2 c = m_markingMenu.centerPos;
+    float dx = io.MousePos.x - c.x;
+    float dy = io.MousePos.y - c.y;
+    float dist = std::sqrt(dx * dx + dy * dy);
+    m_markingMenu.dragDist = dist;
+
+    // Determine armed wedge based on angle if dragged > 16 pixels
+    int armed = -1;
+    if (dist > 16.0f) {
+        float angleDeg = std::atan2(dy, dx) * 180.0f / 3.14159265f; // [-180, 180]
+        if (angleDeg >= -120.0f && angleDeg <= -60.0f) {
+            armed = 0; // CUT (North)
+        } else if (angleDeg >= 60.0f && angleDeg <= 120.0f) {
+            armed = 1; // SEW (South)
+        } else if (angleDeg >= -30.0f && angleDeg <= 30.0f) {
+            armed = 2; // LOOP (East)
+        } else if (angleDeg >= 150.0f || angleDeg <= -150.0f) {
+            armed = 3; // UNWRAP (West)
+        } else if (angleDeg > -60.0f && angleDeg < -30.0f) {
+            armed = 4; // ALL SEAMS (NE)
+        } else if (angleDeg > 120.0f && angleDeg < 150.0f) {
+            armed = 5; // CLEAR SEL (SW)
+        }
+    }
+    m_markingMenu.armedWedge = armed;
+
+    // Draw dark radial hub at center
+    drawList->AddCircleFilled(c, 22.0f, IM_COL32(18, 20, 24, 230));
+    drawList->AddCircle(c, 22.0f, IM_COL32(80, 85, 95, 200), 32, 2.0f);
+    drawList->AddText(ImVec2(c.x - 10.0f, c.y - 7.0f), IM_COL32(180, 185, 195, 220), "UV");
+
+    // Radial spokes
+    auto DrawSpoke = [&](float angleDeg) {
+        float rad = angleDeg * 3.14159265f / 180.0f;
+        ImVec2 p0(c.x + std::cos(rad) * 24.0f, c.y + std::sin(rad) * 24.0f);
+        ImVec2 p1(c.x + std::cos(rad) * 55.0f, c.y + std::sin(rad) * 55.0f);
+        drawList->AddLine(p0, p1, IM_COL32(60, 65, 75, 160), 1.5f);
+    };
+    DrawSpoke(-90.0f);  // N
+    DrawSpoke(90.0f);   // S
+    DrawSpoke(0.0f);    // E
+    DrawSpoke(180.0f);  // W
+    DrawSpoke(-45.0f);  // NE
+    DrawSpoke(135.0f);  // SW
+
+    // Draw active gesture laser line towards cursor
+    if (dist > 8.0f) {
+        drawList->AddLine(c, io.MousePos, IM_COL32(0, 220, 255, 220), 2.5f);
+        drawList->AddCircleFilled(io.MousePos, 4.0f, IM_COL32(0, 255, 255, 255));
+    }
+
+    // Helper to render wedge badges
+    auto RenderWedgeBadge = [&](int id, const ImVec2& offset, const char* label, const char* sub, ImU32 activeColor) {
+        bool isArmed = (armed == id);
+        ImVec2 bp(c.x + offset.x, c.y + offset.y);
+        ImVec2 textSize = ImGui::CalcTextSize(label);
+        float w = (std::max)(textSize.x + 24.0f, 100.0f);
+        float h = 32.0f;
+        ImVec2 minP(bp.x - w * 0.5f, bp.y - h * 0.5f);
+        ImVec2 maxP(bp.x + w * 0.5f, bp.y + h * 0.5f);
+
+        // Check if mouse is hovering badge directly
+        if (io.MousePos.x >= minP.x && io.MousePos.x <= maxP.x && io.MousePos.y >= minP.y && io.MousePos.y <= maxP.y) {
+            isArmed = true;
+            m_markingMenu.armedWedge = id;
+        }
+
+        ImU32 bgCol = isArmed ? IM_COL32(24, 38, 52, 250) : IM_COL32(20, 22, 28, 230);
+        ImU32 borderCol = isArmed ? activeColor : IM_COL32(70, 75, 88, 180);
+        ImU32 textCol = isArmed ? activeColor : IM_COL32(230, 235, 245, 255);
+
+        drawList->AddRectFilled(minP, maxP, bgCol, 5.0f);
+        drawList->AddRect(minP, maxP, borderCol, 5.0f, 0, isArmed ? 2.5f : 1.0f);
+
+        float textX = bp.x - textSize.x * 0.5f;
+        float textY = bp.y - (sub ? 11.0f : 7.0f);
+        drawList->AddText(ImVec2(textX, textY), textCol, label);
+
+        if (sub) {
+            ImVec2 subSize = ImGui::CalcTextSize(sub);
+            drawList->AddText(ImVec2(bp.x - subSize.x * 0.5f, bp.y + 2.0f), IM_COL32(150, 155, 170, 200), sub);
+        }
+    };
+
+    RenderWedgeBadge(0, ImVec2(0.0f, -68.0f),  "CUT",         "^ Flick Up",    IM_COL32(0, 230, 255, 255));
+    RenderWedgeBadge(1, ImVec2(0.0f, 68.0f),   "SEW",         "v Flick Down",  IM_COL32(255, 170, 20, 255));
+    RenderWedgeBadge(2, ImVec2(105.0f, 0.0f),  "EDGE LOOP",   "> Flick Right", IM_COL32(80, 170, 255, 255));
+    RenderWedgeBadge(3, ImVec2(-105.0f, 0.0f), "UNWRAP",      "< Flick Left",  IM_COL32(60, 230, 130, 255));
+    RenderWedgeBadge(4, ImVec2(92.0f, -48.0f), "ALL SEAMS",   nullptr,         IM_COL32(180, 140, 255, 255));
+    RenderWedgeBadge(5, ImVec2(-92.0f, 48.0f), "CLEAR SEL",   nullptr,         IM_COL32(240, 90, 90, 255));
+
+    // When RMB is released, execute action if armed!
+    if (ImGui::IsMouseReleased(ImGuiMouseButton_Right)) {
+        if (m_markingMenu.armedWedge >= 0) {
+            ExecuteMarkingMenuAction(m_markingMenu.armedWedge);
+        }
+        m_markingMenu.active = false;
+        m_markingMenu.armedWedge = -1;
+    }
+
+    // Dismiss on Escape
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+        m_markingMenu.active = false;
+        m_markingMenu.armedWedge = -1;
+    }
+}
+
+void UIManager::ExecuteMarkingMenuAction(int wedge) {
+    if (!m_hasLowPoly) return;
+
+    if (wedge == 0) { // CUT SEAMS
+        if (!m_lowPolyMesh.selectedEdges.empty()) {
+            size_t count = m_lowPolyMesh.selectedEdges.size();
+            UVCutter::CutSelectedEdges(m_lowPolyMesh);
+            m_viewportRenderer.UpdateSeams(m_lowPolyMesh);
+            m_viewportRenderer.showSeams = true;
+            char msg[128];
+            snprintf(msg, sizeof(msg), "Cut %zu seam edge(s) via Maya gesture", count);
+            m_uvStatusMessage = msg;
+            m_logEntries.push_back(std::string("[Maya Cut] ") + msg);
+        } else {
+            m_uvStatusMessage = "No edges selected to cut (Select an edge or loop first)";
+        }
+    } else if (wedge == 1) { // SEW / STITCH
+        if (!m_lowPolyMesh.selectedEdges.empty()) {
+            size_t count = m_lowPolyMesh.selectedEdges.size();
+            UVCutter::SewSelectedEdges(m_lowPolyMesh);
+            m_viewportRenderer.UpdateSeams(m_lowPolyMesh);
+            char msg[128];
+            snprintf(msg, sizeof(msg), "Sewed %zu edge(s) via Maya gesture", count);
+            m_uvStatusMessage = msg;
+            m_logEntries.push_back(std::string("[Maya Sew] ") + msg);
+        } else {
+            m_uvStatusMessage = "No edges selected to sew";
+        }
+    } else if (wedge == 2) { // SELECT EDGE LOOP
+        if (!m_lowPolyMesh.selectedEdges.empty()) {
+            auto currentEdges = m_lowPolyMesh.selectedEdges;
+            for (const auto& edge : currentEdges) {
+                UVCutter::SelectEdgeLoop(m_lowPolyMesh, edge.first, edge.second, true);
+            }
+            m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
+            char msg[128];
+            snprintf(msg, sizeof(msg), "Selected edge loop(s): %zu edges selected", m_lowPolyMesh.selectedEdges.size());
+            m_uvStatusMessage = msg;
+        } else {
+            m_uvStatusMessage = "Click an edge to select an edge loop";
+        }
+    } else if (wedge == 3) { // UNWRAP & PACK
+        auto islandsTris = UVCutter::SegmentIslands(m_lowPolyMesh);
+        if (!islandsTris.empty()) {
+            m_currentIslands = UVUnwrapper::UnwrapMesh(m_lowPolyMesh, islandsTris);
+            m_packStats = UVPacker::PackIslands(m_currentIslands, m_packSettings);
+            UVPacker::ApplyToMesh(m_lowPolyMesh, m_currentIslands);
+            m_viewportRenderer.SetLowPolyMesh(m_lowPolyMesh, 1.0f);
+            m_hasUnwrappedIslands = true;
+            char msg[128];
+            snprintf(msg, sizeof(msg), "Unwrapped & packed %zu UV islands via Marking Menu", m_currentIslands.size());
+            m_uvStatusMessage = msg;
+            m_logEntries.push_back(std::string("[UV Unwrap] ") + msg);
+        }
+    } else if (wedge == 4) { // SELECT ALL SEAMS
+        UVCutter::SelectAllSeams(m_lowPolyMesh);
+        m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
+        m_uvStatusMessage = "Selected all " + std::to_string(m_lowPolyMesh.selectedEdges.size()) + " marked seams";
+    } else if (wedge == 5) { // CLEAR SELECTION
+        UVCutter::ClearSelection(m_lowPolyMesh);
+        m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
+        m_uvStatusMessage = "Cleared edge selection";
+    }
 }
 
 void UIManager::SyncTransforms() {
@@ -2131,11 +2468,36 @@ void UIManager::RenderUVCutAndPackPanel() {
         }
 
         ImGui::Spacing();
-        if (ImGui::Button("Clear All Seams")) {
-            ClearSeams();
+        ImGui::Separator();
+        ImGui::Spacing();
+        ImGui::TextColored(ImVec4(0.0f, 0.95f, 1.0f, 1.0f), "MAYA CUT & SEW (GESTURES)");
+        ImGui::TextDisabled("Shift + Right-Click: Radial Marking Menu (3D & 2D)");
+        ImGui::TextDisabled("Double-Click: Select Edge Loop (3D & 2D)");
+        ImGui::Text("Selected Edges: %zu | Marked Seams: %zu", m_lowPolyMesh.selectedEdges.size(), m_lowPolyMesh.cutSeams.size());
+
+        if (ImGui::Button("Cut (Flick Up)", ImVec2(105, 26))) {
+            ExecuteMarkingMenuAction(0);
         }
         ImGui::SameLine();
-        ImGui::TextDisabled("Seams: %zu edges", m_lowPolyMesh.cutSeams.size());
+        if (ImGui::Button("Sew (Flick Down)", ImVec2(115, 26))) {
+            ExecuteMarkingMenuAction(1);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Loop (Flick Right)", ImVec2(120, 26))) {
+            ExecuteMarkingMenuAction(2);
+        }
+
+        if (ImGui::Button("Clear Selection", ImVec2(110, 24))) {
+            ExecuteMarkingMenuAction(5);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Select All Seams", ImVec2(115, 24))) {
+            ExecuteMarkingMenuAction(4);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Clear All Seams", ImVec2(115, 24))) {
+            ClearSeams();
+        }
     }
     BakerUI::EndCard();
 

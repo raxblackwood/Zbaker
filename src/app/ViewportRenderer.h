@@ -34,6 +34,7 @@ public:
     void UpdateCage(const LowPolyMesh& mesh, float cageDistance, float scaleMultiplier);
     void UpdateSkew(const LowPolyMesh& mesh, float scaleMultiplier = 1.0f);
     void UpdateSeams(const LowPolyMesh& mesh);
+    void UpdateSelectedEdges(const LowPolyMesh& mesh);
 
     // Marmoset 3D interactive brush ray-casting
     bool UnprojectRay(float screenX, float screenY, DirectX::XMFLOAT3& outRayOrg, DirectX::XMFLOAT3& outRayDir) const;
@@ -144,6 +145,7 @@ private:
     MeshGPUBuffer m_cageGPU;
     MeshGPUBuffer m_cageWireGPU;
     MeshGPUBuffer m_seamLineGPU;
+    MeshGPUBuffer m_selectedEdgeGPU;
     MeshGPUBuffer m_groundPlaneGPU; // Blender-style procedural anti-aliased ground plane
 
     // Camera State

@@ -240,6 +240,172 @@ void UVCutter::ToggleEdgeSeam(LowPolyMesh& mesh, uint32_t v0, uint32_t v1) {
     GenerateSeamLineIndices(mesh);
 }
 
+std::vector<std::pair<uint32_t, uint32_t>> UVCutter::GetEdgeLoop(const LowPolyMesh& mesh, uint32_t v0, uint32_t v1) {
+    std::vector<std::pair<uint32_t, uint32_t>> loopResult;
+    if (mesh.vertices.empty()) return loopResult;
+
+    auto geomMap = BuildGeomVertexMap(mesh);
+    if (v0 >= geomMap.size() || v1 >= geomMap.size()) return loopResult;
+
+    uint32_t g0 = geomMap[v0];
+    uint32_t g1 = geomMap[v1];
+    if (g0 == g1) return loopResult;
+
+    auto initialKey = MakeEdgeKey(g0, g1);
+    loopResult.push_back(MakeEdgeKey(v0, v1));
+
+    // Build geometric polygons:
+    struct PolyGeom {
+        std::vector<uint32_t> geomVerts;
+        std::vector<uint32_t> origVerts;
+    };
+    std::vector<PolyGeom> polys;
+
+    if (!mesh.polygonFaces.empty()) {
+        polys.reserve(mesh.polygonFaces.size());
+        for (const auto& face : mesh.polygonFaces) {
+            PolyGeom pg;
+            pg.origVerts = face;
+            pg.geomVerts.resize(face.size());
+            for (size_t i = 0; i < face.size(); ++i) {
+                pg.geomVerts[i] = geomMap[face[i]];
+            }
+            polys.push_back(std::move(pg));
+        }
+    } else {
+        // Fallback: use triangles
+        polys.reserve(mesh.triangles.size());
+        for (const auto& tri : mesh.triangles) {
+            PolyGeom pg;
+            pg.origVerts = { tri.indices[0], tri.indices[1], tri.indices[2] };
+            pg.geomVerts = { geomMap[tri.indices[0]], geomMap[tri.indices[1]], geomMap[tri.indices[2]] };
+            polys.push_back(std::move(pg));
+        }
+    }
+
+    struct EdgeUsage {
+        uint32_t polyIdx;
+        uint32_t edgeIdxInPoly;
+    };
+    std::map<std::pair<uint32_t, uint32_t>, std::vector<EdgeUsage>> edgeToPolys;
+
+    for (uint32_t pIdx = 0; pIdx < static_cast<uint32_t>(polys.size()); ++pIdx) {
+        const auto& pg = polys[pIdx];
+        size_t n = pg.geomVerts.size();
+        for (size_t e = 0; e < n; ++e) {
+            auto ek = MakeEdgeKey(pg.geomVerts[e], pg.geomVerts[(e + 1) % n]);
+            edgeToPolys[ek].push_back({ pIdx, static_cast<uint32_t>(e) });
+        }
+    }
+
+    auto startIt = edgeToPolys.find(initialKey);
+    if (startIt == edgeToPolys.end()) return loopResult;
+
+    std::set<std::pair<uint32_t, uint32_t>> visitedGeomEdges;
+    visitedGeomEdges.insert(initialKey);
+
+    // Walk in both face directions from starting edge
+    const auto& startUsages = startIt->second;
+    for (size_t dir = 0; dir < startUsages.size() && dir < 2; ++dir) {
+        uint32_t curPolyIdx = startUsages[dir].polyIdx;
+        uint32_t curEdgeIdx = startUsages[dir].edgeIdxInPoly;
+
+        while (true) {
+            const auto& pg = polys[curPolyIdx];
+            size_t n = pg.geomVerts.size();
+            if (n < 4) {
+                // In non-quad (triangle or n-gon), stop loop propagation
+                break;
+            }
+
+            // In quad (n == 4), opposite edge is (curEdgeIdx + 2) % 4
+            uint32_t oppEdgeIdx = (curEdgeIdx + 2) % 4;
+            uint32_t oppG0 = pg.geomVerts[oppEdgeIdx];
+            uint32_t oppG1 = pg.geomVerts[(oppEdgeIdx + 1) % 4];
+            auto oppKey = MakeEdgeKey(oppG0, oppG1);
+
+            if (visitedGeomEdges.find(oppKey) != visitedGeomEdges.end()) {
+                // Loop closed or already visited
+                break;
+            }
+            visitedGeomEdges.insert(oppKey);
+
+            uint32_t oppV0 = pg.origVerts[oppEdgeIdx];
+            uint32_t oppV1 = pg.origVerts[(oppEdgeIdx + 1) % 4];
+            loopResult.push_back(MakeEdgeKey(oppV0, oppV1));
+
+            // Find the other polygon sharing this opposite edge
+            auto itOpp = edgeToPolys.find(oppKey);
+            if (itOpp == edgeToPolys.end() || itOpp->second.size() < 2) {
+                // Open boundary reached
+                break;
+            }
+
+            uint32_t nextPolyIdx = (itOpp->second[0].polyIdx == curPolyIdx) ? itOpp->second[1].polyIdx : itOpp->second[0].polyIdx;
+            uint32_t nextEdgeIdx = (itOpp->second[0].polyIdx == curPolyIdx) ? itOpp->second[1].edgeIdxInPoly : itOpp->second[0].edgeIdxInPoly;
+
+            curPolyIdx = nextPolyIdx;
+            curEdgeIdx = nextEdgeIdx;
+        }
+    }
+
+    return loopResult;
+}
+
+void UVCutter::SelectEdgeLoop(LowPolyMesh& mesh, uint32_t v0, uint32_t v1, bool addToSelection) {
+    if (!addToSelection) {
+        mesh.selectedEdges.clear();
+    }
+    auto loop = GetEdgeLoop(mesh, v0, v1);
+    for (const auto& edge : loop) {
+        mesh.selectedEdges.insert(edge);
+    }
+    mesh.GenerateSelectedEdgeLines();
+}
+
+void UVCutter::CutSelectedEdges(LowPolyMesh& mesh) {
+    if (mesh.selectedEdges.empty()) return;
+    for (const auto& edge : mesh.selectedEdges) {
+        mesh.cutSeams.insert(edge);
+    }
+    GenerateSeamLineIndices(mesh);
+}
+
+void UVCutter::SewSelectedEdges(LowPolyMesh& mesh) {
+    if (mesh.selectedEdges.empty()) return;
+    auto geomMap = BuildGeomVertexMap(mesh);
+    std::set<std::pair<uint32_t, uint32_t>> geomSelected;
+    for (const auto& edge : mesh.selectedEdges) {
+        if (edge.first < geomMap.size() && edge.second < geomMap.size()) {
+            geomSelected.insert(MakeEdgeKey(geomMap[edge.first], geomMap[edge.second]));
+        }
+    }
+
+    std::vector<std::pair<uint32_t, uint32_t>> seamsToRemove;
+    for (const auto& seam : mesh.cutSeams) {
+        if (seam.first < geomMap.size() && seam.second < geomMap.size()) {
+            auto gKey = MakeEdgeKey(geomMap[seam.first], geomMap[seam.second]);
+            if (geomSelected.find(gKey) != geomSelected.end()) {
+                seamsToRemove.push_back(seam);
+            }
+        }
+    }
+    for (const auto& s : seamsToRemove) {
+        mesh.cutSeams.erase(s);
+    }
+    GenerateSeamLineIndices(mesh);
+}
+
+void UVCutter::ClearSelection(LowPolyMesh& mesh) {
+    mesh.selectedEdges.clear();
+    mesh.selectedEdgeLineIndices.clear();
+}
+
+void UVCutter::SelectAllSeams(LowPolyMesh& mesh) {
+    mesh.selectedEdges = mesh.cutSeams;
+    mesh.GenerateSelectedEdgeLines();
+}
+
 std::vector<std::vector<int>> UVCutter::SegmentIslands(const LowPolyMesh& mesh) {
     std::vector<std::vector<int>> islands;
     if (mesh.triangles.empty()) return islands;

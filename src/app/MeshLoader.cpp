@@ -192,7 +192,13 @@ bool MeshLoader::LoadLowPolyFBX(
                 outMesh.wireframeLineIndices.push_back(faceIndices[(v + 1) % face.num_indices]);
             }
 
-            // 2. Count original topology
+            // 2. Count original topology and store polygon faces
+            std::vector<uint32_t> polyFace(face.num_indices);
+            for (uint32_t v = 0; v < face.num_indices; ++v) {
+                polyFace[v] = faceIndices[v];
+            }
+            outMesh.polygonFaces.push_back(std::move(polyFace));
+
             if (face.num_indices == 4) {
                 outMesh.quadCount++;
             } else if (face.num_indices == 3) {
@@ -457,7 +463,13 @@ bool MeshLoader::LoadLowPolyOBJ(
                 outMesh.wireframeLineIndices.push_back(faceIndices[(v + 1) % fv]);
             }
 
-            // 2. Count original topology
+            // 2. Count original topology and store polygon faces
+            std::vector<uint32_t> polyFace(fv);
+            for (size_t v = 0; v < fv; ++v) {
+                polyFace[v] = faceIndices[v];
+            }
+            outMesh.polygonFaces.push_back(std::move(polyFace));
+
             if (fv == 4) {
                 outMesh.quadCount++;
             } else if (fv == 3) {

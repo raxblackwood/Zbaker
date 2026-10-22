@@ -14,6 +14,33 @@
 
 using namespace Baker;
 
+void CreateTestQuadGridOBJ(const std::string& path) {
+    std::ofstream out(path);
+    // 3x2 grid of quads (4 vertices wide, 3 vertices high = 3x2 = 6 quads)
+    for (int y = 0; y < 3; ++y) {
+        for (int x = 0; x < 4; ++x) {
+            out << "v " << static_cast<float>(x) << " " << static_cast<float>(y) << " 0.0\n";
+            out << "vt " << (static_cast<float>(x) / 3.0f) << " " << (static_cast<float>(y) / 2.0f) << "\n";
+            out << "vn 0.0 0.0 1.0\n";
+        }
+    }
+    // Quads: row 0: (1,2,6,5), (2,3,7,6), (3,4,8,7)
+    //        row 1: (5,6,10,9), (6,7,11,10), (7,8,12,11)
+    for (int y = 0; y < 2; ++y) {
+        for (int x = 0; x < 3; ++x) {
+            int v1 = y * 4 + x + 1;
+            int v2 = y * 4 + (x + 1) + 1;
+            int v3 = (y + 1) * 4 + (x + 1) + 1;
+            int v4 = (y + 1) * 4 + x + 1;
+            out << "f " << v1 << "/" << v1 << "/" << v1 << " "
+                        << v2 << "/" << v2 << "/" << v2 << " "
+                        << v3 << "/" << v3 << "/" << v3 << " "
+                        << v4 << "/" << v4 << "/" << v4 << "\n";
+        }
+    }
+    out.close();
+}
+
 void CreateTestLowPolyOBJ(const std::string& path) {
     std::ofstream out(path);
     out << "v -1.0 0.0 0.0\n";
@@ -580,6 +607,46 @@ int main(int argc, char** argv) {
         assert(static_cast<int>(ShadingMode::StudioWhite) == 0);
         std::cout << "  Default Shading Mode verified as Blender Studio White (mode 0)." << std::endl;
         std::cout << "  Wireframe Deduplication & Blender Studio White VERIFIED!" << std::endl;
+    }
+
+    // 11. Test Maya Edge Loop Selection, Cut, and Sew
+    {
+        std::cout << "[Test 11/11] Testing Maya Edge Loop Selection, Cut, and Sew..." << std::endl;
+        std::string testObjPath = "test_quad_grid.obj";
+        CreateTestQuadGridOBJ(testObjPath);
+        LowPolyMesh wfMesh;
+        std::string err;
+        bool loaded = MeshLoader::LoadLowPolyOBJ(testObjPath, wfMesh, err);
+        assert(loaded);
+        assert(!wfMesh.polygonFaces.empty());
+
+        // 1. Find edge (0, 1) in quad 0: (0,0) to (1,0)
+        uint32_t v0 = wfMesh.polygonFaces[0][0];
+        uint32_t v1 = wfMesh.polygonFaces[0][1]; // horizontal edge in 3x2 quad grid
+        auto loop = UVCutter::GetEdgeLoop(wfMesh, v0, v1);
+        assert(loop.size() >= 3);
+        std::cout << "  Maya Edge Loop Walking: starting edge walked loop across quads, found "
+                  << loop.size() << " loop edges." << std::endl;
+
+        // 2. Select Edge Loop
+        UVCutter::SelectEdgeLoop(wfMesh, v0, v1);
+        assert(wfMesh.selectedEdges.size() == loop.size());
+        assert(wfMesh.selectedEdgeLineIndices.size() == wfMesh.selectedEdges.size() * 2);
+
+        // 3. Cut Selected Edges
+        size_t selCount = wfMesh.selectedEdges.size();
+        UVCutter::CutSelectedEdges(wfMesh);
+        assert(wfMesh.cutSeams.size() >= selCount);
+        assert(!wfMesh.seamLineIndices.empty());
+        std::cout << "  Maya Cut: turned " << selCount << " selected edges into UV cut seams." << std::endl;
+
+        // 4. Sew Selected Edges
+        UVCutter::SewSelectedEdges(wfMesh);
+        assert(wfMesh.cutSeams.empty());
+        assert(wfMesh.seamLineIndices.empty());
+        std::cout << "  Maya Sew: stitched and removed all seams from selected edges." << std::endl;
+
+        std::cout << "  Maya Edge Loop Selection, Cut, and Sew VERIFIED!" << std::endl;
     }
 
     std::cout << "=== All Advanced Architecture Plan Tests PASSED! ===" << std::endl;

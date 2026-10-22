@@ -89,9 +89,21 @@ struct LowPolyMesh {
     uint32_t quadCount = 0;
     uint32_t triCount = 0;
     uint32_t polyCount = 0;
+    std::vector<std::vector<uint32_t>> polygonFaces; // Original polygon faces (quads, n-gons, tris)
     std::vector<uint32_t> wireframeLineIndices; // Perimeter line edges of original faces (NO internal diagonals!)
     std::vector<uint32_t> seamLineIndices;      // Marked UV cut seams for 3D/2D viewport line rendering
     std::set<std::pair<uint32_t, uint32_t>> cutSeams; // Set of edge pairs (vMin, vMax) marked as seams
+    std::set<std::pair<uint32_t, uint32_t>> selectedEdges; // Set of edge pairs (vMin, vMax) selected for Cut/Sew
+    std::vector<uint32_t> selectedEdgeLineIndices; // Line indices for rendering selected edges
+
+    void GenerateSelectedEdgeLines() {
+        selectedEdgeLineIndices.clear();
+        selectedEdgeLineIndices.reserve(selectedEdges.size() * 2);
+        for (const auto& edge : selectedEdges) {
+            selectedEdgeLineIndices.push_back(edge.first);
+            selectedEdgeLineIndices.push_back(edge.second);
+        }
+    }
 
     Vec3 translation = Vec3(0, 0, 0);
     Vec3 rotation = Vec3(0, 0, 0); // Pitch, Yaw, Roll in degrees
@@ -393,9 +405,12 @@ struct LowPolyMesh {
         quadCount = 0;
         triCount = 0;
         polyCount = 0;
+        polygonFaces.clear();
         wireframeLineIndices.clear();
         seamLineIndices.clear();
         cutSeams.clear();
+        selectedEdges.clear();
+        selectedEdgeLineIndices.clear();
         translation = Vec3(0, 0, 0);
         rotation = Vec3(0, 0, 0);
         scale = Vec3(1, 1, 1);
