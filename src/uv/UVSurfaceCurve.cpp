@@ -513,6 +513,7 @@ bool CurveManager::CutCurveIntoMeshTopology(const SurfaceCurve& curve, LowPolyMe
     size_t segCount = curve.isClosed ? count : (count - 1);
 
     std::map<std::pair<uint32_t, uint32_t>, uint32_t> edgeSplitMap;
+    std::vector<uint32_t> sliceVertices;
 
     for (size_t s = 0; s < segCount; ++s) {
         const Vec3& A = traj[s];
@@ -565,6 +566,7 @@ bool CurveManager::CutCurveIntoMeshTopology(const SurfaceCurve& curve, LowPolyMe
                     mesh.vertices.push_back(newVert);
                     edgeSplitMap[edgeKey] = newVIdx;
                 }
+                sliceVertices.push_back(newVIdx);
 
                 // Bisect triangle into two triangles: (v0, newVIdx, v2) and (newVIdx, v1, v2)
                 mesh.triangles[t].indices[0] = v0;
@@ -587,11 +589,13 @@ bool CurveManager::CutCurveIntoMeshTopology(const SurfaceCurve& curve, LowPolyMe
         }
     }
 
-    // Always ensure connectivity by snapping to nearest edges along contour
-    std::vector<std::pair<uint32_t, uint32_t>> snapEdges;
-    SnapCurveToMeshEdges(curve, mesh, snapEdges);
-    for (const auto& e : snapEdges) {
-        outNewSeamEdges.push_back(e);
+    // Connect sequential sliced vertices along the cut line to create continuous slice seams
+    for (size_t i = 0; i + 1 < sliceVertices.size(); ++i) {
+        if (sliceVertices[i] != sliceVertices[i + 1]) {
+            auto seam = MakeEdgeKey(sliceVertices[i], sliceVertices[i + 1]);
+            mesh.cutSeams.insert(seam);
+            outNewSeamEdges.push_back(seam);
+        }
     }
 
     UVCutter::GenerateSeamLineIndices(mesh);

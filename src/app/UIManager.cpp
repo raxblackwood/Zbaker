@@ -1441,28 +1441,33 @@ void UIManager::RenderViewportPanel() {
                         m_curveManager.AddPointToActive(hitPos, hitNormal, hitTriIdx);
                         m_curveManager.UpdateActiveSampledPath(m_lowPolyMesh, &worldMat, &viewProjMat, vpW, vpH);
 
-                        // Automatically contour and cut seams along curve trajectory
-                        if (activeCurve && activeCurve->points.size() >= 2) {
-                            std::vector<std::pair<uint32_t, uint32_t>> newSeams;
-                            CurveManager::SnapCurveToMeshEdges(*activeCurve, m_lowPolyMesh, newSeams);
-                            m_viewportRenderer.UpdateSeams(m_lowPolyMesh);
-                            m_viewportRenderer.showSeams = true;
-                            char msg[128];
-                            snprintf(msg, sizeof(msg), "Contoured curve across mesh: %zu total seam edges cut.", m_lowPolyMesh.cutSeams.size());
-                            m_uvStatusMessage = msg;
-                            m_logEntries.push_back(std::string("[Curve Cut] ") + msg);
-                        } else {
-                            char msg[128];
-                            snprintf(msg, sizeof(msg), "Placed curve point %zu on mesh surface.", activeCurve ? activeCurve->points.size() : 1);
-                            m_uvStatusMessage = msg;
-                        }
+                        char msg[128];
+                        snprintf(msg, sizeof(msg), "Placed curve point %zu on surface. Press Enter to slice mesh topology and start next cut.",
+                                 activeCurve ? activeCurve->points.size() : 1);
+                        m_uvStatusMessage = msg;
                     }
                 }
 
-                // Finish curve on Right Click or Enter
-                if (ImGui::IsMouseClicked(1) || ImGui::IsKeyPressed(ImGuiKey_Enter)) {
+                // Finish curve and slice mesh topology on Enter or Right Click
+                if (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsMouseClicked(1)) {
                     m_draggingPointIndex = -1;
                     m_curveManager.selectedPointIndex = -1;
+                    if (activeCurve && activeCurve->points.size() >= 2) {
+                        std::vector<std::pair<uint32_t, uint32_t>> seamEdges;
+                        CurveManager::CutCurveIntoMeshTopology(*activeCurve, m_lowPolyMesh, seamEdges);
+                        activeCurve->isBaked = true;
+                        m_viewportRenderer.SetLowPolyMesh(m_lowPolyMesh, m_settings.lowPolyScale);
+                        m_viewportRenderer.UpdateSeams(m_lowPolyMesh);
+                        m_viewportRenderer.showSeams = true;
+
+                        // Automatically finalize this curve and start a new fresh curve! Tool mode stays active!
+                        int newCurveIdx = m_curveManager.AddCurve();
+                        char msg[128];
+                        snprintf(msg, sizeof(msg), "Sliced mesh topology along curve (%zu slice edges). Ready for next cut.",
+                                 seamEdges.size());
+                        m_uvStatusMessage = msg;
+                        m_logEntries.push_back(std::string("[Curve Slice] ") + msg);
+                    }
                 }
             }
         }
@@ -2558,8 +2563,9 @@ void UIManager::CutActiveCurveIntoTopology() {
     m_viewportRenderer.SetLowPolyMesh(m_lowPolyMesh, m_settings.lowPolyScale);
     m_viewportRenderer.UpdateSeams(m_lowPolyMesh);
     m_viewportRenderer.showSeams = true;
+    m_curveManager.AddCurve();
     char msg[128];
-    snprintf(msg, sizeof(msg), "Cut %s into mesh topology (%zu new seam edges).", c->name.c_str(), seamEdges.size());
+    snprintf(msg, sizeof(msg), "Cut %s into mesh topology (%zu new seam edges). Ready for next curve.", c->name.c_str(), seamEdges.size());
     m_uvStatusMessage = msg;
     m_logEntries.push_back(std::string("[Curve Cut] ") + msg);
 }

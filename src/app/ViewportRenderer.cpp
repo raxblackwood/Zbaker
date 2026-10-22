@@ -818,7 +818,7 @@ void ViewportRenderer::HandleMouseInput(float deltaX, float deltaY, int buttonSt
 
         float panSpeed = m_cameraDistance * 0.0013f;
         DirectX::XMVECTOR offset = DirectX::XMVectorAdd(
-            DirectX::XMVectorScale(vRight, -deltaX * panSpeed),
+            DirectX::XMVectorScale(vRight, deltaX * panSpeed),
             DirectX::XMVectorScale(vCameraUp, deltaY * panSpeed)
         );
 
