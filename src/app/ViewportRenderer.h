@@ -40,6 +40,7 @@ public:
     bool UnprojectRay(float screenX, float screenY, DirectX::XMFLOAT3& outRayOrg, DirectX::XMFLOAT3& outRayDir) const;
     bool ProjectToScreen(const DirectX::XMFLOAT3& worldPos, float& outScreenX, float& outScreenY) const;
     DirectX::XMMATRIX GetLowPolyWorldMatrix() const;
+    DirectX::XMMATRIX GetViewProjectionMatrix() const;
 
     // Render 3D scene to offscreen texture
     void Render();

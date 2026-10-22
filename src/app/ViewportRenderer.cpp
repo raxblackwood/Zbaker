@@ -1250,6 +1250,32 @@ DirectX::XMMATRIX ViewportRenderer::GetLowPolyWorldMatrix() const {
     );
 }
 
+DirectX::XMMATRIX ViewportRenderer::GetViewProjectionMatrix() const {
+    float cosP = std::cos(m_cameraPitch);
+    float sinP = std::sin(m_cameraPitch);
+    float cosY = std::cos(m_cameraYaw);
+    float sinY = std::sin(m_cameraYaw);
+
+    DirectX::XMFLOAT3 eyePos = {
+        m_cameraTarget.x + m_cameraDistance * cosP * sinY,
+        m_cameraTarget.y + m_cameraDistance * sinP,
+        m_cameraTarget.z + m_cameraDistance * cosP * cosY
+    };
+
+    DirectX::XMVECTOR eye = DirectX::XMLoadFloat3(&eyePos);
+    DirectX::XMVECTOR target = DirectX::XMLoadFloat3(&m_cameraTarget);
+    DirectX::XMVECTOR up = DirectX::XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
+    DirectX::XMMATRIX view = DirectX::XMMatrixLookAtLH(eye, target, up);
+    float aspect = (m_vpHeight > 0) ? ((float)m_vpWidth / (float)m_vpHeight) : 1.0f;
+    DirectX::XMMATRIX proj = DirectX::XMMatrixPerspectiveFovLH(
+        DirectX::XMConvertToRadians(45.0f),
+        aspect,
+        0.05f,
+        10000.0f
+    );
+    return DirectX::XMMatrixMultiply(view, proj);
+}
+
 bool ViewportRenderer::UnprojectRay(float screenX, float screenY, DirectX::XMFLOAT3& outRayOrg, DirectX::XMFLOAT3& outRayDir) const {
     if (m_vpWidth <= 0 || m_vpHeight <= 0) return false;
 

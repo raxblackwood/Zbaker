@@ -1,6 +1,7 @@
 #pragma once
 
 #include "UVTypes.h"
+#include <DirectXMath.h>
 #include <vector>
 #include <set>
 #include <unordered_map>
@@ -25,11 +26,32 @@ public:
     // Interactively toggle a seam on an edge between vertex v0 and v1
     static void ToggleEdgeSeam(LowPolyMesh& mesh, uint32_t v0, uint32_t v1);
 
-    // Walks the topological edge loop across quad/polygon topology (Maya style double-click edge loop)
+    // Walks the topological edge loop connecting end-to-end through vertices (Maya style double-click loop)
     static std::vector<std::pair<uint32_t, uint32_t>> GetEdgeLoop(const LowPolyMesh& mesh, uint32_t v0, uint32_t v1);
 
     // Selects an edge loop and updates mesh.selectedEdges
     static void SelectEdgeLoop(LowPolyMesh& mesh, uint32_t v0, uint32_t v1, bool addToSelection = false);
+
+    // Walks parallel opposite edges across quad faces (Edge Ring)
+    static std::vector<std::pair<uint32_t, uint32_t>> GetEdgeRing(const LowPolyMesh& mesh, uint32_t v0, uint32_t v1);
+
+    // Selects an edge ring and updates mesh.selectedEdges
+    static void SelectEdgeRing(LowPolyMesh& mesh, uint32_t v0, uint32_t v1, bool addToSelection = false);
+
+    // Finds the shortest topological edge path connecting start edge to end edge (Maya Shift+Click shortest path)
+    static std::vector<std::pair<uint32_t, uint32_t>> GetShortestPath(const LowPolyMesh& mesh,
+                                                                      uint32_t startV0, uint32_t startV1,
+                                                                      uint32_t endV0, uint32_t endV1);
+
+    // Selects the shortest path of edges between two edges (Maya Shift+Click between edges)
+    static void SelectShortestPath(LowPolyMesh& mesh,
+                                   uint32_t startV0, uint32_t startV1,
+                                   uint32_t endV0, uint32_t endV1,
+                                   bool addToSelection = true);
+
+    // Projects vertex positions from camera view-projection matrix to UV coordinates [0, 1]
+    static void CameraProjectUVs(LowPolyMesh& mesh,
+                                 const DirectX::XMMATRIX& viewProjMatrix);
 
     // Cuts all currently selected edges into UV seams
     static void CutSelectedEdges(LowPolyMesh& mesh);

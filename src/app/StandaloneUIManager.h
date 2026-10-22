@@ -131,6 +131,8 @@ private:
     BakerUI::ShellState m_shellState;
 
     // UV Cutting & Packing State
+    std::pair<uint32_t, uint32_t> m_lastSelectedEdge = { UINT32_MAX, UINT32_MAX };
+    bool m_hasLastSelectedEdge = false;
     float m_seamAngleThreshold = 60.0f;
     PackSettings m_packSettings;
     PackStats m_packStats;

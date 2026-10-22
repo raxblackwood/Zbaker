@@ -254,6 +254,15 @@ std::vector<std::pair<uint32_t, uint32_t>> UVCutter::GetEdgeLoop(const LowPolyMe
     auto initialKey = MakeEdgeKey(g0, g1);
     loopResult.push_back(MakeEdgeKey(v0, v1));
 
+    // Map geometric vertex to original vertex representative & 3D position
+    std::vector<Vec3> geomPos(geomMap.size());
+    std::vector<uint32_t> geomToOrig(geomMap.size());
+    for (size_t i = 0; i < mesh.vertices.size(); ++i) {
+        uint32_t g = geomMap[i];
+        geomPos[g] = mesh.vertices[i].position;
+        geomToOrig[g] = static_cast<uint32_t>(i);
+    }
+
     // Build geometric polygons:
     struct PolyGeom {
         std::vector<uint32_t> geomVerts;
@@ -273,7 +282,193 @@ std::vector<std::pair<uint32_t, uint32_t>> UVCutter::GetEdgeLoop(const LowPolyMe
             polys.push_back(std::move(pg));
         }
     } else {
-        // Fallback: use triangles
+        polys.reserve(mesh.triangles.size());
+        for (const auto& tri : mesh.triangles) {
+            PolyGeom pg;
+            pg.origVerts = { tri.indices[0], tri.indices[1], tri.indices[2] };
+            pg.geomVerts = { geomMap[tri.indices[0]], geomMap[tri.indices[1]], geomMap[tri.indices[2]] };
+            polys.push_back(std::move(pg));
+        }
+    }
+
+    // Map geometric edge to incident polygons
+    struct EdgeUsage {
+        uint32_t polyIdx;
+        uint32_t edgeIdxInPoly;
+    };
+    std::map<std::pair<uint32_t, uint32_t>, std::vector<EdgeUsage>> edgeToPolys;
+    // Map geometric vertex to incident geometric edges (and orig vertex info)
+    std::map<uint32_t, std::vector<std::pair<uint32_t, std::pair<uint32_t, uint32_t>>>> vertexIncidentEdges;
+
+    for (uint32_t pIdx = 0; pIdx < static_cast<uint32_t>(polys.size()); ++pIdx) {
+        const auto& pg = polys[pIdx];
+        size_t n = pg.geomVerts.size();
+        for (size_t e = 0; e < n; ++e) {
+            uint32_t ga = pg.geomVerts[e];
+            uint32_t gb = pg.geomVerts[(e + 1) % n];
+            auto ek = MakeEdgeKey(ga, gb);
+            edgeToPolys[ek].push_back({ pIdx, static_cast<uint32_t>(e) });
+
+            uint32_t oa = pg.origVerts[e];
+            uint32_t ob = pg.origVerts[(e + 1) % n];
+            vertexIncidentEdges[ga].push_back({ gb, MakeEdgeKey(oa, ob) });
+            vertexIncidentEdges[gb].push_back({ ga, MakeEdgeKey(oa, ob) });
+        }
+    }
+
+    std::set<std::pair<uint32_t, uint32_t>> visitedGeomEdges;
+    visitedGeomEdges.insert(initialKey);
+
+    // Maya Edge Loop Walking:
+    // Walks end-to-end through vertices (collinear / opposite across vertex star)
+    // Dir 0: walk forward from g1 entering next vertices
+    // Dir 1: walk backward from g0 entering previous vertices
+    for (int dir = 0; dir < 2; ++dir) {
+        uint32_t prevV = (dir == 0) ? g0 : g1;
+        uint32_t currV = (dir == 0) ? g1 : g0;
+
+        while (true) {
+            Vec3 dirIn = (geomPos[currV] - geomPos[prevV]);
+            float lenIn = dirIn.Length();
+            if (lenIn < 1e-7f) break;
+            dirIn = dirIn * (1.0f / lenIn);
+
+            // Find all outgoing edges from currV
+            auto itEdges = vertexIncidentEdges.find(currV);
+            if (itEdges == vertexIncidentEdges.end() || itEdges->second.size() < 2) {
+                break; // Boundary reached
+            }
+
+            // In quad topology with regular valence-4 vertex:
+            // Look for topological opposite edge across adjacent quad faces
+            uint32_t bestNextV = currV;
+            std::pair<uint32_t, uint32_t> bestOrigEdge;
+            float maxDot = -1.0f;
+
+            // Check incident polygons to find quad-opposite continuation
+            auto inEdgeKey = MakeEdgeKey(prevV, currV);
+            auto itInPolys = edgeToPolys.find(inEdgeKey);
+            bool foundTopological = false;
+
+            if (itInPolys != edgeToPolys.end() && itInPolys->second.size() == 2) {
+                // Two quads share the incoming edge
+                uint32_t pA = itInPolys->second[0].polyIdx;
+                uint32_t pB = itInPolys->second[1].polyIdx;
+                if (polys[pA].geomVerts.size() == 4 && polys[pB].geomVerts.size() == 4) {
+                    // Find lateral vertex in quad A
+                    const auto& qA = polys[pA].geomVerts;
+                    uint32_t latA = currV;
+                    for (int k = 0; k < 4; ++k) {
+                        if (qA[k] == currV) {
+                            uint32_t n1 = qA[(k + 1) % 4];
+                            uint32_t n2 = qA[(k + 3) % 4];
+                            latA = (n1 == prevV) ? n2 : n1;
+                            break;
+                        }
+                    }
+
+                    // Find other quad sharing lateral edge (currV, latA)
+                    auto latKey = MakeEdgeKey(currV, latA);
+                    auto itLat = edgeToPolys.find(latKey);
+                    if (itLat != edgeToPolys.end() && itLat->second.size() == 2) {
+                        uint32_t pNext = (itLat->second[0].polyIdx == pA) ? itLat->second[1].polyIdx : itLat->second[0].polyIdx;
+                        if (polys[pNext].geomVerts.size() == 4) {
+                            const auto& qNext = polys[pNext].geomVerts;
+                            for (int k = 0; k < 4; ++k) {
+                                if (qNext[k] == currV) {
+                                    uint32_t n1 = qNext[(k + 1) % 4];
+                                    uint32_t n2 = qNext[(k + 3) % 4];
+                                    uint32_t cand = (n1 == latA) ? n2 : n1;
+                                    Vec3 dirOut = (geomPos[cand] - geomPos[currV]);
+                                    float lenOut = dirOut.Length();
+                                    if (lenOut > 1e-7f) {
+                                        float d = dirIn.Dot(dirOut * (1.0f / lenOut));
+                                        if (d > 0.35f) { // Collinear continuation
+                                            bestNextV = cand;
+                                            bestOrigEdge = MakeEdgeKey(geomToOrig[currV], geomToOrig[cand]);
+                                            foundTopological = true;
+                                        }
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Fallback: If not found via strict quad topology, select most collinear outgoing edge
+            if (!foundTopological) {
+                for (const auto& candidate : itEdges->second) {
+                    uint32_t nextV = candidate.first;
+                    if (nextV == prevV) continue;
+
+                    Vec3 dirOut = (geomPos[nextV] - geomPos[currV]);
+                    float lenOut = dirOut.Length();
+                    if (lenOut < 1e-7f) continue;
+                    float dotVal = dirIn.Dot(dirOut * (1.0f / lenOut));
+                    if (dotVal > maxDot && dotVal > 0.45f) { // Clear collinear direction
+                        maxDot = dotVal;
+                        bestNextV = nextV;
+                        bestOrigEdge = candidate.second;
+                    }
+                }
+            }
+
+            if (bestNextV == currV) {
+                // No valid continuation
+                break;
+            }
+
+            auto nextKey = MakeEdgeKey(currV, bestNextV);
+            if (visitedGeomEdges.find(nextKey) != visitedGeomEdges.end()) {
+                // Loop closed
+                break;
+            }
+            visitedGeomEdges.insert(nextKey);
+            loopResult.push_back(bestOrigEdge);
+
+            prevV = currV;
+            currV = bestNextV;
+        }
+    }
+
+    return loopResult;
+}
+
+std::vector<std::pair<uint32_t, uint32_t>> UVCutter::GetEdgeRing(const LowPolyMesh& mesh, uint32_t v0, uint32_t v1) {
+    std::vector<std::pair<uint32_t, uint32_t>> ringResult;
+    if (mesh.vertices.empty()) return ringResult;
+
+    auto geomMap = BuildGeomVertexMap(mesh);
+    if (v0 >= geomMap.size() || v1 >= geomMap.size()) return ringResult;
+
+    uint32_t g0 = geomMap[v0];
+    uint32_t g1 = geomMap[v1];
+    if (g0 == g1) return ringResult;
+
+    auto initialKey = MakeEdgeKey(g0, g1);
+    ringResult.push_back(MakeEdgeKey(v0, v1));
+
+    // Build geometric polygons:
+    struct PolyGeom {
+        std::vector<uint32_t> geomVerts;
+        std::vector<uint32_t> origVerts;
+    };
+    std::vector<PolyGeom> polys;
+
+    if (!mesh.polygonFaces.empty()) {
+        polys.reserve(mesh.polygonFaces.size());
+        for (const auto& face : mesh.polygonFaces) {
+            PolyGeom pg;
+            pg.origVerts = face;
+            pg.geomVerts.resize(face.size());
+            for (size_t i = 0; i < face.size(); ++i) {
+                pg.geomVerts[i] = geomMap[face[i]];
+            }
+            polys.push_back(std::move(pg));
+        }
+    } else {
         polys.reserve(mesh.triangles.size());
         for (const auto& tri : mesh.triangles) {
             PolyGeom pg;
@@ -299,12 +494,12 @@ std::vector<std::pair<uint32_t, uint32_t>> UVCutter::GetEdgeLoop(const LowPolyMe
     }
 
     auto startIt = edgeToPolys.find(initialKey);
-    if (startIt == edgeToPolys.end()) return loopResult;
+    if (startIt == edgeToPolys.end()) return ringResult;
 
     std::set<std::pair<uint32_t, uint32_t>> visitedGeomEdges;
     visitedGeomEdges.insert(initialKey);
 
-    // Walk in both face directions from starting edge
+    // Walk across quad faces (stepping to opposite parallel edge in quad)
     const auto& startUsages = startIt->second;
     for (size_t dir = 0; dir < startUsages.size() && dir < 2; ++dir) {
         uint32_t curPolyIdx = startUsages[dir].polyIdx;
@@ -314,30 +509,26 @@ std::vector<std::pair<uint32_t, uint32_t>> UVCutter::GetEdgeLoop(const LowPolyMe
             const auto& pg = polys[curPolyIdx];
             size_t n = pg.geomVerts.size();
             if (n < 4) {
-                // In non-quad (triangle or n-gon), stop loop propagation
                 break;
             }
 
-            // In quad (n == 4), opposite edge is (curEdgeIdx + 2) % 4
+            // In quad (n == 4), opposite parallel edge is (curEdgeIdx + 2) % 4
             uint32_t oppEdgeIdx = (curEdgeIdx + 2) % 4;
             uint32_t oppG0 = pg.geomVerts[oppEdgeIdx];
             uint32_t oppG1 = pg.geomVerts[(oppEdgeIdx + 1) % 4];
             auto oppKey = MakeEdgeKey(oppG0, oppG1);
 
             if (visitedGeomEdges.find(oppKey) != visitedGeomEdges.end()) {
-                // Loop closed or already visited
                 break;
             }
             visitedGeomEdges.insert(oppKey);
 
             uint32_t oppV0 = pg.origVerts[oppEdgeIdx];
             uint32_t oppV1 = pg.origVerts[(oppEdgeIdx + 1) % 4];
-            loopResult.push_back(MakeEdgeKey(oppV0, oppV1));
+            ringResult.push_back(MakeEdgeKey(oppV0, oppV1));
 
-            // Find the other polygon sharing this opposite edge
             auto itOpp = edgeToPolys.find(oppKey);
             if (itOpp == edgeToPolys.end() || itOpp->second.size() < 2) {
-                // Open boundary reached
                 break;
             }
 
@@ -349,7 +540,169 @@ std::vector<std::pair<uint32_t, uint32_t>> UVCutter::GetEdgeLoop(const LowPolyMe
         }
     }
 
-    return loopResult;
+    return ringResult;
+}
+
+void UVCutter::SelectEdgeRing(LowPolyMesh& mesh, uint32_t v0, uint32_t v1, bool addToSelection) {
+    if (!addToSelection) {
+        mesh.selectedEdges.clear();
+    }
+    auto ring = GetEdgeRing(mesh, v0, v1);
+    for (const auto& edge : ring) {
+        mesh.selectedEdges.insert(edge);
+    }
+    mesh.GenerateSelectedEdgeLines();
+}
+
+std::vector<std::pair<uint32_t, uint32_t>> UVCutter::GetShortestPath(const LowPolyMesh& mesh,
+                                                                    uint32_t startV0, uint32_t startV1,
+                                                                    uint32_t endV0, uint32_t endV1) {
+    std::vector<std::pair<uint32_t, uint32_t>> pathResult;
+    if (mesh.vertices.empty()) return pathResult;
+
+    auto geomMap = BuildGeomVertexMap(mesh);
+    if (startV0 >= geomMap.size() || startV1 >= geomMap.size() ||
+        endV0 >= geomMap.size() || endV1 >= geomMap.size()) {
+        return pathResult;
+    }
+
+    uint32_t gStart0 = geomMap[startV0];
+    uint32_t gStart1 = geomMap[startV1];
+    uint32_t gEnd0 = geomMap[endV0];
+    uint32_t gEnd1 = geomMap[endV1];
+
+    auto startKey = MakeEdgeKey(startV0, startV1);
+    auto endKey = MakeEdgeKey(endV0, endV1);
+    if (MakeEdgeKey(gStart0, gStart1) == MakeEdgeKey(gEnd0, gEnd1)) {
+        pathResult.push_back(startKey);
+        return pathResult;
+    }
+
+    // Build adjacency graph of geometric vertices
+    struct EdgeInfo {
+        uint32_t toGeom;
+        float weight;
+        std::pair<uint32_t, uint32_t> origEdge;
+    };
+    std::unordered_map<uint32_t, std::vector<EdgeInfo>> adj;
+
+    auto AddAdjEdge = [&](uint32_t oa, uint32_t ob) {
+        uint32_t ga = geomMap[oa];
+        uint32_t gb = geomMap[ob];
+        if (ga == gb) return;
+        float dist = (mesh.vertices[oa].position - mesh.vertices[ob].position).Length();
+        auto origKey = MakeEdgeKey(oa, ob);
+        adj[ga].push_back({ gb, dist, origKey });
+        adj[gb].push_back({ ga, dist, origKey });
+    };
+
+    if (!mesh.polygonFaces.empty()) {
+        for (const auto& face : mesh.polygonFaces) {
+            size_t n = face.size();
+            for (size_t i = 0; i < n; ++i) {
+                AddAdjEdge(face[i], face[(i + 1) % n]);
+            }
+        }
+    } else {
+        for (const auto& tri : mesh.triangles) {
+            AddAdjEdge(tri.indices[0], tri.indices[1]);
+            AddAdjEdge(tri.indices[1], tri.indices[2]);
+            AddAdjEdge(tri.indices[2], tri.indices[0]);
+        }
+    }
+
+    // Dijkstra shortest path from {gStart0, gStart1} to {gEnd0, gEnd1}
+    struct NodeDist {
+        float dist;
+        uint32_t node;
+        bool operator>(const NodeDist& o) const { return dist > o.dist; }
+    };
+    std::priority_queue<NodeDist, std::vector<NodeDist>, std::greater<NodeDist>> pq;
+    std::unordered_map<uint32_t, float> distMap;
+    std::unordered_map<uint32_t, std::pair<uint32_t, std::pair<uint32_t, uint32_t>>> parentMap; // node -> (parentGeom, origEdge)
+
+    distMap[gStart0] = 0.0f;
+    distMap[gStart1] = 0.0f;
+    pq.push({ 0.0f, gStart0 });
+    pq.push({ 0.0f, gStart1 });
+
+    uint32_t reachedTarget = UINT32_MAX;
+
+    while (!pq.empty()) {
+        auto top = pq.top();
+        pq.pop();
+        uint32_t u = top.node;
+        float d = top.dist;
+
+        if (d > distMap[u]) continue;
+
+        if (u == gEnd0 || u == gEnd1) {
+            reachedTarget = u;
+            break;
+        }
+
+        auto it = adj.find(u);
+        if (it == adj.end()) continue;
+
+        for (const auto& edge : it->second) {
+            uint32_t v = edge.toGeom;
+            float newDist = d + edge.weight;
+            auto itDist = distMap.find(v);
+            if (itDist == distMap.end() || newDist < itDist->second) {
+                distMap[v] = newDist;
+                parentMap[v] = { u, edge.origEdge };
+                pq.push({ newDist, v });
+            }
+        }
+    }
+
+    if (reachedTarget != UINT32_MAX) {
+        // Backtrack path
+        uint32_t curr = reachedTarget;
+        while (curr != gStart0 && curr != gStart1) {
+            auto itP = parentMap.find(curr);
+            if (itP == parentMap.end()) break;
+            pathResult.push_back(itP->second.second);
+            curr = itP->second.first;
+        }
+        pathResult.push_back(startKey);
+        pathResult.push_back(endKey);
+    }
+
+    return pathResult;
+}
+
+void UVCutter::SelectShortestPath(LowPolyMesh& mesh,
+                                  uint32_t startV0, uint32_t startV1,
+                                  uint32_t endV0, uint32_t endV1,
+                                  bool addToSelection) {
+    if (!addToSelection) {
+        mesh.selectedEdges.clear();
+    }
+    auto path = GetShortestPath(mesh, startV0, startV1, endV0, endV1);
+    for (const auto& edge : path) {
+        mesh.selectedEdges.insert(edge);
+    }
+    mesh.GenerateSelectedEdgeLines();
+}
+
+void UVCutter::CameraProjectUVs(LowPolyMesh& mesh, const DirectX::XMMATRIX& viewProjMatrix) {
+    if (mesh.vertices.empty()) return;
+
+    for (size_t i = 0; i < mesh.vertices.size(); ++i) {
+        const Vec3& p = mesh.vertices[i].position;
+        DirectX::XMVECTOR pW = DirectX::XMVectorSet(p.x, p.y, p.z, 1.0f);
+        DirectX::XMVECTOR pClip = DirectX::XMVector3TransformCoord(pW, viewProjMatrix);
+
+        float ndcX = DirectX::XMVectorGetX(pClip);
+        float ndcY = DirectX::XMVectorGetY(pClip);
+
+        float u = std::clamp((ndcX + 1.0f) * 0.5f, 0.0f, 1.0f);
+        float v = std::clamp((ndcY + 1.0f) * 0.5f, 0.0f, 1.0f);
+
+        mesh.vertices[i].uv.u = u;
+        mesh.vertices[i].uv.v = v;
+    }
 }
 
 void UVCutter::SelectEdgeLoop(LowPolyMesh& mesh, uint32_t v0, uint32_t v1, bool addToSelection) {

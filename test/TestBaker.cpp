@@ -609,9 +609,9 @@ int main(int argc, char** argv) {
         std::cout << "  Wireframe Deduplication & Blender Studio White VERIFIED!" << std::endl;
     }
 
-    // 11. Test Maya Edge Loop Selection, Cut, and Sew
+    // 11. Test Maya Edge Loop Selection, Edge Ring, Shortest Path, Cut, Sew, and Camera Projection
     {
-        std::cout << "[Test 11/11] Testing Maya Edge Loop Selection, Cut, and Sew..." << std::endl;
+        std::cout << "[Test 11/11] Testing Maya Edge Loop Selection, Ring, Shortest Path, Cut, and Sew..." << std::endl;
         std::string testObjPath = "test_quad_grid.obj";
         CreateTestQuadGridOBJ(testObjPath);
         LowPolyMesh wfMesh;
@@ -620,33 +620,59 @@ int main(int argc, char** argv) {
         assert(loaded);
         assert(!wfMesh.polygonFaces.empty());
 
-        // 1. Find edge (0, 1) in quad 0: (0,0) to (1,0)
+        // 1. Collinear Edge Loop: edge (0, 1) in quad 0 -> collinear across horizontal grid row
         uint32_t v0 = wfMesh.polygonFaces[0][0];
-        uint32_t v1 = wfMesh.polygonFaces[0][1]; // horizontal edge in 3x2 quad grid
+        uint32_t v1 = wfMesh.polygonFaces[0][1]; // horizontal bottom edge
         auto loop = UVCutter::GetEdgeLoop(wfMesh, v0, v1);
         assert(loop.size() >= 3);
-        std::cout << "  Maya Edge Loop Walking: starting edge walked loop across quads, found "
+        std::cout << "  Maya Edge Loop: walked collinear loop across vertices, found "
                   << loop.size() << " loop edges." << std::endl;
 
-        // 2. Select Edge Loop
+        // Select Edge Loop
         UVCutter::SelectEdgeLoop(wfMesh, v0, v1);
         assert(wfMesh.selectedEdges.size() == loop.size());
         assert(wfMesh.selectedEdgeLineIndices.size() == wfMesh.selectedEdges.size() * 2);
 
-        // 3. Cut Selected Edges
+        // 2. Parallel Edge Ring: stepping across opposite faces
+        auto ring = UVCutter::GetEdgeRing(wfMesh, v0, v1);
+        assert(ring.size() >= 2);
+        std::cout << "  Maya Edge Ring: walked parallel opposite edges across quad faces, found "
+                  << ring.size() << " ring edges." << std::endl;
+        UVCutter::SelectEdgeRing(wfMesh, v0, v1, false);
+        assert(wfMesh.selectedEdges.size() == ring.size());
+
+        // 3. Shortest Path: Dijkstra topological edge path between edge (0, 1) and edge (2, 3)
+        auto path = UVCutter::GetShortestPath(wfMesh, v0, v1, 2, 3);
+        assert(path.size() >= 2);
+        std::cout << "  Maya Shortest Path: found Dijkstra topological path of "
+                  << path.size() << " edges between distant edges." << std::endl;
+        UVCutter::SelectShortestPath(wfMesh, v0, v1, 2, 3, false);
+        assert(wfMesh.selectedEdges.size() == path.size());
+
+        // 4. Cut Selected Edges
         size_t selCount = wfMesh.selectedEdges.size();
         UVCutter::CutSelectedEdges(wfMesh);
         assert(wfMesh.cutSeams.size() >= selCount);
         assert(!wfMesh.seamLineIndices.empty());
         std::cout << "  Maya Cut: turned " << selCount << " selected edges into UV cut seams." << std::endl;
 
-        // 4. Sew Selected Edges
+        // 5. Sew Selected Edges
         UVCutter::SewSelectedEdges(wfMesh);
         assert(wfMesh.cutSeams.empty());
         assert(wfMesh.seamLineIndices.empty());
         std::cout << "  Maya Sew: stitched and removed all seams from selected edges." << std::endl;
 
-        std::cout << "  Maya Edge Loop Selection, Cut, and Sew VERIFIED!" << std::endl;
+        // 6. Camera Projection
+        DirectX::XMMATRIX idProj = DirectX::XMMatrixIdentity();
+        UVCutter::CameraProjectUVs(wfMesh, idProj);
+        assert(!wfMesh.vertices.empty());
+        for (const auto& v : wfMesh.vertices) {
+            assert(v.uv.u >= 0.0f && v.uv.u <= 1.0f);
+            assert(v.uv.v >= 0.0f && v.uv.v <= 1.0f);
+        }
+        std::cout << "  Camera Projection: mapped all vertices to [0, 1] normalized UV bounds." << std::endl;
+
+        std::cout << "  Maya Edge Loop, Ring, Shortest Path, Cut, Sew, and Camera Proj VERIFIED!" << std::endl;
     }
 
     std::cout << "=== All Advanced Architecture Plan Tests PASSED! ===" << std::endl;
