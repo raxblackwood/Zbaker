@@ -867,9 +867,8 @@ void StandaloneUIManager::RenderViewportPanel() {
                 // If an edge is found within picking radius (28 pixels on screen)
                 if (bestV0 >= 0 && bestScreenDist <= 28.0f) {
                     ImDrawList* drawList = ImGui::GetWindowDrawList();
-                    // Neon cyan glowing hover line and cursor indicator
+                    // Neon cyan glowing hover line indicator (clean standard cursor)
                     drawList->AddLine(bestScreenA, bestScreenB, IM_COL32(0, 255, 255, 255), 3.5f);
-                    drawList->AddCircle(io.MousePos, 6.0f, IM_COL32(0, 255, 255, 240), 16, 2.0f);
 
                     // Maya Double-Click: Select Edge Loop (Collinear quad edge loop)
                     if (io.MouseDoubleClicked[0]) {
@@ -1147,7 +1146,6 @@ void StandaloneUIManager::RenderViewportPanel() {
                                     drawList->AddLine(ImVec2(viewX0 + s0X, viewY0 + s0Y), ImVec2(viewX0 + s1X, viewY0 + s1Y), IM_COL32(255, 220, 60, 240), 2.5f);
                                 }
                             }
-                            drawList->AddCircle(io.MousePos, 6.0f, IM_COL32(255, 220, 60, 255), 16, 2.0f);
                         }
                     }
                 }
@@ -1511,7 +1509,6 @@ void StandaloneUIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& s
 
         if (hoverV0 >= 0) {
             drawList->AddLine(hP0, hP1, IM_COL32(0, 255, 255, 255), 3.5f);
-            drawList->AddCircle(io.MousePos, 6.0f, IM_COL32(0, 255, 255, 230), 16, 2.0f);
 
             if (io.MouseDoubleClicked[0]) {
                 UVCutter::SelectEdgeLoop(m_lowPolyMesh, static_cast<uint32_t>(hoverV0), static_cast<uint32_t>(hoverV1), io.KeyShift);

@@ -478,7 +478,7 @@ bool CurveManager::CutCurveIntoMeshTopology(const SurfaceCurve& curve, LowPolyMe
 
     if (traj.size() < 2) return false;
 
-    auto SegmentIntersect = [](const Vec3& A, const Vec3& B, const Vec3& C, const Vec3& D, Vec3& outPt, float& outT) -> bool {
+    auto SegmentIntersect = [](const Vec3& A, const Vec3& B, const Vec3& C, const Vec3& D, Vec3& outPt, float& outT, float& outSc) -> bool {
         Vec3 u = B - A;
         Vec3 v = D - C;
         Vec3 w = A - C;
@@ -503,6 +503,7 @@ bool CurveManager::CutCurveIntoMeshTopology(const SurfaceCurve& curve, LowPolyMe
             if ((pA - pC).Length() < 0.03f * (v.Length() + 0.1f)) {
                 outPt = pC;
                 outT = tc;
+                outSc = sc;
                 return true;
             }
         }
@@ -513,11 +514,13 @@ bool CurveManager::CutCurveIntoMeshTopology(const SurfaceCurve& curve, LowPolyMe
     size_t segCount = curve.isClosed ? count : (count - 1);
 
     std::map<std::pair<uint32_t, uint32_t>, uint32_t> edgeSplitMap;
-    std::vector<uint32_t> sliceVertices;
+    std::vector<uint32_t> orderedSliceVertices;
 
     for (size_t s = 0; s < segCount; ++s) {
         const Vec3& A = traj[s];
         const Vec3& B = traj[(s + 1) % count];
+
+        std::vector<std::pair<float, uint32_t>> segIntersections;
 
         size_t initialTriCount = mesh.triangles.size();
         for (size_t t = 0; t < initialTriCount; ++t) {
@@ -525,6 +528,7 @@ bool CurveManager::CutCurveIntoMeshTopology(const SurfaceCurve& curve, LowPolyMe
             int splitEdge = -1;
             Vec3 interPos;
             float interT = 0.0f;
+            float interSc = 0.0f;
 
             for (int e = 0; e < 3; ++e) {
                 uint32_t v0 = tri.indices[e];
@@ -534,11 +538,13 @@ bool CurveManager::CutCurveIntoMeshTopology(const SurfaceCurve& curve, LowPolyMe
 
                 Vec3 hitPt;
                 float tVal = 0.0f;
-                if (SegmentIntersect(A, B, C, D, hitPt, tVal)) {
+                float scVal = 0.0f;
+                if (SegmentIntersect(A, B, C, D, hitPt, tVal, scVal)) {
                     if (tVal > 0.05f && tVal < 0.95f) {
                         splitEdge = e;
                         interPos = hitPt;
                         interT = tVal;
+                        interSc = scVal;
                         break;
                     }
                 }
@@ -565,8 +571,22 @@ bool CurveManager::CutCurveIntoMeshTopology(const SurfaceCurve& curve, LowPolyMe
                     newVIdx = static_cast<uint32_t>(mesh.vertices.size());
                     mesh.vertices.push_back(newVert);
                     edgeSplitMap[edgeKey] = newVIdx;
+
+                    // Update clean perimeter wireframe edges: split (v0, v1) into (v0, newVIdx) and (newVIdx, v1)
+                    for (size_t wi = 0; wi + 1 < mesh.wireframeLineIndices.size(); wi += 2) {
+                        uint32_t wa = mesh.wireframeLineIndices[wi];
+                        uint32_t wb = mesh.wireframeLineIndices[wi + 1];
+                        if ((wa == v0 && wb == v1) || (wa == v1 && wb == v0)) {
+                            mesh.wireframeLineIndices[wi] = wa;
+                            mesh.wireframeLineIndices[wi + 1] = newVIdx;
+                            mesh.wireframeLineIndices.push_back(newVIdx);
+                            mesh.wireframeLineIndices.push_back(wb);
+                            break;
+                        }
+                    }
                 }
-                sliceVertices.push_back(newVIdx);
+
+                segIntersections.emplace_back(interSc, newVIdx);
 
                 // Bisect triangle into two triangles: (v0, newVIdx, v2) and (newVIdx, v1, v2)
                 mesh.triangles[t].indices[0] = v0;
@@ -582,19 +602,32 @@ bool CurveManager::CutCurveIntoMeshTopology(const SurfaceCurve& curve, LowPolyMe
                 newTri.groupMask = tri.groupMask;
                 mesh.triangles.push_back(newTri);
 
-                auto seamA = MakeEdgeKey(v2, newVIdx);
-                mesh.cutSeams.insert(seamA);
-                outNewSeamEdges.push_back(seamA);
+                // NOTE: We deliberately do NOT add (v2, newVIdx) to cutSeams.
+                // The seam must strictly follow the sliced curve path and not sprout side triangles.
+            }
+        }
+
+        // Sort intersections along the curve segment by parameter sc
+        std::sort(segIntersections.begin(), segIntersections.end(),
+            [](const auto& a, const auto& b) { return a.first < b.first; });
+
+        for (const auto& item : segIntersections) {
+            if (orderedSliceVertices.empty() || orderedSliceVertices.back() != item.second) {
+                orderedSliceVertices.push_back(item.second);
             }
         }
     }
 
-    // Connect sequential sliced vertices along the cut line to create continuous slice seams
-    for (size_t i = 0; i + 1 < sliceVertices.size(); ++i) {
-        if (sliceVertices[i] != sliceVertices[i + 1]) {
-            auto seam = MakeEdgeKey(sliceVertices[i], sliceVertices[i + 1]);
+    // Connect sequential sliced vertices strictly along the cut line to create a single continuous seam
+    for (size_t i = 0; i + 1 < orderedSliceVertices.size(); ++i) {
+        if (orderedSliceVertices[i] != orderedSliceVertices[i + 1]) {
+            auto seam = MakeEdgeKey(orderedSliceVertices[i], orderedSliceVertices[i + 1]);
             mesh.cutSeams.insert(seam);
             outNewSeamEdges.push_back(seam);
+
+            // Add the slice line itself to wireframeLineIndices so the cut edge is clearly visible in wireframe
+            mesh.wireframeLineIndices.push_back(orderedSliceVertices[i]);
+            mesh.wireframeLineIndices.push_back(orderedSliceVertices[i + 1]);
         }
     }
 
