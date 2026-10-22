@@ -832,6 +832,143 @@ void StandaloneUIManager::RenderViewportPanel() {
         }
     }
 
+    // Interactive 3D Surface Curve Drawing and Point Movement
+    if (m_toolMode == ToolMode::DrawCurve && !io.KeyAlt && m_hasLowPoly && (m_viewportMode == ViewportMode::View3D || m_viewportMode == ViewportMode::SplitBoth)) {
+        float maxActiveW = (m_viewportMode == ViewportMode::SplitBoth) ? avail.x * 0.5f : avail.x;
+        float relX = io.MousePos.x - screenPos.x;
+        float relY = io.MousePos.y - screenPos.y;
+
+        if (relX >= 0.0f && relX <= maxActiveW && relY >= 0.0f && relY <= avail.y) {
+            DirectX::XMFLOAT3 rOrgW, rDirW;
+            if (m_viewportRenderer.UnprojectRay(relX, relY, rOrgW, rDirW)) {
+                DirectX::XMMATRIX invWorld = DirectX::XMMatrixInverse(nullptr, m_viewportRenderer.GetLowPolyWorldMatrix());
+                DirectX::XMVECTOR vOrg = DirectX::XMVector3TransformCoord(DirectX::XMLoadFloat3(&rOrgW), invWorld);
+                DirectX::XMVECTOR vDir = DirectX::XMVector3Normalize(DirectX::XMVector3TransformNormal(DirectX::XMLoadFloat3(&rDirW), invWorld));
+                Vec3 localOrg(DirectX::XMVectorGetX(vOrg), DirectX::XMVectorGetY(vOrg), DirectX::XMVectorGetZ(vOrg));
+                Vec3 localDir(DirectX::XMVectorGetX(vDir), DirectX::XMVectorGetY(vDir), DirectX::XMVectorGetZ(vDir));
+
+                float hitT = 0.0f;
+                Vec3 hitPos, hitNormal;
+                int hitTriIdx = -1;
+                bool hit = m_lowPolyMesh.Raycast(localOrg, localDir, hitT, hitPos, hitNormal, hitTriIdx);
+
+                SurfaceCurve* activeCurve = m_curveManager.GetActiveCurve();
+
+                // 1. Detect if mouse cursor is hovering over any existing point handle
+                int hoveredPt = -1;
+                if (activeCurve) {
+                    for (size_t p = 0; p < activeCurve->points.size(); ++p) {
+                        float sX, sY;
+                        if (m_viewportRenderer.ProjectToScreen(DirectX::XMFLOAT3(activeCurve->points[p].position.x, activeCurve->points[p].position.y, activeCurve->points[p].position.z), sX, sY)) {
+                            float dScreen = std::hypot(io.MousePos.x - (screenPos.x + sX), io.MousePos.y - (screenPos.y + sY));
+                            if (dScreen <= 16.0f) {
+                                hoveredPt = static_cast<int>(p);
+                                break;
+                            }
+                        }
+                    }
+                }
+                m_curveManager.hoveredPointIndex = hoveredPt;
+
+                // 2. Handle Dragging existing point
+                if (m_draggingPointIndex >= 0 && io.MouseDown[0]) {
+                    if (hit && activeCurve) {
+                        m_curveManager.MoveActivePoint(m_draggingPointIndex, hitPos, hitNormal, hitTriIdx);
+                        m_curveManager.UpdateActiveSampledPath(m_lowPolyMesh);
+                    }
+                } else if (io.MouseReleased[0]) {
+                    m_draggingPointIndex = -1;
+                }
+
+                // 3. Handle Click to Grab or Add Point
+                if (ImGui::IsMouseClicked(0)) {
+                    if (hoveredPt >= 0) {
+                        m_draggingPointIndex = hoveredPt;
+                        m_curveManager.selectedPointIndex = hoveredPt;
+                    } else if (hit) {
+                        m_curveManager.AddPointToActive(hitPos, hitNormal, hitTriIdx);
+                        m_curveManager.UpdateActiveSampledPath(m_lowPolyMesh);
+                        char msg[128];
+                        snprintf(msg, sizeof(msg), "Placed curve point %zu on mesh surface.", activeCurve ? activeCurve->points.size() : 1);
+                        m_uvStatusMessage = msg;
+                    }
+                }
+
+                // Finish curve on Right Click or Enter
+                if (ImGui::IsMouseClicked(1) || ImGui::IsKeyPressed(ImGuiKey_Enter)) {
+                    m_draggingPointIndex = -1;
+                    m_curveManager.selectedPointIndex = -1;
+                }
+            }
+        }
+    }
+
+    // Render 3D Surface Curves on Viewport
+    if (m_hasLowPoly && (m_viewportMode == ViewportMode::View3D || m_viewportMode == ViewportMode::SplitBoth)) {
+        ImDrawList* drawList = ImGui::GetWindowDrawList();
+        float viewX0 = screenPos.x;
+        float viewY0 = screenPos.y;
+
+        for (size_t cIdx = 0; cIdx < m_curveManager.curves.size(); ++cIdx) {
+            const auto& curve = m_curveManager.curves[cIdx];
+            if (curve.points.empty()) continue;
+
+            bool isActive = (static_cast<int>(cIdx) == m_curveManager.activeCurveIndex);
+            ImU32 curveColor = isActive ? IM_COL32(255, 204, 34, 250) : IM_COL32(140, 210, 255, 200);
+            float thickness = isActive ? 2.5f : 1.8f;
+
+            // Draw line segments between control points
+            size_t ptCount = curve.points.size();
+            size_t segCount = curve.isClosed ? ptCount : (ptCount - 1);
+
+            for (size_t i = 0; i < segCount; ++i) {
+                const Vec3& p0 = curve.points[i].position;
+                const Vec3& p1 = curve.points[(i + 1) % ptCount].position;
+                float s0X, s0Y, s1X, s1Y;
+                if (m_viewportRenderer.ProjectToScreen(DirectX::XMFLOAT3(p0.x, p0.y, p0.z), s0X, s0Y) &&
+                    m_viewportRenderer.ProjectToScreen(DirectX::XMFLOAT3(p1.x, p1.y, p1.z), s1X, s1Y)) {
+                    drawList->AddLine(ImVec2(viewX0 + s0X, viewY0 + s0Y), ImVec2(viewX0 + s1X, viewY0 + s1Y), curveColor, thickness);
+                }
+            }
+
+            // Draw control point handles
+            for (size_t p = 0; p < ptCount; ++p) {
+                const Vec3& pt = curve.points[p].position;
+                float sX, sY;
+                if (m_viewportRenderer.ProjectToScreen(DirectX::XMFLOAT3(pt.x, pt.y, pt.z), sX, sY)) {
+                    ImVec2 scrP(viewX0 + sX, viewY0 + sY);
+                    bool isSelected = isActive && (m_curveManager.selectedPointIndex == static_cast<int>(p) || m_draggingPointIndex == static_cast<int>(p));
+                    bool isHovered = isActive && (m_curveManager.hoveredPointIndex == static_cast<int>(p));
+
+                    if (isSelected || isHovered) {
+                        drawList->AddCircle(scrP, 9.0f, IM_COL32(255, 120, 0, 255), 18, 2.5f);
+                    }
+                    drawList->AddCircleFilled(scrP, 5.0f, isSelected ? IM_COL32(255, 220, 50, 255) : IM_COL32(255, 255, 255, 255));
+                    drawList->AddCircle(scrP, 5.0f, IM_COL32(20, 20, 20, 240), 16, 1.2f);
+
+                    char pLabel[16];
+                    snprintf(pLabel, sizeof(pLabel), "P%zu", p);
+                    drawList->AddText(ImVec2(scrP.x + 7.0f, scrP.y - 14.0f), isSelected ? IM_COL32(255, 220, 50, 255) : IM_COL32(220, 220, 220, 220), pLabel);
+                }
+            }
+
+            // If in DrawCurve mode and curve is active, draw rubber-band preview to cursor
+            if (isActive && m_toolMode == ToolMode::DrawCurve && m_draggingPointIndex < 0 && !curve.points.empty()) {
+                const Vec3& lastP = curve.points.back().position;
+                float sLastX, sLastY;
+                if (m_viewportRenderer.ProjectToScreen(DirectX::XMFLOAT3(lastP.x, lastP.y, lastP.z), sLastX, sLastY)) {
+                    float relX = io.MousePos.x - screenPos.x;
+                    float relY = io.MousePos.y - screenPos.y;
+                    float maxActiveW = (m_viewportMode == ViewportMode::SplitBoth) ? avail.x * 0.5f : avail.x;
+                    if (relX >= 0.0f && relX <= maxActiveW && relY >= 0.0f && relY <= avail.y) {
+                        drawList->AddLine(ImVec2(viewX0 + sLastX, viewY0 + sLastY), io.MousePos, IM_COL32(255, 220, 60, 180), 1.8f);
+                        drawList->AddCircle(io.MousePos, 6.0f, IM_COL32(255, 220, 60, 220), 16, 1.5f);
+                    }
+                }
+            }
+        }
+    }
+
     // Viewport Mode overlay buttons (Top Left)
     ImGui::SetCursorScreenPos(ImVec2(screenPos.x + 12.0f, screenPos.y + 12.0f));
     ImGui::BeginGroup();
@@ -898,6 +1035,14 @@ void StandaloneUIManager::RenderViewportPanel() {
                 m_viewportRenderer.showSeams = true;
             }
         }
+        ImGui::SameLine();
+        bool isDrawCurve = (m_toolMode == ToolMode::DrawCurve);
+        if (BakerUI::ToggleChip("Curve Cut", &isDrawCurve)) {
+            m_toolMode = isDrawCurve ? ToolMode::DrawCurve : ToolMode::Navigate;
+            if (m_toolMode == ToolMode::DrawCurve) {
+                m_viewportRenderer.showSeams = true;
+            }
+        }
 
         ImGui::SameLine();
         ImGui::Dummy(ImVec2(16.0f, 0.0f));
@@ -919,10 +1064,36 @@ void StandaloneUIManager::RenderViewportPanel() {
         ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
         ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.14f, 0.15f, 0.18f, 0.94f));
         ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.30f, 0.32f, 0.38f, 0.85f));
-        float barW = (std::min)(580.0f, avail.x - 24.0f);
+        float barW = (std::min)(680.0f, avail.x - 24.0f);
         ImGui::BeginChild("##brush_bar", ImVec2(barW, 36.0f), true, ImGuiWindowFlags_NoScrollbar);
         {
-            if (m_toolMode == ToolMode::CutSeam) {
+            if (m_toolMode == ToolMode::DrawCurve) {
+                ImGui::AlignTextToFramePadding();
+                ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.1f, 1.0f), "CURVE CUT TOOL");
+                ImGui::SameLine();
+                SurfaceCurve* c = m_curveManager.GetActiveCurve();
+                ImGui::TextDisabled("%s (%zu pts)", c ? c->name.c_str() : "Curve", c ? c->points.size() : 0);
+                ImGui::SameLine();
+                if (ImGui::Button("Snap Seams")) {
+                    SnapActiveCurveToSeams();
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Cut Topology")) {
+                    CutActiveCurveIntoTopology();
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("+ New")) {
+                    m_curveManager.AddCurve();
+                }
+                ImGui::SameLine();
+                if (c) {
+                    ImGui::Checkbox("Loop", &c->isClosed);
+                    ImGui::SameLine();
+                }
+                if (ImGui::Button("Clear")) {
+                    ClearActiveCurve();
+                }
+            } else if (m_toolMode == ToolMode::CutSeam) {
                 ImGui::AlignTextToFramePadding();
                 ImGui::TextColored(ImVec4(0.0f, 0.95f, 1.0f, 1.0f), "SEAM CUTTER");
                 ImGui::SameLine();
@@ -1573,6 +1744,82 @@ void StandaloneUIManager::ExportUnwrappedOBJ() {
     }
 }
 
+void StandaloneUIManager::SnapActiveCurveToSeams() {
+    if (!m_hasLowPoly) {
+        m_uvStatusMessage = "Please load a low-poly mesh first.";
+        return;
+    }
+    SurfaceCurve* c = m_curveManager.GetActiveCurve();
+    if (!c || c->points.size() < 2) {
+        m_uvStatusMessage = "Active curve needs at least 2 points.";
+        return;
+    }
+    std::vector<std::pair<uint32_t, uint32_t>> seamEdges;
+    CurveManager::SnapCurveToMeshEdges(*c, m_lowPolyMesh, seamEdges);
+    c->isBaked = true;
+    m_viewportRenderer.UpdateSeams(m_lowPolyMesh);
+    m_viewportRenderer.showSeams = true;
+    char msg[128];
+    snprintf(msg, sizeof(msg), "Snapped %s to %zu seam edges on mesh.", c->name.c_str(), seamEdges.size());
+    m_uvStatusMessage = msg;
+    m_logEntries.push_back(std::string("[Curve Cut] ") + msg);
+}
+
+void StandaloneUIManager::CutActiveCurveIntoTopology() {
+    if (!m_hasLowPoly) {
+        m_uvStatusMessage = "Please load a low-poly mesh first.";
+        return;
+    }
+    SurfaceCurve* c = m_curveManager.GetActiveCurve();
+    if (!c || c->points.size() < 2) {
+        m_uvStatusMessage = "Active curve needs at least 2 points.";
+        return;
+    }
+    std::vector<std::pair<uint32_t, uint32_t>> seamEdges;
+    CurveManager::CutCurveIntoMeshTopology(*c, m_lowPolyMesh, seamEdges);
+    c->isBaked = true;
+    m_viewportRenderer.SetLowPolyMesh(m_lowPolyMesh, m_settings.lowPolyScale);
+    m_viewportRenderer.UpdateSeams(m_lowPolyMesh);
+    m_viewportRenderer.showSeams = true;
+    char msg[128];
+    snprintf(msg, sizeof(msg), "Cut %s into mesh topology (%zu new seam edges).", c->name.c_str(), seamEdges.size());
+    m_uvStatusMessage = msg;
+    m_logEntries.push_back(std::string("[Curve Cut] ") + msg);
+}
+
+void StandaloneUIManager::BakeAllCurvesToSeams(bool cutIntoTopology) {
+    if (!m_hasLowPoly) {
+        m_uvStatusMessage = "Please load a low-poly mesh first.";
+        return;
+    }
+    bool anyBaked = CurveManager::BakeCurvesToSeams(m_curveManager, m_lowPolyMesh, cutIntoTopology, -1);
+    if (cutIntoTopology) {
+        m_viewportRenderer.SetLowPolyMesh(m_lowPolyMesh, m_settings.lowPolyScale);
+    }
+    m_viewportRenderer.UpdateSeams(m_lowPolyMesh);
+    m_viewportRenderer.showSeams = true;
+    char msg[128];
+    snprintf(msg, sizeof(msg), "Baked all curves into mesh seams (%s). Total seams: %zu",
+        cutIntoTopology ? "topological cut" : "edge snapped", m_lowPolyMesh.cutSeams.size());
+    m_uvStatusMessage = msg;
+    m_logEntries.push_back(std::string("[Curve Cut] ") + msg);
+}
+
+void StandaloneUIManager::ClearActiveCurve() {
+    SurfaceCurve* c = m_curveManager.GetActiveCurve();
+    if (c) {
+        c->Clear();
+        m_uvStatusMessage = "Cleared points on active curve.";
+        m_logEntries.push_back("[Curve Cut] Cleared points on active curve.");
+    }
+}
+
+void StandaloneUIManager::ClearAllCurves() {
+    m_curveManager.ClearAll();
+    m_uvStatusMessage = "Cleared all curves.";
+    m_logEntries.push_back("[Curve Cut] Cleared all curves.");
+}
+
 void StandaloneUIManager::RenderUVCutAndPackPanel() {
     ImGui::Begin("UV Tool###uvpanel", &m_shellState.showUVPanel);
 
@@ -1629,8 +1876,127 @@ void StandaloneUIManager::RenderUVCutAndPackPanel() {
     }
     BakerUI::EndCard();
 
+    // 2b. 3D Surface Curves (Interactive Surface Cutting)
+    BakerUI::SectionLabel("2. 3D SURFACE CURVES (NEW)");
+    bool openCurves = BakerUI::BeginCard("##curves_card");
+    if (openCurves) {
+        ImGui::TextWrapped("Click anywhere on the low-poly mesh in 3D to draw cutting curves. Move control points dynamically or bake curves into seams.");
+        ImGui::Spacing();
+
+        // Curve selection combo
+        std::vector<std::string> curveNames;
+        std::vector<const char*> curveNamePtrs;
+        for (size_t i = 0; i < m_curveManager.curves.size(); ++i) {
+            char nameBuf[128];
+            snprintf(nameBuf, sizeof(nameBuf), "%s (%zu pts)%s",
+                m_curveManager.curves[i].name.c_str(),
+                m_curveManager.curves[i].points.size(),
+                m_curveManager.curves[i].isBaked ? " [Baked]" : "");
+            curveNames.push_back(nameBuf);
+        }
+        for (const auto& s : curveNames) curveNamePtrs.push_back(s.c_str());
+
+        int curCurve = m_curveManager.activeCurveIndex;
+        if (ImGui::Combo("Select Curve", &curCurve, curveNamePtrs.data(), static_cast<int>(curveNamePtrs.size()))) {
+            m_curveManager.activeCurveIndex = curCurve;
+        }
+
+        // Add / Delete / Clear Buttons
+        if (ImGui::Button("+ New Curve")) {
+            m_curveManager.AddCurve();
+            m_toolMode = ToolMode::DrawCurve;
+            m_viewportRenderer.showSeams = true;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("- Delete")) {
+            m_curveManager.RemoveCurve(m_curveManager.activeCurveIndex);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Clear All Curves")) {
+            ClearAllCurves();
+        }
+
+        ImGui::Spacing();
+        bool isCurveMode = (m_toolMode == ToolMode::DrawCurve);
+        if (BakerUI::ToggleChip(isCurveMode ? "Drawing Curve in 3D (Click Mesh)" : "Enable 3D Curve Draw Mode", &isCurveMode)) {
+            m_toolMode = isCurveMode ? ToolMode::DrawCurve : ToolMode::Navigate;
+            if (m_toolMode == ToolMode::DrawCurve) {
+                m_viewportRenderer.showSeams = true;
+            }
+        }
+
+        SurfaceCurve* c = m_curveManager.GetActiveCurve();
+        if (c) {
+            ImGui::Checkbox("Close Curve (Loop)", &c->isClosed);
+            ImGui::SameLine();
+            ImGui::TextDisabled("| %zu points", c->points.size());
+
+            // Points table
+            if (!c->points.empty() && ImGui::TreeNodeEx("Control Points List", ImGuiTreeNodeFlags_DefaultOpen)) {
+                if (ImGui::BeginTable("##c_pts", 4, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
+                    ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, 25.0f);
+                    ImGui::TableSetupColumn("Pos (X, Y, Z)", ImGuiTableColumnFlags_WidthStretch);
+                    ImGui::TableSetupColumn("Select", ImGuiTableColumnFlags_WidthFixed, 45.0f);
+                    ImGui::TableSetupColumn("Del", ImGuiTableColumnFlags_WidthFixed, 35.0f);
+                    ImGui::TableHeadersRow();
+
+                    for (size_t p = 0; p < c->points.size(); ++p) {
+                        ImGui::TableNextRow();
+                        ImGui::TableSetColumnIndex(0);
+                        ImGui::Text("%zu", p);
+
+                        ImGui::TableSetColumnIndex(1);
+                        ImGui::Text("%.2f, %.2f, %.2f", c->points[p].position.x, c->points[p].position.y, c->points[p].position.z);
+
+                        ImGui::TableSetColumnIndex(2);
+                        char selId[32]; snprintf(selId, sizeof(selId), "Sel##p%zu", p);
+                        bool isSel = (m_curveManager.selectedPointIndex == static_cast<int>(p));
+                        if (ImGui::SmallButton(selId)) {
+                            m_curveManager.selectedPointIndex = static_cast<int>(p);
+                        }
+
+                        ImGui::TableSetColumnIndex(3);
+                        char delId[32]; snprintf(delId, sizeof(delId), "X##p%zu", p);
+                        if (ImGui::SmallButton(delId)) {
+                            m_curveManager.RemoveActivePoint(static_cast<int>(p));
+                            break;
+                        }
+                    }
+                    ImGui::EndTable();
+                }
+                ImGui::TreePop();
+            }
+        }
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // Convert / Bake Actions
+        if (BakerUI::PrimaryButton("SNAP CURVE TO EDGES & CUT SEAMS")) {
+            SnapActiveCurveToSeams();
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Traces the curve along low-poly mesh edges using Dijkstra shortest surface paths");
+
+        ImGui::Spacing();
+        if (BakerUI::SecondaryButton("CUT CURVE INTO MESH TOPOLOGY")) {
+            CutActiveCurveIntoTopology();
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Bisects and splits triangle faces directly along the curve trajectory, inserting vertices & seams exactly along the line");
+
+        ImGui::Spacing();
+        if (ImGui::Button("Bake All Curves (Snap Edges)")) {
+            BakeAllCurvesToSeams(false);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Bake All (Cut Topology)")) {
+            BakeAllCurvesToSeams(true);
+        }
+    }
+    BakerUI::EndCard();
+
     // 3. Unwrap Section
-    BakerUI::SectionLabel("2. CONFORMAL UNWRAP");
+    BakerUI::SectionLabel("3. CONFORMAL UNWRAP");
     bool openUnwrap = BakerUI::BeginCard("##unwrap_card");
     if (openUnwrap) {
         if (BakerUI::BeginProps("##unwrap_props")) {

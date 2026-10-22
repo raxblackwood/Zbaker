@@ -58,6 +58,7 @@ set(BAKER_SOURCES
     src/uv/UVCutter.cpp
     src/uv/UVUnwrapper.cpp
     src/uv/UVPacker.cpp
+    src/uv/UVSurfaceCurve.cpp
     include/mikktspace.c
     include/miniz.c
     include/ufbx.c
@@ -112,6 +113,7 @@ set(STANDALONE_SOURCES
     src/uv/UVCutter.cpp
     src/uv/UVUnwrapper.cpp
     src/uv/UVPacker.cpp
+    src/uv/UVSurfaceCurve.cpp
     include/mikktspace.c
     include/miniz.c
     include/ufbx.c
@@ -151,6 +153,7 @@ add_executable(TestBaker
     src/uv/UVCutter.cpp
     src/uv/UVUnwrapper.cpp
     src/uv/UVPacker.cpp
+    src/uv/UVSurfaceCurve.cpp
     include/mikktspace.c
     include/miniz.c
     include/ufbx.c

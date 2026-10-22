@@ -1250,6 +1250,9 @@ bool ViewportRenderer::ProjectToScreen(const DirectX::XMFLOAT3& worldPos, float&
     );
 
     DirectX::XMVECTOR pW = DirectX::XMLoadFloat3(&worldPos);
+    DirectX::XMVECTOR pView = DirectX::XMVector3Transform(pW, view);
+    if (DirectX::XMVectorGetZ(pView) <= 0.05f) return false;
+
     DirectX::XMVECTOR pClip = DirectX::XMVector3TransformCoord(pW, DirectX::XMMatrixMultiply(view, proj));
 
     float ndcX = DirectX::XMVectorGetX(pClip);

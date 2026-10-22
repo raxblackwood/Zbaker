@@ -6,6 +6,7 @@
 #include "../uv/UVCutter.h"
 #include "../uv/UVUnwrapper.h"
 #include "../uv/UVPacker.h"
+#include "../uv/UVSurfaceCurve.h"
 #include "ViewportRenderer.h"
 #include "BakerUI.h"
 #include <string>
@@ -42,7 +43,8 @@ public:
         Navigate = 0,
         PaintCage = 1,
         PaintSkew = 2,
-        CutSeam = 3
+        CutSeam = 3,
+        DrawCurve = 4
     };
 
 private:
@@ -65,6 +67,13 @@ private:
     void PackUVs();
     void AutoCutUnwrapAndPack();
     void ExportUnwrappedOBJ();
+
+    // UV Curve Actions
+    void SnapActiveCurveToSeams();
+    void CutActiveCurveIntoTopology();
+    void BakeAllCurvesToSeams(bool cutIntoTopology);
+    void ClearActiveCurve();
+    void ClearAllCurves();
 
     void TriggerBake();
     void SyncTransforms();
@@ -130,6 +139,11 @@ private:
     std::string m_uvStatusMessage = "Ready";
     int m_relaxIterations = 40;
     bool m_focusUVTab = false;
+
+    // UV Surface Curves State
+    CurveManager m_curveManager;
+    bool m_curveCutTopology = false; // false = snap to mesh edges, true = cut into topology
+    int m_draggingPointIndex = -1;
 
     // Background Thread Ingestion State
     std::mutex m_meshMutex;

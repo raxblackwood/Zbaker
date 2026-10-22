@@ -6,6 +6,7 @@
 #include "../src/uv/UVCutter.h"
 #include "../src/uv/UVUnwrapper.h"
 #include "../src/uv/UVPacker.h"
+#include "../src/uv/UVSurfaceCurve.h"
 
 #include <iostream>
 #include <fstream>
@@ -459,6 +460,105 @@ int main(int argc, char** argv) {
         std::cout << "  Multi-UDIM packed across " << udimStats.udimTilesUsed << " tiles." << std::endl;
 
         std::cout << "  UV Cutting, Segmentation, Unwrapping, and MaxRects Packing VERIFIED!" << std::endl;
+    }
+
+    // Test 9: 3D Surface Curves for UV Cutting (Edge Snapping & Topological Cuts)
+    {
+        std::cout << "[Test 9/9] Testing 3D Surface Curves for UV Cutting..." << std::endl;
+
+        // Build a grid plane mesh (4x4 quads = 32 triangles)
+        LowPolyMesh planeMesh;
+        int N = 4;
+        for (int y = 0; y <= N; ++y) {
+            for (int x = 0; x <= N; ++x) {
+                Vertex v;
+                v.position = Vec3(static_cast<float>(x) - 2.0f, static_cast<float>(y) - 2.0f, 0.0f);
+                v.normal = Vec3(0.0f, 0.0f, 1.0f);
+                v.uv = Vec2(static_cast<float>(x) / N, static_cast<float>(y) / N);
+                planeMesh.vertices.push_back(v);
+            }
+        }
+        for (int y = 0; y < N; ++y) {
+            for (int x = 0; x < N; ++x) {
+                uint32_t i0 = y * (N + 1) + x;
+                uint32_t i1 = i0 + 1;
+                uint32_t i2 = (y + 1) * (N + 1) + x;
+                uint32_t i3 = i2 + 1;
+
+                LowPolyTriangle t1, t2;
+                t1.indices[0] = i0; t1.indices[1] = i1; t1.indices[2] = i2;
+                t2.indices[0] = i1; t2.indices[1] = i3; t2.indices[2] = i2;
+                planeMesh.triangles.push_back(t1);
+                planeMesh.triangles.push_back(t2);
+            }
+        }
+        assert(planeMesh.triangles.size() == 32);
+
+        // 1. Create a CurveManager and add Curve 1
+        CurveManager curveMgr;
+        SurfaceCurve* c1 = curveMgr.GetActiveCurve();
+        assert(c1 != nullptr);
+        assert(c1->name == "Curve 1");
+
+        // Add 3 points traversing across the mesh: left (-1.8, 0, 0), center (0, 0.2, 0), right (1.8, 0, 0)
+        c1->AddPoint(Vec3(-1.8f, 0.0f, 0.0f), Vec3(0, 0, 1), 0);
+        c1->AddPoint(Vec3(0.0f, 0.2f, 0.0f), Vec3(0, 0, 1), 16);
+        c1->AddPoint(Vec3(1.8f, 0.0f, 0.0f), Vec3(0, 0, 1), 30);
+        assert(c1->points.size() == 3);
+
+        // Verify moving a control point
+        c1->MovePoint(1, Vec3(0.0f, 0.0f, 0.0f), Vec3(0, 0, 1), 16);
+        assert(c1->points[1].position.y == 0.0f);
+
+        // Sample path generation
+        c1->UpdateSampledPath(planeMesh);
+        assert(c1->sampledPath.size() > 3);
+
+        // 2. Test Dijkstra Edge Snapping to Seams
+        std::vector<std::pair<uint32_t, uint32_t>> snappedEdges;
+        bool snapOk = CurveManager::SnapCurveToMeshEdges(*c1, planeMesh, snappedEdges);
+        assert(snapOk);
+        assert(!snappedEdges.empty());
+        assert(!planeMesh.cutSeams.empty());
+        assert(!planeMesh.seamLineIndices.empty());
+        std::cout << "  Curve 1 snapped to " << snappedEdges.size() << " low-poly mesh seam edges." << std::endl;
+
+        // 3. Test Curve 2 with Topological Knife Cut
+        int c2Idx = curveMgr.AddCurve("Curve 2");
+        SurfaceCurve* c2 = curveMgr.GetActiveCurve();
+        assert(c2 != nullptr);
+        assert(c2Idx == 1);
+
+        // Draw a diagonal cut across the mesh
+        c2->AddPoint(Vec3(-1.5f, -1.5f, 0.0f), Vec3(0, 0, 1), 0);
+        c2->AddPoint(Vec3(1.5f, 1.5f, 0.0f), Vec3(0, 0, 1), 31);
+
+        size_t vertsBeforeCut = planeMesh.vertices.size();
+        size_t trisBeforeCut = planeMesh.triangles.size();
+
+        std::vector<std::pair<uint32_t, uint32_t>> cutEdges;
+        bool cutOk = CurveManager::CutCurveIntoMeshTopology(*c2, planeMesh, cutEdges);
+        assert(cutOk);
+        assert(!cutEdges.empty());
+        assert(planeMesh.vertices.size() >= vertsBeforeCut);
+        assert(planeMesh.triangles.size() >= trisBeforeCut);
+        std::cout << "  Curve 2 cut into mesh topology: " << planeMesh.vertices.size() << " verts ("
+                  << (planeMesh.vertices.size() - vertsBeforeCut) << " new), "
+                  << planeMesh.triangles.size() << " tris." << std::endl;
+
+        // 4. Test Unwrapping along Curve Seams
+        auto islandsTris = UVCutter::SegmentIslands(planeMesh);
+        assert(islandsTris.size() >= 2);
+        auto islands = UVUnwrapper::UnwrapMesh(planeMesh, islandsTris);
+        assert(islands.size() >= 2);
+
+        PackSettings pCfg;
+        pCfg.resolution = 1024;
+        PackStats pStats = UVPacker::PackIslands(islands, pCfg);
+        assert(pStats.packedIslands >= 2);
+        std::cout << "  Unwrapped & packed " << pStats.packedIslands << " islands partitioned by 3D curves." << std::endl;
+
+        std::cout << "  3D Surface Curves for UV Cutting VERIFIED!" << std::endl;
     }
 
     std::cout << "=== All Advanced Architecture Plan Tests PASSED! ===" << std::endl;
