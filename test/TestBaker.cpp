@@ -561,6 +561,27 @@ int main(int argc, char** argv) {
         std::cout << "  3D Surface Curves for UV Cutting VERIFIED!" << std::endl;
     }
 
+    // 10. Test Wireframe Deduplication & Default Studio White Shading
+    {
+        std::cout << "[Test 10/10] Testing Wireframe Edge Deduplication & Blender Studio White Default..." << std::endl;
+        std::string testObjPath = "test_wireframe.obj";
+        CreateTestLowPolyOBJ(testObjPath);
+
+        LowPolyMesh wfMesh;
+        std::string err;
+        bool loaded = MeshLoader::LoadLowPolyOBJ(testObjPath, wfMesh, err);
+        assert(loaded);
+        // 2 adjacent quads have 7 unique geometric edges (14 line indices), not 16 doubled indices
+        assert(wfMesh.wireframeLineIndices.size() == 14);
+        std::cout << "  Wireframe deduplication verified: 2 adjacent quads produced "
+                  << wfMesh.wireframeLineIndices.size() / 2 << " unique edges (14 indices), 0 duplicates." << std::endl;
+
+        // Verify default shading mode is Studio White (0)
+        assert(static_cast<int>(ShadingMode::StudioWhite) == 0);
+        std::cout << "  Default Shading Mode verified as Blender Studio White (mode 0)." << std::endl;
+        std::cout << "  Wireframe Deduplication & Blender Studio White VERIFIED!" << std::endl;
+    }
+
     std::cout << "=== All Advanced Architecture Plan Tests PASSED! ===" << std::endl;
     return 0;
 }

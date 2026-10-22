@@ -572,10 +572,10 @@ void UIManager::RenderOutlinerPanel() {
                         ImGui::SliderFloat("Opacity##hp_op", &m_viewportRenderer.highPolyOpacity, 0.05f, 1.0f, "%.2f");
 
                         ImGui::SetNextItemWidth(120);
-                        const char* shadingModes[] = { "Clay", "Wax Red", "Normals", "Flat" };
-                        int currentShading = (int)m_viewportRenderer.highPolyShading;
+                        const char* shadingModes[] = { "Studio White", "Clay", "Wax Red", "Normals", "Flat" };
+                        int currentShading = (m_viewportRenderer.highPolyShading == ShadingMode::FlatShaded) ? 4 : (int)m_viewportRenderer.highPolyShading;
                         if (ImGui::Combo("Shading##hp_shade", &currentShading, shadingModes, IM_ARRAYSIZE(shadingModes))) {
-                            m_viewportRenderer.highPolyShading = (ShadingMode)currentShading;
+                            m_viewportRenderer.highPolyShading = (currentShading == 4) ? ShadingMode::FlatShaded : (ShadingMode)currentShading;
                         }
                     }
                     ImGui::Unindent(16.0f);
@@ -1334,10 +1334,10 @@ void UIManager::RenderViewportPanel() {
         ImGui::Dummy(ImVec2(8, 0)); ImGui::SameLine();
 
         ImGui::SetNextItemWidth(100);
-        const char* shadingModes[] = { "Clay", "Wax Red", "Normals", "Flat" };
-        int currentShading = (int)m_viewportRenderer.highPolyShading;
+        const char* shadingModes[] = { "Studio White", "Clay", "Wax Red", "Normals", "Flat" };
+        int currentShading = (m_viewportRenderer.highPolyShading == ShadingMode::FlatShaded) ? 4 : (int)m_viewportRenderer.highPolyShading;
         if (ImGui::Combo("##Shading", &currentShading, shadingModes, IM_ARRAYSIZE(shadingModes))) {
-            m_viewportRenderer.highPolyShading = (ShadingMode)currentShading;
+            m_viewportRenderer.highPolyShading = (currentShading == 4) ? ShadingMode::FlatShaded : (ShadingMode)currentShading;
         }
         ImGui::EndGroup();
 

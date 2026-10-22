@@ -9,10 +9,11 @@
 namespace Baker {
 
 enum class ShadingMode {
-    ClayMatcap = 0,     // Substance/ZBrush warm clay
-    WaxRed = 1,         // ZBrush classic wax preview
-    NormalColor = 2,    // Visualized surface normals
-    FlatShaded = 3,     // Clean flat shaded
+    StudioWhite = 0,    // Clean Blender Studio White (Default)
+    ClayMatcap = 1,     // Substance/ZBrush warm clay
+    WaxRed = 2,         // ZBrush classic wax preview
+    NormalColor = 3,    // Visualized surface normals
+    FlatShaded = 7,     // Clean flat shaded
     SkewHeatmap = 6     // Marmoset-style skew correction visualization
 };
 
@@ -73,7 +74,7 @@ public:
     bool showSeams = true;
     bool showGrid = true;
     bool showBakedNormals = true;
-    ShadingMode highPolyShading = ShadingMode::ClayMatcap;
+    ShadingMode highPolyShading = ShadingMode::StudioWhite;
     float highPolyOpacity = 1.0f;
     float lowPolyOpacity = 0.85f;
     float cageOpacity = 0.4f;

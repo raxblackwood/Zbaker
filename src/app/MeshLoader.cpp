@@ -9,6 +9,8 @@
 
 #include <algorithm>
 #include <set>
+#include <unordered_set>
+#include <unordered_map>
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -28,6 +30,35 @@ static std::string GetFileExtension(const std::string& path) {
     for (char& c : ext) c = (char)std::tolower(c);
     return ext;
 }
+
+namespace {
+
+struct PosKey {
+    int64_t x, y, z;
+    bool operator==(const PosKey& o) const {
+        return x == o.x && y == o.y && z == o.z;
+    }
+};
+
+struct PosHasher {
+    size_t operator()(const PosKey& k) const {
+        size_t h = 14695981039346656037ULL;
+        h ^= static_cast<size_t>(k.x); h *= 1099511628211ULL;
+        h ^= static_cast<size_t>(k.y); h *= 1099511628211ULL;
+        h ^= static_cast<size_t>(k.z); h *= 1099511628211ULL;
+        return h;
+    }
+};
+
+inline PosKey QuantizePos(const Vec3& p) {
+    return PosKey{
+        static_cast<int64_t>(std::floor(p.x * 100000.0f + 0.5f)),
+        static_cast<int64_t>(std::floor(p.y * 100000.0f + 0.5f)),
+        static_cast<int64_t>(std::floor(p.z * 100000.0f + 0.5f))
+    };
+}
+
+} // namespace
 
 bool MeshLoader::LoadLowPolyMesh(
     const std::string& filePath,
@@ -204,6 +235,7 @@ bool MeshLoader::LoadLowPolyFBX(
     outMesh.SmoothNormalsIfMissing(180.0f);
     MikkTSpaceBridge::CalculateTangents(outMesh);
     outMesh.ComputeWatertightCageNormals(180.0f);
+    DeduplicateWireframeLines(outMesh);
     return true;
 }
 
@@ -463,6 +495,7 @@ bool MeshLoader::LoadLowPolyOBJ(
     outMesh.SmoothNormalsIfMissing(180.0f);
     MikkTSpaceBridge::CalculateTangents(outMesh);
     outMesh.ComputeWatertightCageNormals(180.0f);
+    DeduplicateWireframeLines(outMesh);
     return true;
 }
 
@@ -484,36 +517,12 @@ bool MeshLoader::SaveLowPolyOBJWithNormals(
 
     // Deduplicate geometric vertex positions so adjacent faces share 'v' indices,
     // preserving watertight topology and smooth edge continuity in DCCs / Blender
-    struct PosKey {
-        int64_t x, y, z;
-        bool operator==(const PosKey& o) const {
-            return x == o.x && y == o.y && z == o.z;
-        }
-    };
-    struct PosHasher {
-        size_t operator()(const PosKey& k) const {
-            size_t h = 14695981039346656037ULL;
-            h ^= static_cast<size_t>(k.x); h *= 1099511628211ULL;
-            h ^= static_cast<size_t>(k.y); h *= 1099511628211ULL;
-            h ^= static_cast<size_t>(k.z); h *= 1099511628211ULL;
-            return h;
-        }
-    };
-
-    auto Quantize = [](const Vec3& p) -> PosKey {
-        return PosKey{
-            static_cast<int64_t>(std::floor(p.x * 100000.0f + 0.5f)),
-            static_cast<int64_t>(std::floor(p.y * 100000.0f + 0.5f)),
-            static_cast<int64_t>(std::floor(p.z * 100000.0f + 0.5f))
-        };
-    };
-
     std::unordered_map<PosKey, uint32_t, PosHasher> posMap;
     std::vector<Vec3> uniquePositions;
     std::vector<uint32_t> vertToPos(mesh.vertices.size());
 
     for (size_t i = 0; i < mesh.vertices.size(); ++i) {
-        PosKey k = Quantize(mesh.vertices[i].position);
+        PosKey k = QuantizePos(mesh.vertices[i].position);
         auto it = posMap.find(k);
         if (it == posMap.end()) {
             uint32_t pIdx = static_cast<uint32_t>(uniquePositions.size());
@@ -567,6 +576,69 @@ bool MeshLoader::SaveLowPolyOBJWithNormals(
 
     out.close();
     return true;
+}
+
+void MeshLoader::DeduplicateWireframeLines(LowPolyMesh& mesh) {
+    if (mesh.vertices.empty()) return;
+
+    std::unordered_map<PosKey, uint32_t, PosHasher> posMap;
+    posMap.reserve(mesh.vertices.size());
+    std::unordered_set<uint64_t> uniqueEdges;
+
+    std::vector<uint32_t> cleanLines;
+    cleanLines.reserve(mesh.wireframeLineIndices.size());
+
+    // 1. If wireframeLineIndices was generated from polygon perimeter edges:
+    if (!mesh.wireframeLineIndices.empty()) {
+        for (size_t i = 0; i + 1 < mesh.wireframeLineIndices.size(); i += 2) {
+            uint32_t v0 = mesh.wireframeLineIndices[i];
+            uint32_t v1 = mesh.wireframeLineIndices[i + 1];
+            if (v0 >= mesh.vertices.size() || v1 >= mesh.vertices.size()) continue;
+
+            PosKey pk0 = QuantizePos(mesh.vertices[v0].position);
+            PosKey pk1 = QuantizePos(mesh.vertices[v1].position);
+            if (pk0 == pk1) continue;
+
+            uint32_t id0 = posMap.emplace(pk0, static_cast<uint32_t>(posMap.size())).first->second;
+            uint32_t id1 = posMap.emplace(pk1, static_cast<uint32_t>(posMap.size())).first->second;
+
+            uint32_t minId = (std::min)(id0, id1);
+            uint32_t maxId = (std::max)(id0, id1);
+            uint64_t edgeKey = (static_cast<uint64_t>(minId) << 32) | static_cast<uint64_t>(maxId);
+
+            if (uniqueEdges.insert(edgeKey).second) {
+                cleanLines.push_back(v0);
+                cleanLines.push_back(v1);
+            }
+        }
+        mesh.wireframeLineIndices = std::move(cleanLines);
+    } else if (!mesh.triangles.empty()) {
+        // 2. Fallback: extract unique geometric edges from triangles
+        for (const auto& tri : mesh.triangles) {
+            for (int e = 0; e < 3; ++e) {
+                uint32_t v0 = tri.indices[e];
+                uint32_t v1 = tri.indices[(e + 1) % 3];
+                if (v0 >= mesh.vertices.size() || v1 >= mesh.vertices.size()) continue;
+
+                PosKey pk0 = QuantizePos(mesh.vertices[v0].position);
+                PosKey pk1 = QuantizePos(mesh.vertices[v1].position);
+                if (pk0 == pk1) continue;
+
+                uint32_t id0 = posMap.emplace(pk0, static_cast<uint32_t>(posMap.size())).first->second;
+                uint32_t id1 = posMap.emplace(pk1, static_cast<uint32_t>(posMap.size())).first->second;
+
+                uint32_t minId = (std::min)(id0, id1);
+                uint32_t maxId = (std::max)(id0, id1);
+                uint64_t edgeKey = (static_cast<uint64_t>(minId) << 32) | static_cast<uint64_t>(maxId);
+
+                if (uniqueEdges.insert(edgeKey).second) {
+                    cleanLines.push_back(v0);
+                    cleanLines.push_back(v1);
+                }
+            }
+        }
+        mesh.wireframeLineIndices = std::move(cleanLines);
+    }
 }
 
 bool MeshLoader::LoadCageOBJ(

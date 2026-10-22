@@ -42,6 +42,9 @@ public:
         std::string& outError
     );
 
+    // Deduplicates wireframe lines based on 3D geometric edge positions (eliminates bold/overlapping edges)
+    static void DeduplicateWireframeLines(LowPolyMesh& mesh);
+
     static bool LoadCageOBJ(
         const std::string& filePath,
         LowPolyMesh& lowPoly,

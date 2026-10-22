@@ -1,4 +1,5 @@
 #include "ViewportRenderer.h"
+#include "MeshLoader.h"
 #include <d3dcompiler.h>
 #include <algorithm>
 #include <cmath>
@@ -63,7 +64,17 @@ struct PS_INPUT {
 
 PS_INPUT VSMain(VS_INPUT input) {
     PS_INPUT output;
-    output.PosH = mul(float4(input.Pos, 1.0f), WorldViewProj);
+    float3 pos = input.Pos;
+    // For wireframe / seams (mode 4):
+    // 1. Geometric outward normal offset so line sits directly on the outer mesh boundary
+    if (ShadingMode == 4) {
+        pos += input.Norm * 0.0004f;
+    }
+    output.PosH = mul(float4(pos, 1.0f), WorldViewProj);
+    // 2. Perspective-safe NDC depth bias towards camera (ensures line never fails depth test against solid mesh)
+    if (ShadingMode == 4) {
+        output.PosH.z -= 0.00030f * output.PosH.w;
+    }
     output.WorldPos = mul(float4(input.Pos, 1.0f), World).xyz;
     output.WorldNorm = mul(float4(input.Norm, 0.0f), World).xyz;
     output.UV = input.UV;
@@ -84,8 +95,7 @@ float4 PSMain(PS_INPUT input) : SV_TARGET {
         float2 coord = input.WorldPos.xz;
         float distToCam = length(CameraPos.xyz - input.WorldPos);
 
-        // Maya-style clean fixed unit grid with primary & secondary subdivisions:
-        // No circular concentric LOD rings, no thick pixelated blobs
+        // Blender/Maya clean unit grid with dynamic scale:
         float unit = 1.0f;
         if (GridScale > 100.0f) unit = 10.0f;
         else if (GridScale > 1000.0f) unit = 100.0f;
@@ -93,49 +103,60 @@ float4 PSMain(PS_INPUT input) : SV_TARGET {
 
         float majorUnit = unit * 5.0f;
 
-        // Analytic anti-aliased grid function using screen-space fwidth
-        float2 d = fwidth(coord);
+        // Screen-space derivatives for true analytic anti-aliasing
+        float2 d = max(fwidth(coord), 0.00001f);
 
-        // Minor grid lines (1 unit): subtle, crisp 1-pixel lines
-        float2 gMinor = abs(frac(coord / unit - 0.5f) - 0.5f) * unit / max(d, 0.00001f);
-        float lineMinor = saturate(1.0f - min(gMinor.x, gMinor.y));
+        // Minor grid lines (1 unit):
+        float2 uMinor = coord / unit;
+        float2 duMinor = max(fwidth(uMinor), 0.00001f);
+        float2 distMinor = abs(frac(uMinor - 0.5f) - 0.5f) / duMinor;
+        float2 aalineMinor = saturate(1.0f - distMinor);
+        float lineMinor = max(aalineMinor.x, aalineMinor.y);
+        // Nyquist anti-aliasing fade: as pixel size approaches grid cell size, fade out smoothly to prevent aliasing/moire
+        float fadeMinor = saturate(1.0f - max(duMinor.x, duMinor.y) * 1.2f);
+        lineMinor *= fadeMinor;
 
-        // Major grid lines (every 5 units)
-        float2 gMajor = abs(frac(coord / majorUnit - 0.5f) - 0.5f) * majorUnit / max(d, 0.00001f);
-        float lineMajor = saturate(1.0f - min(gMajor.x, gMajor.y));
+        // Major grid lines (every 5 units):
+        float2 uMajor = coord / majorUnit;
+        float2 duMajor = max(fwidth(uMajor), 0.00001f);
+        float2 distMajor = abs(frac(uMajor - 0.5f) - 0.5f) / duMajor;
+        float2 aalineMajor = saturate(1.0f - distMajor);
+        float lineMajor = max(aalineMajor.x, aalineMajor.y);
+        float fadeMajor = saturate(1.0f - max(duMajor.x, duMajor.y) * 1.2f);
+        lineMajor *= fadeMajor;
 
         // Colored Axes: Red X (z == 0) and Green Z (x == 0)
-        float distAxisX = abs(input.WorldPos.z) / max(d.y, 0.00001f);
+        float distAxisX = abs(input.WorldPos.z) / d.y;
         float alphaAxisX = saturate(1.0f - distAxisX);
 
-        float distAxisZ = abs(input.WorldPos.x) / max(d.x, 0.00001f);
+        float distAxisZ = abs(input.WorldPos.x) / d.x;
         float alphaAxisZ = saturate(1.0f - distAxisZ);
 
-        // Smooth distance horizon fade (uniform quadratic falloff without concentric circle rings)
+        // Smooth quadratic distance horizon fade
         float maxFadeDist = max(GridScale * 8.0f, 120.0f);
         float distFade = saturate(1.0f - distToCam / maxFadeDist);
-        distFade = distFade * distFade; // Quadratic smooth horizon fade
+        distFade = distFade * distFade;
         if (distFade <= 0.001f) discard;
 
-        // Maya dark slate line colors
-        float3 col = float3(0.24f, 0.25f, 0.26f); // Delicate slate gray for minor grid lines
-        float alpha = lineMinor * 0.28f;
+        // Blender refined slate colors: subtle, elegant, smooth anti-aliased
+        float3 col = float3(0.38f, 0.39f, 0.41f); // Soft neutral gray for minor grid lines
+        float alpha = lineMinor * 0.16f;
 
         // Major subdivisions: clean, refined accent
-        if (lineMajor > 0.01f) {
-            col = lerp(col, float3(0.38f, 0.40f, 0.42f), lineMajor);
-            alpha = max(alpha, lineMajor * 0.55f);
+        if (lineMajor > 0.001f) {
+            col = lerp(col, float3(0.50f, 0.51f, 0.53f), lineMajor);
+            alpha = max(alpha, lineMajor * 0.32f);
         }
 
-        // Maya Red X Axis (along Z = 0)
+        // Red X Axis (along Z = 0)
         if (alphaAxisX > 0.001f) {
-            col = lerp(col, float3(0.85f, 0.22f, 0.22f), alphaAxisX);
-            alpha = max(alpha, alphaAxisX * 0.90f);
+            col = lerp(col, float3(0.88f, 0.24f, 0.24f), alphaAxisX);
+            alpha = max(alpha, alphaAxisX * 0.75f);
         }
-        // Maya Green Z Axis (along X = 0)
+        // Green Z Axis (along X = 0)
         if (alphaAxisZ > 0.001f) {
-            col = lerp(col, float3(0.25f, 0.78f, 0.28f), alphaAxisZ);
-            alpha = max(alpha, alphaAxisZ * 0.90f);
+            col = lerp(col, float3(0.28f, 0.82f, 0.32f), alphaAxisZ);
+            alpha = max(alpha, alphaAxisZ * 0.75f);
         }
 
         alpha *= distFade;
@@ -161,8 +182,8 @@ float4 PSMain(PS_INPUT input) : SV_TARGET {
     float3 V = normalize(CameraPos.xyz - input.WorldPos);
     float3 L = normalize(LightDir.xyz);
 
-    // 2: Surface Normals Visualizer
-    if (ShadingMode == 2) {
+    // 3: Surface Normals Visualizer
+    if (ShadingMode == 3) {
         return float4(N * 0.5f + 0.5f, Opacity);
     }
 
@@ -175,17 +196,27 @@ float4 PSMain(PS_INPUT input) : SV_TARGET {
         return float4(skewVis * diff, Opacity);
     }
 
-    // Studio Lighting setup
+    // 7: Clean Flat Shaded
+    if (ShadingMode == 7) {
+        float3 flatBase = MeshColor.rgb;
+        if (input.Color.a > 0.001f) {
+            flatBase = lerp(flatBase, float3(1.0f, 0.62f, 0.08f), input.Color.a * 0.85f);
+        }
+        float diff = saturate(dot(N, L)) * 0.75f + 0.25f;
+        return float4(flatBase * diff, Opacity);
+    }
+
+    // Studio Lighting setup (Blender 4.x Studio Matcap style)
     float keyDiff = saturate(dot(N, L));
-    float3 fillDir = normalize(float3(-L.x, 0.3f, -L.z));
-    float fillDiff = saturate(dot(N, fillDir)) * 0.3f;
-    float3 topAmb = float3(0.24f, 0.25f, 0.28f);
-    float3 botAmb = float3(0.10f, 0.10f, 0.12f);
+    float3 fillDir = normalize(float3(-L.x, 0.35f, -L.z));
+    float fillDiff = saturate(dot(N, fillDir)) * 0.35f;
+    float3 topAmb = float3(0.30f, 0.31f, 0.33f);
+    float3 botAmb = float3(0.16f, 0.16f, 0.18f);
     float3 ambient = lerp(botAmb, topAmb, N.y * 0.5f + 0.5f);
 
     float3 H = normalize(L + V);
-    float spec = pow(saturate(dot(N, H)), 24.0f) * 0.4f;
-    float rim = pow(1.0f - saturate(dot(N, V)), 3.0f) * 0.25f;
+    float spec = pow(saturate(dot(N, H)), 28.0f) * 0.35f;
+    float rim = pow(1.0f - saturate(dot(N, V)), 3.0f) * 0.20f;
 
     float3 baseAlbedo = MeshColor.rgb;
 
@@ -194,15 +225,22 @@ float4 PSMain(PS_INPUT input) : SV_TARGET {
         baseAlbedo = lerp(baseAlbedo, float3(1.0f, 0.62f, 0.08f), input.Color.a * 0.85f);
     }
 
-    // 0: Clay Matcap (Substance Painter Sculpt look)
+    // 0: Blender Studio White (Default clean crisp studio white)
     if (ShadingMode == 0) {
+        baseAlbedo = float3(0.92f, 0.92f, 0.94f);
+        if (input.Color.a > 0.001f) {
+            baseAlbedo = lerp(baseAlbedo, float3(1.0f, 0.62f, 0.08f), input.Color.a * 0.85f);
+        }
+    }
+    // 1: Clay Matcap (Substance Painter Sculpt look)
+    else if (ShadingMode == 1) {
         baseAlbedo = float3(0.76f, 0.70f, 0.63f);
         if (input.Color.a > 0.001f) {
             baseAlbedo = lerp(baseAlbedo, float3(1.0f, 0.62f, 0.08f), input.Color.a * 0.85f);
         }
     }
-    // 1: ZBrush Classic Wax Red
-    else if (ShadingMode == 1) {
+    // 2: ZBrush Classic Wax Red
+    else if (ShadingMode == 2) {
         baseAlbedo = float3(0.82f, 0.36f, 0.30f);
         if (input.Color.a > 0.001f) {
             baseAlbedo = lerp(baseAlbedo, float3(1.0f, 0.62f, 0.08f), input.Color.a * 0.85f);
@@ -341,11 +379,14 @@ bool ViewportRenderer::CreateRasterizerAndBlendStates() {
     rd.CullMode = D3D11_CULL_NONE;
     m_device->CreateRasterizerState(&rd, &m_solidNoCullRS);
 
-    // 3. Wireframe with Depth Bias to prevent z-fighting on low-poly
-    rd.FillMode = D3D11_FILL_WIREFRAME;
+    // 3. Wireframe / Line rasterizer state (Antialiased lines)
+    rd.FillMode = D3D11_FILL_SOLID;
     rd.CullMode = D3D11_CULL_NONE;
-    rd.DepthBias = -500;
-    rd.SlopeScaledDepthBias = -1.0f;
+    rd.DepthClipEnable = TRUE;
+    rd.AntialiasedLineEnable = TRUE;
+    rd.MultisampleEnable = TRUE;
+    rd.DepthBias = -1000;
+    rd.SlopeScaledDepthBias = 0.0f;
     m_device->CreateRasterizerState(&rd, &m_wireframeRS);
 
     // Depth Stencil State
@@ -482,6 +523,9 @@ void ViewportRenderer::SetLowPolyMesh(const LowPolyMesh& mesh, float scaleMultip
     m_lowPolyGPU.Release();
     m_lowPolyWireGPU.Release();
     if (mesh.vertices.empty() || mesh.triangles.empty()) return;
+
+    // Ensure wireframe lines are deduplicated per geometric edge
+    MeshLoader::DeduplicateWireframeLines(const_cast<LowPolyMesh&>(mesh));
 
     float s = scaleMultiplier > 1e-5f ? scaleMultiplier : 1.0f;
 
@@ -945,7 +989,7 @@ void ViewportRenderer::Render() {
         m_context->RSSetState(m_solidRS);
 
         int mode = (int)highPolyShading;
-        DirectX::XMFLOAT4 hpColor = { 0.82f, 0.77f, 0.70f, highPolyOpacity };
+        DirectX::XMFLOAT4 hpColor = { 0.92f, 0.92f, 0.94f, highPolyOpacity };
         UpdateConstantBuffer(identity, hpColor, mode);
 
         m_context->IASetVertexBuffers(0, 1, &m_highPolyGPU.vertexBuffer, &stride, &offset);
@@ -965,7 +1009,7 @@ void ViewportRenderer::Render() {
             m_context->PSSetSamplers(0, 1, &m_linearSampler);
         }
 
-        DirectX::XMFLOAT4 lpColor = { 0.72f, 0.70f, 0.65f, lowPolyOpacity };
+        DirectX::XMFLOAT4 lpColor = { 0.92f, 0.92f, 0.94f, lowPolyOpacity };
         int lpMode = showSkew ? 6 : (int)highPolyShading;
         UpdateConstantBuffer(worldLP, lpColor, lpMode, useNormalMap ? 1 : 0);
 
@@ -983,7 +1027,7 @@ void ViewportRenderer::Render() {
             m_context->OMSetBlendState(m_alphaBlendState, nullptr, 0xFFFFFFFF);
             m_context->RSSetState(m_wireframeRS);
 
-            DirectX::XMFLOAT4 wireColor = { 0.10f, 0.12f, 0.15f, 0.90f };
+            DirectX::XMFLOAT4 wireColor = { 0.12f, 0.14f, 0.17f, 0.90f };
             UpdateConstantBuffer(worldLP, wireColor, 4);
 
             if (m_lowPolyWireGPU.indexBuffer && m_lowPolyWireGPU.indexCount > 0) {
