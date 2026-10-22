@@ -9,6 +9,7 @@
 #include "../uv/UVSurfaceCurve.h"
 #include "ViewportRenderer.h"
 #include "BakerUI.h"
+#include "HistoryManager.h"
 #include <string>
 #include <vector>
 #include <mutex>
@@ -146,6 +147,13 @@ private:
     CurveManager m_curveManager;
     bool m_curveCutTopology = false; // false = snap to mesh edges, true = cut into topology
     int m_draggingPointIndex = -1;
+    bool m_wasDraggingPoint = false;
+
+    // Undo / Redo History System (Ctrl+Z / Ctrl+Shift+Z)
+    HistoryManager m_history;
+    void PushHistoryState(const std::string& desc);
+    void PerformUndo();
+    void PerformRedo();
 
     // Maya-Style Marking Menu State
     struct MarkingMenuState {

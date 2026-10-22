@@ -254,6 +254,9 @@ void StandaloneUIManager::SetLowPolyMeshPath(const std::string& path) {
             }
 
             CheckScaleAndAutoCalibrate();
+
+            m_history.Clear();
+            PushHistoryState("Load Low-Poly Mesh");
         } else {
             m_logEntries.push_back("[Error] Failed loading Low-Poly: " + err);
         }
@@ -367,6 +370,17 @@ void StandaloneUIManager::ResetTransforms() {
 }
 
 void StandaloneUIManager::RenderUI() {
+    ImGuiIO& io = ImGui::GetIO();
+    if (!io.WantTextInput) {
+        // Global Undo / Redo Shortcuts: Ctrl+Z = Undo, Ctrl+Shift+Z or Ctrl+Y = Redo
+        if (io.KeyCtrl && !io.KeyShift && !io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_Z, false)) {
+            PerformUndo();
+        } else if ((io.KeyCtrl && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Z, false)) ||
+                   (io.KeyCtrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Y, false))) {
+            PerformRedo();
+        }
+    }
+
     // Check pending GPU mesh upload from background loader
     if (m_pendingMeshUpload) {
         std::lock_guard<std::mutex> lock(m_meshMutex);
@@ -876,6 +890,7 @@ void StandaloneUIManager::RenderViewportPanel() {
                         m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
                         m_lastSelectedEdge = MakeEdgeKey(static_cast<uint32_t>(bestV0), static_cast<uint32_t>(bestV1));
                         m_hasLastSelectedEdge = true;
+                        PushHistoryState("Select Edge Loop");
                         char msg[128];
                         snprintf(msg, sizeof(msg), "Selected edge loop: %zu edges selected", m_lowPolyMesh.selectedEdges.size());
                         m_uvStatusMessage = msg;
@@ -889,6 +904,7 @@ void StandaloneUIManager::RenderViewportPanel() {
                                                          edgeKey.first, edgeKey.second, true);
                             m_lastSelectedEdge = edgeKey;
                             m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
+                            PushHistoryState("Select Shortest Path");
                             char msg[128];
                             snprintf(msg, sizeof(msg), "Selected path between edges: %zu edges total", m_lowPolyMesh.selectedEdges.size());
                             m_uvStatusMessage = msg;
@@ -902,6 +918,7 @@ void StandaloneUIManager::RenderViewportPanel() {
                             m_hasLastSelectedEdge = true;
                             m_lowPolyMesh.GenerateSelectedEdgeLines();
                             m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
+                            PushHistoryState("Toggle Edge Selection");
                         } else {
                             m_lowPolyMesh.selectedEdges.clear();
                             m_lowPolyMesh.selectedEdges.insert(edgeKey);
@@ -909,6 +926,7 @@ void StandaloneUIManager::RenderViewportPanel() {
                             m_hasLastSelectedEdge = true;
                             m_lowPolyMesh.GenerateSelectedEdgeLines();
                             m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
+                            PushHistoryState("Select Edge");
                         }
                     }
 
@@ -921,6 +939,7 @@ void StandaloneUIManager::RenderViewportPanel() {
                             m_hasLastSelectedEdge = true;
                             m_lowPolyMesh.GenerateSelectedEdgeLines();
                             m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
+                            PushHistoryState("Select Edge");
                         }
                         m_markingMenu.active = true;
                         m_markingMenu.centerPos = io.MousePos;
@@ -934,6 +953,7 @@ void StandaloneUIManager::RenderViewportPanel() {
                             m_hasLastSelectedEdge = false;
                             m_lowPolyMesh.GenerateSelectedEdgeLines();
                             m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
+                            PushHistoryState("Clear Selection");
                         }
                     }
                 }
@@ -993,6 +1013,7 @@ void StandaloneUIManager::RenderViewportPanel() {
 
                 // 2. Handle Dragging existing point
                 if (m_draggingPointIndex >= 0 && io.MouseDown[0]) {
+                    m_wasDraggingPoint = true;
                     if (hit && activeCurve) {
                         DirectX::XMMATRIX worldMat = m_viewportRenderer.GetLowPolyWorldMatrix();
                         DirectX::XMMATRIX viewProjMat = m_viewportRenderer.GetViewProjectionMatrix();
@@ -1003,6 +1024,10 @@ void StandaloneUIManager::RenderViewportPanel() {
                         m_curveManager.UpdateActiveSampledPath(m_lowPolyMesh, &worldMat, &viewProjMat, vpW, vpH);
                     }
                 } else if (io.MouseReleased[0]) {
+                    if (m_wasDraggingPoint) {
+                        m_wasDraggingPoint = false;
+                        PushHistoryState("Move Curve Point");
+                    }
                     m_draggingPointIndex = -1;
                 }
 
@@ -1019,6 +1044,7 @@ void StandaloneUIManager::RenderViewportPanel() {
 
                         m_curveManager.AddPointToActive(hitPos, hitNormal, hitTriIdx);
                         m_curveManager.UpdateActiveSampledPath(m_lowPolyMesh, &worldMat, &viewProjMat, vpW, vpH);
+                        PushHistoryState("Add Curve Point");
 
                         char msg[128];
                         snprintf(msg, sizeof(msg), "Placed curve point %zu on surface. Press Enter to slice mesh topology and start next cut.",
@@ -1041,6 +1067,7 @@ void StandaloneUIManager::RenderViewportPanel() {
 
                         // Automatically finalize this curve and start a new fresh curve! Tool mode stays active!
                         int newCurveIdx = m_curveManager.AddCurve();
+                        PushHistoryState("Slice Mesh Topology");
                         char msg[128];
                         snprintf(msg, sizeof(msg), "Sliced mesh topology along curve (%zu slice edges). Ready for next cut.",
                                  seamEdges.size());
@@ -1182,6 +1209,32 @@ void StandaloneUIManager::RenderViewportPanel() {
 
         ImGui::SameLine();
         BakerUI::ToggleChip("Cage", &m_viewportRenderer.showCage);
+
+        ImGui::SameLine();
+        ImGui::Dummy(ImVec2(6.0f, 0.0f));
+        ImGui::SameLine();
+        bool canUndo = m_history.CanUndo();
+        if (!canUndo) ImGui::BeginDisabled();
+        if (ImGui::SmallButton("Undo")) {
+            PerformUndo();
+        }
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+            std::string tip = canUndo ? ("Undo: " + m_history.GetUndoDescription() + " (Ctrl+Z)") : "Nothing to undo (Ctrl+Z)";
+            ImGui::SetTooltip("%s", tip.c_str());
+        }
+        if (!canUndo) ImGui::EndDisabled();
+
+        ImGui::SameLine();
+        bool canRedo = m_history.CanRedo();
+        if (!canRedo) ImGui::BeginDisabled();
+        if (ImGui::SmallButton("Redo")) {
+            PerformRedo();
+        }
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+            std::string tip = canRedo ? ("Redo: " + m_history.GetRedoDescription() + " (Ctrl+Shift+Z)") : "Nothing to redo (Ctrl+Shift+Z)";
+            ImGui::SetTooltip("%s", tip.c_str());
+        }
+        if (!canRedo) ImGui::EndDisabled();
 
         ImGui::SameLine();
         ImGui::Dummy(ImVec2(10.0f, 0.0f));
@@ -1515,6 +1568,7 @@ void StandaloneUIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& s
                 m_lastSelectedEdge = MakeEdgeKey(static_cast<uint32_t>(hoverV0), static_cast<uint32_t>(hoverV1));
                 m_hasLastSelectedEdge = true;
                 m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
+                PushHistoryState("Select Edge Loop in 2D");
                 char msg[128];
                 snprintf(msg, sizeof(msg), "Selected edge loop in 2D: %zu edges selected", m_lowPolyMesh.selectedEdges.size());
                 m_uvStatusMessage = msg;
@@ -1526,6 +1580,7 @@ void StandaloneUIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& s
                                                  edgeKey.first, edgeKey.second, true);
                     m_lastSelectedEdge = edgeKey;
                     m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
+                    PushHistoryState("Select Shortest Path in 2D");
                     char msg[128];
                     snprintf(msg, sizeof(msg), "Selected path between edges in 2D: %zu edges total", m_lowPolyMesh.selectedEdges.size());
                     m_uvStatusMessage = msg;
@@ -1539,6 +1594,7 @@ void StandaloneUIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& s
                     m_hasLastSelectedEdge = true;
                     m_lowPolyMesh.GenerateSelectedEdgeLines();
                     m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
+                    PushHistoryState("Toggle Edge Selection in 2D");
                 } else {
                     m_lowPolyMesh.selectedEdges.clear();
                     m_lowPolyMesh.selectedEdges.insert(edgeKey);
@@ -1546,6 +1602,7 @@ void StandaloneUIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& s
                     m_hasLastSelectedEdge = true;
                     m_lowPolyMesh.GenerateSelectedEdgeLines();
                     m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
+                    PushHistoryState("Select Edge in 2D");
                 }
             }
 
@@ -1557,6 +1614,7 @@ void StandaloneUIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& s
                     m_hasLastSelectedEdge = true;
                     m_lowPolyMesh.GenerateSelectedEdgeLines();
                     m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
+                    PushHistoryState("Select Edge in 2D");
                 }
                 m_markingMenu.active = true;
                 m_markingMenu.centerPos = io.MousePos;
@@ -1569,6 +1627,7 @@ void StandaloneUIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& s
                     m_hasLastSelectedEdge = false;
                     m_lowPolyMesh.GenerateSelectedEdgeLines();
                     m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
+                    PushHistoryState("Clear Selection");
                 }
             }
             if (io.KeyShift && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
@@ -1718,6 +1777,7 @@ void StandaloneUIManager::ExecuteMarkingMenuAction(int wedge) {
             UVCutter::CutSelectedEdges(m_lowPolyMesh);
             m_viewportRenderer.UpdateSeams(m_lowPolyMesh);
             m_viewportRenderer.showSeams = true;
+            PushHistoryState("Maya Cut UVs");
             char msg[128];
             snprintf(msg, sizeof(msg), "Cut %zu seam edge(s) via Maya gesture", count);
             m_uvStatusMessage = msg;
@@ -1730,6 +1790,7 @@ void StandaloneUIManager::ExecuteMarkingMenuAction(int wedge) {
             size_t count = m_lowPolyMesh.selectedEdges.size();
             UVCutter::SewSelectedEdges(m_lowPolyMesh);
             m_viewportRenderer.UpdateSeams(m_lowPolyMesh);
+            PushHistoryState("Maya Sew UVs");
             char msg[128];
             snprintf(msg, sizeof(msg), "Sewed %zu edge(s) via Maya gesture", count);
             m_uvStatusMessage = msg;
@@ -1744,6 +1805,7 @@ void StandaloneUIManager::ExecuteMarkingMenuAction(int wedge) {
                 UVCutter::SelectEdgeLoop(m_lowPolyMesh, edge.first, edge.second, true);
             }
             m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
+            PushHistoryState("Maya Select Edge Loop");
             char msg[128];
             snprintf(msg, sizeof(msg), "Selected edge loop(s): %zu edges selected", m_lowPolyMesh.selectedEdges.size());
             m_uvStatusMessage = msg;
@@ -1758,6 +1820,7 @@ void StandaloneUIManager::ExecuteMarkingMenuAction(int wedge) {
             UVPacker::ApplyToMesh(m_lowPolyMesh, m_currentIslands);
             m_viewportRenderer.SetLowPolyMesh(m_lowPolyMesh, 1.0f);
             m_hasUnwrappedIslands = true;
+            PushHistoryState("Maya Unwrap & Pack");
             char msg[128];
             snprintf(msg, sizeof(msg), "Unwrapped & packed %zu UV islands (%.1f%% efficiency)",
                      m_currentIslands.size(), m_packStats.packingEfficiency * 100.0f);
@@ -1773,6 +1836,7 @@ void StandaloneUIManager::ExecuteMarkingMenuAction(int wedge) {
                 UVCutter::SelectEdgeRing(m_lowPolyMesh, edge.first, edge.second, true);
             }
             m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
+            PushHistoryState("Maya Select Edge Ring");
             char msg[128];
             snprintf(msg, sizeof(msg), "Selected edge ring(s): %zu edges selected", m_lowPolyMesh.selectedEdges.size());
             m_uvStatusMessage = msg;
@@ -1783,6 +1847,7 @@ void StandaloneUIManager::ExecuteMarkingMenuAction(int wedge) {
         DirectX::XMMATRIX viewProj = m_viewportRenderer.GetViewProjectionMatrix();
         UVCutter::CameraProjectUVs(m_lowPolyMesh, viewProj);
         m_viewportRenderer.SetLowPolyMesh(m_lowPolyMesh, 1.0f);
+        PushHistoryState("Maya Camera Projection");
         m_uvStatusMessage = "Projected UVs from current 3D camera view";
         m_logEntries.push_back("[UV] Camera Projection applied from current viewport view.");
     } else if (wedge == 6) { // AUTO UV
@@ -1792,6 +1857,7 @@ void StandaloneUIManager::ExecuteMarkingMenuAction(int wedge) {
         m_hasLastSelectedEdge = false;
         m_lowPolyMesh.GenerateSelectedEdgeLines();
         m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
+        PushHistoryState("Maya Clear Selection");
         m_uvStatusMessage = "Selection cleared";
     }
 }
@@ -2114,6 +2180,7 @@ void StandaloneUIManager::MarkSeamsByAngle() {
     UVCutter::MarkSeamsByAngle(m_lowPolyMesh, m_seamAngleThreshold);
     m_viewportRenderer.UpdateSeams(m_lowPolyMesh);
     m_viewportRenderer.showSeams = true;
+    PushHistoryState("Mark Seams By Angle");
     char msg[128];
     snprintf(msg, sizeof(msg), "Marked %zu seams by angle (%.1f deg)", m_lowPolyMesh.cutSeams.size(), m_seamAngleThreshold);
     m_uvStatusMessage = msg;
@@ -2128,6 +2195,7 @@ void StandaloneUIManager::MarkSeamsByPolygroup() {
     UVCutter::MarkSeamsByPolygroup(m_lowPolyMesh);
     m_viewportRenderer.UpdateSeams(m_lowPolyMesh);
     m_viewportRenderer.showSeams = true;
+    PushHistoryState("Mark Seams By Polygroup");
     char msg[128];
     snprintf(msg, sizeof(msg), "Marked %zu seams along Polygroup boundaries", m_lowPolyMesh.cutSeams.size());
     m_uvStatusMessage = msg;
@@ -2142,6 +2210,7 @@ void StandaloneUIManager::MarkSeamsByUVBorders() {
     UVCutter::MarkSeamsByUVBorders(m_lowPolyMesh);
     m_viewportRenderer.UpdateSeams(m_lowPolyMesh);
     m_viewportRenderer.showSeams = true;
+    PushHistoryState("Mark Seams By UV Borders");
     char msg[128];
     snprintf(msg, sizeof(msg), "Detected %zu seams from existing UV borders", m_lowPolyMesh.cutSeams.size());
     m_uvStatusMessage = msg;
@@ -2151,6 +2220,7 @@ void StandaloneUIManager::MarkSeamsByUVBorders() {
 void StandaloneUIManager::ClearSeams() {
     UVCutter::ClearSeams(m_lowPolyMesh);
     m_viewportRenderer.UpdateSeams(m_lowPolyMesh);
+    PushHistoryState("Clear Seams");
     m_uvStatusMessage = "Cleared all seams.";
     m_logEntries.push_back("[UV Cut] Cleared all seams.");
 }
@@ -2167,6 +2237,7 @@ void StandaloneUIManager::UnwrapMesh() {
     }
     m_currentIslands = UVUnwrapper::UnwrapMesh(m_lowPolyMesh, islandsTris);
     m_hasUnwrappedIslands = true;
+    PushHistoryState("Unwrap Mesh");
     char msg[128];
     snprintf(msg, sizeof(msg), "Unwrapped %zu islands successfully", m_currentIslands.size());
     m_uvStatusMessage = msg;
@@ -2191,6 +2262,7 @@ void StandaloneUIManager::PackUVs() {
     m_viewportRenderer.UpdateSeams(m_lowPolyMesh);
 
     m_selectedUDIMs = m_lowPolyMesh.detectedUDIMs;
+    PushHistoryState("Pack UVs");
 
     char msg[256];
     snprintf(msg, sizeof(msg), "Packed %d islands across %d tile(s). Efficiency: %.1f%%",
@@ -2226,6 +2298,7 @@ void StandaloneUIManager::AutoCutUnwrapAndPack() {
     m_viewportRenderer.UpdateSeams(m_lowPolyMesh);
 
     m_selectedUDIMs = m_lowPolyMesh.detectedUDIMs;
+    PushHistoryState("Auto Cut, Unwrap & Pack");
 
     char msg[256];
     snprintf(msg, sizeof(msg), "Auto Cut & Pack complete! %d islands packed across %d tile(s) (%.1f%% efficiency)",
@@ -2274,6 +2347,7 @@ void StandaloneUIManager::SnapActiveCurveToSeams() {
     c->isBaked = true;
     m_viewportRenderer.UpdateSeams(m_lowPolyMesh);
     m_viewportRenderer.showSeams = true;
+    PushHistoryState("Snap Curve To Seams");
     char msg[128];
     snprintf(msg, sizeof(msg), "Snapped %s to %zu seam edges on mesh.", c->name.c_str(), seamEdges.size());
     m_uvStatusMessage = msg;
@@ -2297,6 +2371,7 @@ void StandaloneUIManager::CutActiveCurveIntoTopology() {
     m_viewportRenderer.UpdateSeams(m_lowPolyMesh);
     m_viewportRenderer.showSeams = true;
     m_curveManager.AddCurve();
+    PushHistoryState("Cut Curve Into Topology");
     char msg[128];
     snprintf(msg, sizeof(msg), "Cut %s into mesh topology (%zu new seam edges). Ready for next curve.", c->name.c_str(), seamEdges.size());
     m_uvStatusMessage = msg;
@@ -2314,6 +2389,7 @@ void StandaloneUIManager::BakeAllCurvesToSeams(bool cutIntoTopology) {
     }
     m_viewportRenderer.UpdateSeams(m_lowPolyMesh);
     m_viewportRenderer.showSeams = true;
+    PushHistoryState("Bake All Curves To Seams");
     char msg[128];
     snprintf(msg, sizeof(msg), "Baked all curves into mesh seams (%s). Total seams: %zu",
         cutIntoTopology ? "topological cut" : "edge snapped", m_lowPolyMesh.cutSeams.size());
@@ -2325,6 +2401,7 @@ void StandaloneUIManager::ClearActiveCurve() {
     SurfaceCurve* c = m_curveManager.GetActiveCurve();
     if (c) {
         c->Clear();
+        PushHistoryState("Clear Curve");
         m_uvStatusMessage = "Cleared points on active curve.";
         m_logEntries.push_back("[Curve Cut] Cleared points on active curve.");
     }
@@ -2332,6 +2409,7 @@ void StandaloneUIManager::ClearActiveCurve() {
 
 void StandaloneUIManager::ClearAllCurves() {
     m_curveManager.ClearAll();
+    PushHistoryState("Clear All Curves");
     m_uvStatusMessage = "Cleared all curves.";
     m_logEntries.push_back("[Curve Cut] Cleared all curves.");
 }
@@ -2835,6 +2913,52 @@ void StandaloneUIManager::ResetPaintedSkew() {
     if (!m_hasLowPoly || m_lowPolyMesh.vertices.empty()) return;
     m_lowPolyMesh.vertexSkew.assign(m_lowPolyMesh.vertices.size(), 0.0f);
     m_viewportRenderer.UpdateSkew(m_lowPolyMesh, 1.0f);
+}
+
+void StandaloneUIManager::PushHistoryState(const std::string& desc) {
+    if (!m_hasLowPoly) return;
+    if (m_history.GetStateCount() == 0) {
+        m_history.PushState("Initial Mesh", m_lowPolyMesh, m_curveManager);
+    }
+    m_history.PushState(desc, m_lowPolyMesh, m_curveManager);
+}
+
+void StandaloneUIManager::PerformUndo() {
+    std::string undoneDesc;
+    if (m_history.Undo(m_lowPolyMesh, m_curveManager, undoneDesc)) {
+        m_viewportRenderer.SetLowPolyMesh(m_lowPolyMesh, m_settings.lowPolyScale);
+        m_viewportRenderer.UpdateSeams(m_lowPolyMesh);
+        m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
+        m_hasLastSelectedEdge = false;
+        m_draggingPointIndex = -1;
+        m_curveManager.selectedPointIndex = -1;
+        m_curveManager.hoveredPointIndex = -1;
+        char msg[128];
+        snprintf(msg, sizeof(msg), "Undo: %s", undoneDesc.c_str());
+        m_uvStatusMessage = msg;
+        m_logEntries.push_back(std::string("[Undo] ") + undoneDesc);
+    } else {
+        m_uvStatusMessage = "Nothing to undo";
+    }
+}
+
+void StandaloneUIManager::PerformRedo() {
+    std::string redoneDesc;
+    if (m_history.Redo(m_lowPolyMesh, m_curveManager, redoneDesc)) {
+        m_viewportRenderer.SetLowPolyMesh(m_lowPolyMesh, m_settings.lowPolyScale);
+        m_viewportRenderer.UpdateSeams(m_lowPolyMesh);
+        m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
+        m_hasLastSelectedEdge = false;
+        m_draggingPointIndex = -1;
+        m_curveManager.selectedPointIndex = -1;
+        m_curveManager.hoveredPointIndex = -1;
+        char msg[128];
+        snprintf(msg, sizeof(msg), "Redo: %s", redoneDesc.c_str());
+        m_uvStatusMessage = msg;
+        m_logEntries.push_back(std::string("[Redo] ") + redoneDesc);
+    } else {
+        m_uvStatusMessage = "Nothing to redo";
+    }
 }
 
 } // namespace Baker

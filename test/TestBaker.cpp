@@ -7,6 +7,7 @@
 #include "../src/uv/UVUnwrapper.h"
 #include "../src/uv/UVPacker.h"
 #include "../src/uv/UVSurfaceCurve.h"
+#include "../src/app/HistoryManager.h"
 
 #include <iostream>
 #include <fstream>
@@ -687,6 +688,91 @@ int main(int argc, char** argv) {
         std::cout << "  Camera Projection: mapped all vertices to [0, 1] normalized UV bounds." << std::endl;
 
         std::cout << "  Maya Edge Loop, Ring, Shortest Path, Cut, Sew, and Camera Proj VERIFIED!" << std::endl;
+    }
+
+    // 12. Test Undo / Redo History Stack (Ctrl+Z / Ctrl+Shift+Z)
+    {
+        std::cout << "[Test 12/12] Testing Undo and Redo History Stack (Ctrl+Z / Ctrl+Shift+Z)..." << std::endl;
+        HistoryManager history(30);
+        LowPolyMesh testMesh;
+        testMesh.vertices.resize(10);
+        testMesh.triangles.resize(4);
+        CurveManager testCurveMgr;
+
+        // Initial State
+        history.PushState("Load Mesh", testMesh, testCurveMgr);
+        assert(!history.CanUndo());
+        assert(!history.CanRedo());
+
+        // Action 1: Cut Seams
+        testMesh.cutSeams.insert({ 0, 1 });
+        testMesh.cutSeams.insert({ 1, 2 });
+        history.PushState("Cut UV Seams", testMesh, testCurveMgr);
+        assert(history.CanUndo());
+        assert(!history.CanRedo());
+        assert(history.GetUndoDescription() == "Cut UV Seams");
+
+        // Action 2: Add Curve Point
+        testCurveMgr.AddCurve("CutLine1");
+        testCurveMgr.AddPointToActive(Vec3(1.0f, 2.0f, 3.0f), Vec3(0, 1, 0), 0);
+        history.PushState("Add Curve Point", testMesh, testCurveMgr);
+        assert(history.CanUndo());
+        assert(!history.CanRedo());
+        assert(history.GetUndoDescription() == "Add Curve Point");
+
+        // Undo Action 2 -> reverts to Action 1 state
+        LowPolyMesh restoredMesh;
+        CurveManager restoredCurveMgr;
+        std::string undoneDesc;
+        bool u1 = history.Undo(restoredMesh, restoredCurveMgr, undoneDesc);
+        assert(u1);
+        assert(undoneDesc == "Add Curve Point");
+        assert(restoredMesh.cutSeams.size() == 2);
+        assert(restoredCurveMgr.curves.empty());
+        assert(history.CanUndo());
+        assert(history.CanRedo());
+        assert(history.GetRedoDescription() == "Add Curve Point");
+        std::cout << "  Undo step 1: reverted '" << undoneDesc << "' successfully." << std::endl;
+
+        // Undo Action 1 -> reverts to Initial state
+        bool u2 = history.Undo(restoredMesh, restoredCurveMgr, undoneDesc);
+        assert(u2);
+        assert(undoneDesc == "Cut UV Seams");
+        assert(restoredMesh.cutSeams.empty());
+        assert(!history.CanUndo());
+        assert(history.CanRedo());
+        std::cout << "  Undo step 2: reverted '" << undoneDesc << "' to initial clean mesh." << std::endl;
+
+        // Redo Action 1 -> restores Action 1 state
+        std::string redoneDesc;
+        bool r1 = history.Redo(restoredMesh, restoredCurveMgr, redoneDesc);
+        assert(r1);
+        assert(redoneDesc == "Cut UV Seams");
+        assert(restoredMesh.cutSeams.size() == 2);
+        assert(history.CanUndo());
+        assert(history.CanRedo());
+        std::cout << "  Redo step 1: reapplied '" << redoneDesc << "' successfully." << std::endl;
+
+        // Redo Action 2 -> restores Action 2 state
+        bool r2 = history.Redo(restoredMesh, restoredCurveMgr, redoneDesc);
+        assert(r2);
+        assert(redoneDesc == "Add Curve Point");
+        assert(restoredCurveMgr.curves.size() == 1);
+        assert(restoredCurveMgr.curves[0].points.size() == 1);
+        assert(history.CanUndo());
+        assert(!history.CanRedo());
+        std::cout << "  Redo step 2: reapplied '" << redoneDesc << "' with curve points intact." << std::endl;
+
+        // Branching: Undo 1 step then perform new action (truncates redo stack)
+        history.Undo(restoredMesh, restoredCurveMgr, undoneDesc);
+        assert(history.CanRedo());
+        restoredMesh.selectedEdges.insert({ 3, 4 });
+        history.PushState("New Branch Selection", restoredMesh, restoredCurveMgr);
+        assert(history.CanUndo());
+        assert(!history.CanRedo()); // Redo stack truncated
+        std::cout << "  Branching history: verified forward redo stack truncated on new action." << std::endl;
+
+        std::cout << "  Undo & Redo History Stack (Ctrl+Z / Ctrl+Shift+Z) VERIFIED!" << std::endl;
     }
 
     std::cout << "=== All Advanced Architecture Plan Tests PASSED! ===" << std::endl;
