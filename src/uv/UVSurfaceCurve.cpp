@@ -95,6 +95,8 @@ void SurfaceCurve::MovePoint(size_t index, const Vec3& newPos, const Vec3& newNo
 void SurfaceCurve::RemovePoint(size_t index) {
     if (index < points.size()) {
         points.erase(points.begin() + index);
+        segmentPaths.clear();
+        segmentCustomized.clear();
         isBaked = false;
     }
 }
@@ -102,48 +104,215 @@ void SurfaceCurve::RemovePoint(size_t index) {
 void SurfaceCurve::Clear() {
     points.clear();
     sampledPath.clear();
+    segmentPaths.clear();
+    segmentCustomized.clear();
     isBaked = false;
+}
+
+void SurfaceCurve::RebuildSampledPath() {
+    sampledPath.clear();
+    for (size_t i = 0; i < segmentPaths.size(); ++i) {
+        AddSegmentPath(segmentPaths[i]);
+    }
+    if (!isClosed && !points.empty() && sampledPath.empty()) {
+        sampledPath.push_back(points.back().position);
+    }
 }
 
 void SurfaceCurve::UpdateSampledPath(const LowPolyMesh& mesh,
                                     const DirectX::XMMATRIX* worldMat,
                                     const DirectX::XMMATRIX* viewProjMat,
                                     int vpWidth, int vpHeight) {
-    sampledPath.clear();
-    if (points.empty()) return;
+    if (points.empty()) {
+        sampledPath.clear();
+        segmentPaths.clear();
+        segmentCustomized.clear();
+        return;
+    }
     if (points.size() == 1) {
-        sampledPath.push_back(points[0].position);
+        sampledPath = { points[0].position };
+        segmentPaths.clear();
+        segmentCustomized.clear();
         return;
     }
 
     size_t count = points.size();
     size_t segCount = isClosed ? count : (count - 1);
 
+    if (segmentPaths.size() != segCount) {
+        segmentPaths.resize(segCount);
+        segmentCustomized.resize(segCount, false);
+    }
+
     bool hasCamera = (worldMat && viewProjMat && vpWidth > 10 && vpHeight > 10);
 
     for (size_t i = 0; i < segCount; ++i) {
+        // If this segment has been customized (smoothed or straightened) by the user, preserve it!
+        if (segmentCustomized[i] && !segmentPaths[i].empty()) {
+            continue;
+        }
+
         const Vec3& p0 = points[i].position;
         const Vec3& p1 = points[(i + 1) % count].position;
 
         if (hasCamera) {
-            auto seg = CurveManager::SampleCameraSurfacePath(
+            segmentPaths[i] = CurveManager::SampleCameraSurfacePath(
                 mesh, *worldMat, *viewProjMat, vpWidth, vpHeight, p0, p1, 36
             );
-            AddSegmentPath(seg);
         } else {
             // Fallback: 24 surface-interpolated points
+            segmentPaths[i].clear();
             int numSamples = 24;
-            for (int s = 0; s < numSamples; ++s) {
+            for (int s = 0; s <= numSamples; ++s) {
                 float t = static_cast<float>(s) / static_cast<float>(numSamples);
                 Vec3 pInter = p0 * (1.0f - t) + p1 * t;
                 Vec3 nInter = (points[i].normal * (1.0f - t) + points[(i + 1) % count].normal * t).Normalized();
-                sampledPath.push_back(pInter + nInter * 0.0015f);
+                segmentPaths[i].push_back(pInter + nInter * 0.0015f);
             }
         }
     }
 
-    if (!isClosed && !points.empty()) {
-        sampledPath.push_back(points.back().position);
+    RebuildSampledPath();
+}
+
+bool SurfaceCurve::StraightenSegment(size_t p0, size_t p1, const LowPolyMesh& mesh) {
+    if (points.size() < 2) return false;
+    if (p0 >= points.size()) p0 = points.size() - 1;
+    if (p1 >= points.size()) p1 = points.size() - 1;
+    if (p0 == p1) return false;
+
+    size_t count = points.size();
+    size_t segCount = isClosed ? count : (count - 1);
+    if (segmentPaths.size() != segCount) {
+        segmentPaths.resize(segCount);
+        segmentCustomized.resize(segCount, false);
+    }
+
+    size_t startIdx = p0;
+    size_t endIdx = p1;
+    if (startIdx > endIdx && !isClosed) {
+        std::swap(startIdx, endIdx);
+    }
+
+    auto straightenSingleSeg = [&](size_t segIdx) {
+        if (segIdx >= segmentPaths.size()) return;
+        const Vec3& ptA = points[segIdx].position;
+        const Vec3& ptB = points[(segIdx + 1) % count].position;
+        segmentPaths[segIdx].clear();
+        int samples = 24;
+        for (int s = 0; s <= samples; ++s) {
+            float t = static_cast<float>(s) / static_cast<float>(samples);
+            segmentPaths[segIdx].push_back(ptA * (1.0f - t) + ptB * t);
+        }
+        segmentCustomized[segIdx] = true;
+    };
+
+    if (startIdx < endIdx) {
+        for (size_t s = startIdx; s < endIdx; ++s) {
+            straightenSingleSeg(s);
+        }
+    } else if (isClosed) {
+        for (size_t s = startIdx; s < count; ++s) {
+            straightenSingleSeg(s);
+        }
+        for (size_t s = 0; s < endIdx; ++s) {
+            straightenSingleSeg(s);
+        }
+    }
+
+    RebuildSampledPath();
+    isBaked = false;
+    return true;
+}
+
+bool SurfaceCurve::SmoothSegment(size_t p0, size_t p1, int iterations, float factor, const LowPolyMesh& mesh) {
+    if (points.size() < 2) return false;
+    if (p0 >= points.size()) p0 = points.size() - 1;
+    if (p1 >= points.size()) p1 = points.size() - 1;
+    if (p0 == p1) return false;
+
+    size_t count = points.size();
+    size_t segCount = isClosed ? count : (count - 1);
+    if (segmentPaths.size() != segCount) {
+        segmentPaths.resize(segCount);
+        segmentCustomized.resize(segCount, false);
+    }
+
+    size_t startIdx = p0;
+    size_t endIdx = p1;
+    if (startIdx > endIdx && !isClosed) {
+        std::swap(startIdx, endIdx);
+    }
+
+    iterations = std::max(1, std::min(50, iterations));
+    factor = std::max(0.01f, std::min(1.0f, factor));
+
+    auto smoothSingleSeg = [&](size_t segIdx) {
+        if (segIdx >= segmentPaths.size()) return;
+        auto& seg = segmentPaths[segIdx];
+        if (seg.size() < 16) {
+            Vec3 ptA = points[segIdx].position;
+            Vec3 ptB = points[(segIdx + 1) % count].position;
+            seg.clear();
+            for (int k = 0; k <= 24; ++k) {
+                float t = static_cast<float>(k) / 24.0f;
+                seg.push_back(ptA * (1.0f - t) + ptB * t);
+            }
+        }
+
+        // Perform Laplacian smoothing relaxation with fixed endpoints
+        for (int iter = 0; iter < iterations; ++iter) {
+            std::vector<Vec3> nextSeg = seg;
+            for (size_t k = 1; k + 1 < seg.size(); ++k) {
+                Vec3 laplacian = (seg[k - 1] + seg[k + 1]) * 0.5f;
+                nextSeg[k] = seg[k] * (1.0f - factor) + laplacian * factor;
+            }
+            seg = std::move(nextSeg);
+        }
+        segmentCustomized[segIdx] = true;
+    };
+
+    if (startIdx < endIdx) {
+        for (size_t s = startIdx; s < endIdx; ++s) {
+            smoothSingleSeg(s);
+        }
+    } else if (isClosed) {
+        for (size_t s = startIdx; s < count; ++s) {
+            smoothSingleSeg(s);
+        }
+        for (size_t s = 0; s < endIdx; ++s) {
+            smoothSingleSeg(s);
+        }
+    }
+
+    RebuildSampledPath();
+    isBaked = false;
+    return true;
+}
+
+bool SurfaceCurve::SmoothEntireCurve(int iterations, float factor, const LowPolyMesh& mesh) {
+    if (points.size() < 2) return false;
+    size_t count = points.size();
+    size_t endP = isClosed ? 0 : (count - 1);
+    return SmoothSegment(0, endP, iterations, factor, mesh);
+}
+
+bool SurfaceCurve::StraightenEntireCurve(const LowPolyMesh& mesh) {
+    if (points.size() < 2) return false;
+    size_t count = points.size();
+    size_t endP = isClosed ? 0 : (count - 1);
+    return StraightenSegment(0, endP, mesh);
+}
+
+void SurfaceCurve::ResetSegmentCustomization(size_t p0, size_t p1) {
+    if (segmentCustomized.empty()) return;
+    size_t startIdx = p0;
+    size_t endIdx = p1;
+    if (startIdx > endIdx && !isClosed) {
+        std::swap(startIdx, endIdx);
+    }
+    for (size_t s = startIdx; s < endIdx && s < segmentCustomized.size(); ++s) {
+        segmentCustomized[s] = false;
     }
 }
 
@@ -272,6 +441,7 @@ std::vector<Vec3> CurveManager::SampleCameraSurfacePath(
     path.reserve(numSamples + 2);
     path.push_back(startLocal);
 
+    float segLen = (endLocal - startLocal).Length();
     Vec3 lastValidHit = startLocal;
 
     for (int i = 1; i < numSamples; ++i) {
@@ -298,15 +468,24 @@ std::vector<Vec3> CurveManager::SampleCameraSurfacePath(
         Vec3 hitPos, hitNormal;
         int hitTri = -1;
 
+        Vec3 pExpected = startLocal * (1.0f - t) + endLocal * t;
+
         if (mesh.Raycast(localOrg, localDir, hitT, hitPos, hitNormal, hitTri)) {
-            // Offset slightly along surface normal to cleanly render above polygons
-            Vec3 contouredPt = hitPos + hitNormal * 0.0015f;
-            path.push_back(contouredPt);
-            lastValidHit = contouredPt;
+            // Check for depth occlusion jump into distant background geometry
+            float distFromExpected = (hitPos - pExpected).Length();
+            if (segLen > 1e-4f && distFromExpected > segLen * 0.75f) {
+                // Ray jumped across an occlusion gap or crevice onto distant background surface.
+                // Interpolate smoothly across the foreground span rather than plunging into the background!
+                path.push_back(pExpected);
+            } else {
+                // Offset slightly along surface normal to cleanly render above polygons
+                Vec3 contouredPt = hitPos + hitNormal * 0.0015f;
+                path.push_back(contouredPt);
+                lastValidHit = contouredPt;
+            }
         } else {
-            // If grazing edge or occlusion gap, interpolate along 3D contour from last hit
-            Vec3 pInter = startLocal * (1.0f - t) + endLocal * t;
-            path.push_back(pInter);
+            // If grazing edge or silhouette gap, interpolate along 3D contour
+            path.push_back(pExpected);
         }
     }
 

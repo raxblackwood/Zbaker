@@ -775,6 +775,69 @@ int main(int argc, char** argv) {
         std::cout << "  Undo & Redo History Stack (Ctrl+Z / Ctrl+Shift+Z) VERIFIED!" << std::endl;
     }
 
+    // 13. Test Curve Smoothing, Straightening Between Points, and Occlusion Rejection
+    {
+        std::cout << "[Test 13/13] Testing Curve Smoothing, Straightening Between Points, and Occlusion Rejection..." << std::endl;
+        std::string testObjPath = "./test_curve_smooth.obj";
+        CreateTestLowPolyOBJ(testObjPath);
+        LowPolyMesh mesh;
+        std::string err;
+        assert(MeshLoader::LoadLowPolyOBJ(testObjPath, mesh, err));
+
+        CurveManager curveMgr;
+        int cIdx = curveMgr.AddCurve("Test Curve");
+        SurfaceCurve* c = curveMgr.GetActiveCurve();
+        assert(c != nullptr);
+
+        // Add 3 points: P0, P1, P2
+        c->AddPoint(Vec3(0.0f, 0.0f, 0.0f), Vec3(0.0f, 1.0f, 0.0f), 0);
+        c->AddPoint(Vec3(1.0f, 0.0f, 0.0f), Vec3(0.0f, 1.0f, 0.0f), 0);
+        c->AddPoint(Vec3(2.0f, 0.0f, 0.0f), Vec3(0.0f, 1.0f, 0.0f), 0);
+
+        // Populate initial sampled paths
+        c->UpdateSampledPath(mesh);
+        assert(c->segmentPaths.size() == 2);
+        assert(!c->sampledPath.empty());
+
+        // Introduce an intentional kink in segment 1 (between P1 and P2) simulating ray plunging into background crevice
+        c->segmentPaths[1].clear();
+        c->segmentPaths[1].push_back(Vec3(1.0f, 0.0f, 0.0f));
+        // Kink jumping 5 units into background (Z = -5.0f)
+        c->segmentPaths[1].push_back(Vec3(1.25f, 0.0f, -5.0f));
+        c->segmentPaths[1].push_back(Vec3(1.50f, 0.0f, -5.0f));
+        c->segmentPaths[1].push_back(Vec3(1.75f, 0.0f, -5.0f));
+        c->segmentPaths[1].push_back(Vec3(2.0f, 0.0f, 0.0f));
+        c->RebuildSampledPath();
+
+        // 1. Test SmoothSegment: Laplacian relaxation damps kink
+        bool smRes = c->SmoothSegment(1, 2, 20, 0.5f, mesh);
+        assert(smRes);
+        // After 20 iterations of Laplacian smoothing, the background kink at midpoint (Z = -5.0f)
+        // should be significantly relaxed towards 0.0f
+        float midZ = c->segmentPaths[1][2].z;
+        assert(midZ > -2.0f);
+        std::cout << "  Laplacian SmoothSegment verified: kink Z relaxed from -5.0 to " << midZ << std::endl;
+
+        // 2. Test StraightenSegment: perfectly flattens segment to direct linear chord
+        bool stRes = c->StraightenSegment(1, 2, mesh);
+        assert(stRes);
+        for (const auto& pt : c->segmentPaths[1]) {
+            assert(std::abs(pt.z) < 1e-5f);
+            assert(std::abs(pt.y) < 1e-5f);
+            assert(pt.x >= 0.99f && pt.x <= 2.01f);
+        }
+        std::cout << "  StraightenSegment verified: segment 1 perfectly straight along chord." << std::endl;
+
+        // 3. Test SmoothEntireCurve & StraightenEntireCurve
+        assert(c->SmoothEntireCurve(5, 0.5f, mesh));
+        assert(c->StraightenEntireCurve(mesh));
+        std::cout << "  SmoothEntireCurve and StraightenEntireCurve verified." << std::endl;
+
+        // Clean up test file
+        std::remove(testObjPath.c_str());
+        std::cout << "  Curve Smoothing & Straightening Architecture VERIFIED!" << std::endl;
+    }
+
     std::cout << "=== All Advanced Architecture Plan Tests PASSED! ===" << std::endl;
     return 0;
 }

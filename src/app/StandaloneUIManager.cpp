@@ -1034,8 +1034,13 @@ void StandaloneUIManager::RenderViewportPanel() {
                 // 3. Handle Click to Grab or Add Point on Surface
                 if (ImGui::IsMouseClicked(0)) {
                     if (hoveredPt >= 0) {
-                        m_draggingPointIndex = hoveredPt;
-                        m_curveManager.selectedPointIndex = hoveredPt;
+                        if (io.KeyShift) {
+                            m_curveManager.selectedPointEndIndex = hoveredPt;
+                        } else {
+                            m_draggingPointIndex = hoveredPt;
+                            m_curveManager.selectedPointIndex = hoveredPt;
+                            m_curveManager.selectedPointEndIndex = -1;
+                        }
                     } else if (hit) {
                         DirectX::XMMATRIX worldMat = m_viewportRenderer.GetLowPolyWorldMatrix();
                         DirectX::XMMATRIX viewProjMat = m_viewportRenderer.GetViewProjectionMatrix();
@@ -1122,6 +1127,30 @@ void StandaloneUIManager::RenderViewportPanel() {
                 }
             }
 
+            // Highlight selected segment if any
+            if (isActive && m_curveManager.selectedPointIndex >= 0 && curve.points.size() >= 2) {
+                int p0 = m_curveManager.selectedPointIndex;
+                int p1 = (m_curveManager.selectedPointEndIndex >= 0) ? m_curveManager.selectedPointEndIndex
+                                                                      : (p0 + 1 < (int)curve.points.size() ? p0 + 1 : (curve.isClosed ? 0 : p0));
+                if (p0 != p1) {
+                    size_t sStart = static_cast<size_t>(p0);
+                    size_t sEnd = static_cast<size_t>(p1);
+                    if (sStart > sEnd && !curve.isClosed) std::swap(sStart, sEnd);
+
+                    for (size_t s = sStart; s < sEnd && s < curve.segmentPaths.size(); ++s) {
+                        const auto& seg = curve.segmentPaths[s];
+                        for (size_t k = 0; k + 1 < seg.size(); ++k) {
+                            float s0X, s0Y, s1X, s1Y;
+                            if (m_viewportRenderer.ProjectToScreen(DirectX::XMFLOAT3(seg[k].x, seg[k].y, seg[k].z), s0X, s0Y) &&
+                                m_viewportRenderer.ProjectToScreen(DirectX::XMFLOAT3(seg[k+1].x, seg[k+1].y, seg[k+1].z), s1X, s1Y)) {
+                                drawList->AddLine(ImVec2(viewX0 + s0X, viewY0 + s0Y), ImVec2(viewX0 + s1X, viewY0 + s1Y),
+                                                  IM_COL32(255, 60, 220, 255), 4.5f);
+                            }
+                        }
+                    }
+                }
+            }
+
             // Draw control point handles
             size_t ptCount = curve.points.size();
             for (size_t p = 0; p < ptCount; ++p) {
@@ -1129,7 +1158,9 @@ void StandaloneUIManager::RenderViewportPanel() {
                 float sX, sY;
                 if (m_viewportRenderer.ProjectToScreen(DirectX::XMFLOAT3(pt.x, pt.y, pt.z), sX, sY)) {
                     ImVec2 scrP(viewX0 + sX, viewY0 + sY);
-                    bool isSelected = isActive && (m_curveManager.selectedPointIndex == static_cast<int>(p) || m_draggingPointIndex == static_cast<int>(p));
+                    bool isSelected = isActive && (m_curveManager.selectedPointIndex == static_cast<int>(p) ||
+                                                   m_curveManager.selectedPointEndIndex == static_cast<int>(p) ||
+                                                   m_draggingPointIndex == static_cast<int>(p));
                     bool isHovered = isActive && (m_curveManager.hoveredPointIndex == static_cast<int>(p));
 
                     if (isSelected || isHovered) {
@@ -1301,7 +1332,7 @@ void StandaloneUIManager::RenderViewportPanel() {
         ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
         ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.14f, 0.15f, 0.18f, 0.94f));
         ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.30f, 0.32f, 0.38f, 0.85f));
-        float barW = (std::min)(680.0f, avail.x - 24.0f);
+        float barW = (std::min)(940.0f, avail.x - 24.0f);
         ImGui::BeginChild("##brush_bar", ImVec2(barW, 36.0f), true, ImGuiWindowFlags_NoScrollbar);
         {
             if (m_toolMode == ToolMode::DrawCurve) {
@@ -1327,6 +1358,45 @@ void StandaloneUIManager::RenderViewportPanel() {
                 ImGui::SameLine();
                 if (c) {
                     ImGui::Checkbox("Loop", &c->isClosed);
+                    ImGui::SameLine();
+                }
+                if (c && c->points.size() >= 2) {
+                    int ptCountInt = static_cast<int>(c->points.size());
+                    int p0 = (m_curveManager.selectedPointIndex >= 0) ? m_curveManager.selectedPointIndex : 0;
+                    if (p0 >= ptCountInt) p0 = ptCountInt - 1;
+                    int defaultP1 = (p0 + 1 < ptCountInt) ? (p0 + 1) : (c->isClosed ? 0 : p0);
+                    int p1 = (m_curveManager.selectedPointEndIndex >= 0) ? m_curveManager.selectedPointEndIndex : defaultP1;
+                    if (p1 >= ptCountInt) p1 = ptCountInt - 1;
+
+                    char strBtn[48];
+                    snprintf(strBtn, sizeof(strBtn), "Straighten P%d->P%d", p0, p1);
+                    if (ImGui::Button(strBtn)) {
+                        PushHistoryState("Straighten Curve Segment");
+                        c->StraightenSegment(p0, p1, m_lowPolyMesh);
+                        char msg[128];
+                        snprintf(msg, sizeof(msg), "Straightened segment P%d -> P%d", p0, p1);
+                        m_uvStatusMessage = msg;
+                    }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Straightens the surface path between P%d and P%d", p0, p1);
+
+                    ImGui::SameLine();
+                    char smBtn[48];
+                    snprintf(smBtn, sizeof(smBtn), "Smooth P%d->P%d", p0, p1);
+                    if (ImGui::Button(smBtn)) {
+                        PushHistoryState("Smooth Curve Segment");
+                        c->SmoothSegment(p0, p1, m_curveManager.smoothIterations, m_curveManager.smoothFactor, m_lowPolyMesh);
+                        char msg[128];
+                        snprintf(msg, sizeof(msg), "Smoothed segment P%d -> P%d (%d iter)", p0, p1, m_curveManager.smoothIterations);
+                        m_uvStatusMessage = msg;
+                    }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Smooths out kinks/deviations between P%d and P%d using Laplacian relaxation", p0, p1);
+
+                    ImGui::SameLine();
+                    if (ImGui::Button("Smooth All")) {
+                        PushHistoryState("Smooth Entire Curve");
+                        c->SmoothEntireCurve(m_curveManager.smoothIterations, m_curveManager.smoothFactor, m_lowPolyMesh);
+                        m_uvStatusMessage = "Smoothed entire curve";
+                    }
                     ImGui::SameLine();
                 }
                 if (ImGui::Button("Clear")) {
@@ -2530,6 +2600,82 @@ void StandaloneUIManager::RenderUVCutAndPackPanel() {
                     ImGui::EndTable();
                 }
                 ImGui::TreePop();
+            }
+        }
+
+        // Edit Curve Controls (Smooth & Straighten between points)
+        if (c && c->points.size() >= 2) {
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+            BakerUI::SectionLabel("EDIT ACTIVE CURVE (SMOOTH & STRAIGHTEN)");
+
+            int ptCountInt = static_cast<int>(c->points.size());
+            int p0 = (m_curveManager.selectedPointIndex >= 0) ? m_curveManager.selectedPointIndex : 0;
+            if (p0 >= ptCountInt) p0 = ptCountInt - 1;
+            int defaultP1 = (p0 + 1 < ptCountInt) ? (p0 + 1) : (c->isClosed ? 0 : p0);
+            int p1 = (m_curveManager.selectedPointEndIndex >= 0) ? m_curveManager.selectedPointEndIndex : defaultP1;
+            if (p1 >= ptCountInt) p1 = ptCountInt - 1;
+
+            if (BakerUI::BeginProps("##curve_edit_props")) {
+                BakerUI::PropInt("From Point (P#)", &p0, 0, ptCountInt - 1, "Start control point of segment to edit");
+                BakerUI::PropInt("To Point (P#)", &p1, 0, ptCountInt - 1, "End control point of segment to edit");
+                BakerUI::PropInt("Smooth Iterations", &m_curveManager.smoothIterations, 1, 50, "Laplacian relaxation passes");
+                BakerUI::PropFloat("Smooth Factor", &m_curveManager.smoothFactor, 0.01f, 0.05f, 1.0f, "%.2f", "Smoothing blend weight (0.50 recommended)");
+                BakerUI::EndProps();
+            }
+            m_curveManager.selectedPointIndex = p0;
+            m_curveManager.selectedPointEndIndex = p1;
+
+            ImGui::Spacing();
+            char straightBtn[64];
+            snprintf(straightBtn, sizeof(straightBtn), "STRAIGHTEN SEGMENT (P%d -> P%d)", p0, p1);
+            if (BakerUI::SecondaryButton(straightBtn)) {
+                PushHistoryState("Straighten Curve Segment");
+                c->StraightenSegment(p0, p1, m_lowPolyMesh);
+                char msg[128];
+                snprintf(msg, sizeof(msg), "Straightened segment between P%d and P%d.", p0, p1);
+                m_uvStatusMessage = msg;
+                m_logEntries.push_back(std::string("[Curve Edit] ") + msg);
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Replaces sampled path between P%d and P%d with a direct straight chord", p0, p1);
+
+            ImGui::Spacing();
+            char smoothBtn[64];
+            snprintf(smoothBtn, sizeof(smoothBtn), "SMOOTH SEGMENT (P%d -> P%d)", p0, p1);
+            if (BakerUI::PrimaryButton(smoothBtn)) {
+                PushHistoryState("Smooth Curve Segment");
+                c->SmoothSegment(p0, p1, m_curveManager.smoothIterations, m_curveManager.smoothFactor, m_lowPolyMesh);
+                char msg[128];
+                snprintf(msg, sizeof(msg), "Smoothed segment between P%d and P%d (%d iterations).", p0, p1, m_curveManager.smoothIterations);
+                m_uvStatusMessage = msg;
+                m_logEntries.push_back(std::string("[Curve Edit] ") + msg);
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Smooths out kinks, bends, and background loops between P%d and P%d using Laplacian relaxation", p0, p1);
+
+            ImGui::Spacing();
+            if (ImGui::Button("Smooth Entire Curve")) {
+                PushHistoryState("Smooth Entire Curve");
+                c->SmoothEntireCurve(m_curveManager.smoothIterations, m_curveManager.smoothFactor, m_lowPolyMesh);
+                m_uvStatusMessage = "Smoothed entire curve.";
+                m_logEntries.push_back("[Curve Edit] Smoothed entire curve.");
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Straighten All")) {
+                PushHistoryState("Straighten Entire Curve");
+                c->StraightenEntireCurve(m_lowPolyMesh);
+                m_uvStatusMessage = "Straightened all segments on curve.";
+                m_logEntries.push_back("[Curve Edit] Straightened all segments on curve.");
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Recalculate Camera Path")) {
+                c->ResetSegmentCustomization(0, c->points.size());
+                DirectX::XMMATRIX worldMat = m_viewportRenderer.GetLowPolyWorldMatrix();
+                DirectX::XMMATRIX viewProjMat = m_viewportRenderer.GetViewProjectionMatrix();
+                int vpW = m_viewportRenderer.GetWidth();
+                int vpH = m_viewportRenderer.GetHeight();
+                c->UpdateSampledPath(m_lowPolyMesh, &worldMat, &viewProjMat, vpW, vpH);
+                m_uvStatusMessage = "Recalculated sampled curve path from camera.";
             }
         }
 
