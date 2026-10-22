@@ -19,6 +19,23 @@ namespace {
 inline std::pair<uint32_t, uint32_t> MakeEdgeKey(uint32_t a, uint32_t b) {
     return (a < b) ? std::make_pair(a, b) : std::make_pair(b, a);
 }
+
+inline float DistToSegment2D(const ImVec2& p, const ImVec2& a, const ImVec2& b) {
+    float dx = b.x - a.x;
+    float dy = b.y - a.y;
+    float lenSq = dx * dx + dy * dy;
+    if (lenSq < 1e-4f) {
+        float dpx = p.x - a.x;
+        float dpy = p.y - a.y;
+        return std::sqrt(dpx * dpx + dpy * dpy);
+    }
+    float t = std::clamp(((p.x - a.x) * dx + (p.y - a.y) * dy) / lenSq, 0.0f, 1.0f);
+    float qx = a.x + t * dx;
+    float qy = a.y + t * dy;
+    float rx = p.x - qx;
+    float ry = p.y - qy;
+    return std::sqrt(rx * rx + ry * ry);
+}
 } // namespace
 
 static std::string OpenFileDialog(const wchar_t* filter, HWND owner = nullptr) {
@@ -418,12 +435,18 @@ void StandaloneUIManager::RenderUI() {
     // Mode-specific tab activation & focus
     if (m_shellState.activeTab == BakerUI::ShellState::AppTab::UVCutAndPack) {
         if (!m_focusUVTab) {
-            ImGui::SetNextWindowFocus();
+            ImGui::SetWindowFocus("UV Tool###uvpanel");
             m_focusUVTab = true;
+            m_toolMode = ToolMode::CutSeam;
+            m_viewportRenderer.showLowPolyWireframe = true;
+            m_viewportRenderer.showSeams = true;
         }
         m_viewportRenderer.showSeams = true;
     } else {
         m_focusUVTab = false;
+        if (m_toolMode == ToolMode::CutSeam) {
+            m_toolMode = ToolMode::Navigate;
+        }
     }
 
     // 0. Scene Outliner
@@ -664,13 +687,12 @@ void StandaloneUIManager::RenderViewportPanel() {
             else if (ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) button = 2; // Maya Alt + MMB: Track/Pan
             else if (ImGui::IsMouseDragging(ImGuiMouseButton_Right)) button = 3;  // Maya Alt + RMB: Dolly/Zoom
         } else {
-            if (m_toolMode == ToolMode::Navigate) {
+            bool isUVActive = (m_toolMode == ToolMode::CutSeam) || (m_shellState.activeTab == BakerUI::ShellState::AppTab::UVCutAndPack);
+            bool suppressNav = m_markingMenu.active || io.KeyShift;
+            if (!suppressNav) {
                 if (ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) button = 2;      // MMB: Track/Pan
                 else if (ImGui::IsMouseDragging(ImGuiMouseButton_Right)) button = 3; // RMB: Dolly/Zoom
-                else if (ImGui::IsMouseDragging(ImGuiMouseButton_Left)) button = 1;  // LMB: Orbit
-            } else {
-                if (ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) button = 2;      // MMB: Track/Pan
-                else if (ImGui::IsMouseDragging(ImGuiMouseButton_Right)) button = 3; // RMB: Dolly/Zoom
+                else if (m_toolMode == ToolMode::Navigate && !isUVActive && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) button = 1;  // LMB: Orbit only in pure Navigate mode
             }
         }
 
@@ -773,8 +795,9 @@ void StandaloneUIManager::RenderViewportPanel() {
         }
     }
 
-    // Interactive Seam Cutting mode
-    if (m_toolMode == ToolMode::CutSeam && !io.KeyAlt && m_hasLowPoly && (m_viewportMode == ViewportMode::View3D || m_viewportMode == ViewportMode::SplitBoth)) {
+    // Interactive Seam Cutting & Maya Edge Selection mode
+    bool isUVCuttingActive = (m_toolMode == ToolMode::CutSeam) || (m_shellState.activeTab == BakerUI::ShellState::AppTab::UVCutAndPack);
+    if (isUVCuttingActive && !io.KeyAlt && m_hasLowPoly && (m_viewportMode == ViewportMode::View3D || m_viewportMode == ViewportMode::SplitBoth)) {
         float maxActiveW = (m_viewportMode == ViewportMode::SplitBoth) ? avail.x * 0.5f : avail.x;
         float relX = io.MousePos.x - screenPos.x;
         float relY = io.MousePos.y - screenPos.y;
@@ -782,50 +805,75 @@ void StandaloneUIManager::RenderViewportPanel() {
         if (relX >= 0.0f && relX <= maxActiveW && relY >= 0.0f && relY <= avail.y) {
             DirectX::XMFLOAT3 rOrgW, rDirW;
             if (m_viewportRenderer.UnprojectRay(relX, relY, rOrgW, rDirW)) {
-                DirectX::XMMATRIX invWorld = DirectX::XMMatrixInverse(nullptr, m_viewportRenderer.GetLowPolyWorldMatrix());
+                DirectX::XMMATRIX worldLP = m_viewportRenderer.GetLowPolyWorldMatrix();
+                DirectX::XMMATRIX invWorld = DirectX::XMMatrixInverse(nullptr, worldLP);
                 DirectX::XMVECTOR vOrg = DirectX::XMVector3TransformCoord(DirectX::XMLoadFloat3(&rOrgW), invWorld);
                 DirectX::XMVECTOR vDir = DirectX::XMVector3Normalize(DirectX::XMVector3TransformNormal(DirectX::XMLoadFloat3(&rDirW), invWorld));
                 Vec3 localOrg(DirectX::XMVectorGetX(vOrg), DirectX::XMVectorGetY(vOrg), DirectX::XMVectorGetZ(vOrg));
                 Vec3 localDir(DirectX::XMVectorGetX(vDir), DirectX::XMVectorGetY(vDir), DirectX::XMVectorGetZ(vDir));
 
+                int bestV0 = -1, bestV1 = -1;
+                float bestScreenDist = 1e9f;
+                ImVec2 bestScreenA(0, 0), bestScreenB(0, 0);
+
+                // Helper to test an edge against the screen cursor
+                auto TestEdge = [&](uint32_t ea, uint32_t eb) {
+                    if (ea >= m_lowPolyMesh.vertices.size() || eb >= m_lowPolyMesh.vertices.size()) return;
+                    Vec3 pA = m_lowPolyMesh.vertices[ea].position;
+                    Vec3 pB = m_lowPolyMesh.vertices[eb].position;
+
+                    DirectX::XMVECTOR va = DirectX::XMVector3TransformCoord(DirectX::XMVectorSet(pA.x, pA.y, pA.z, 1.0f), worldLP);
+                    DirectX::XMVECTOR vb = DirectX::XMVector3TransformCoord(DirectX::XMVectorSet(pB.x, pB.y, pB.z, 1.0f), worldLP);
+                    DirectX::XMFLOAT3 wA, wB;
+                    DirectX::XMStoreFloat3(&wA, va);
+                    DirectX::XMStoreFloat3(&wB, vb);
+
+                    float sAX, sAY, sBX, sBY;
+                    if (m_viewportRenderer.ProjectToScreen(wA, sAX, sAY) && m_viewportRenderer.ProjectToScreen(wB, sBX, sBY)) {
+                        ImVec2 sa(screenPos.x + sAX, screenPos.y + sAY);
+                        ImVec2 sb(screenPos.x + sBX, screenPos.y + sBY);
+                        float d = DistToSegment2D(io.MousePos, sa, sb);
+                        if (d < bestScreenDist) {
+                            bestScreenDist = d;
+                            bestV0 = static_cast<int>(ea);
+                            bestV1 = static_cast<int>(eb);
+                            bestScreenA = sa;
+                            bestScreenB = sb;
+                        }
+                    }
+                };
+
                 float hitT = 0.0f;
                 Vec3 hitPos, hitNormal;
                 int hitTriIdx = -1;
-                if (m_lowPolyMesh.Raycast(localOrg, localDir, hitT, hitPos, hitNormal, hitTriIdx) && hitTriIdx >= 0) {
+                bool hasHit = m_lowPolyMesh.Raycast(localOrg, localDir, hitT, hitPos, hitNormal, hitTriIdx);
+
+                if (hasHit && hitTriIdx >= 0) {
                     const auto& tri = m_lowPolyMesh.triangles[hitTriIdx];
-                    uint32_t bestV0 = 0, bestV1 = 0;
-                    float minEdgeDist = 1e9f;
-                    for (int e = 0; e < 3; ++e) {
-                        uint32_t ea = tri.indices[e];
-                        uint32_t eb = tri.indices[(e + 1) % 3];
-                        Vec3 A = m_lowPolyMesh.vertices[ea].position;
-                        Vec3 B = m_lowPolyMesh.vertices[eb].position;
-                        Vec3 AB = B - A;
-                        float lenSq = AB.Dot(AB);
-                        float t = (lenSq > 1e-12f) ? std::clamp((hitPos - A).Dot(AB) / lenSq, 0.0f, 1.0f) : 0.0f;
-                        Vec3 proj = A + AB * t;
-                        float d = (hitPos - proj).Length();
-                        if (d < minEdgeDist) {
-                            minEdgeDist = d;
-                            bestV0 = ea;
-                            bestV1 = eb;
-                        }
+                    TestEdge(tri.indices[0], tri.indices[1]);
+                    TestEdge(tri.indices[1], tri.indices[2]);
+                    TestEdge(tri.indices[2], tri.indices[0]);
+                }
+
+                // If ray did not hit a face directly or cursor is closer to another wireframe edge, search wireframe edges within 18px
+                if (bestV0 < 0 || bestScreenDist > 18.0f) {
+                    for (size_t i = 0; i + 1 < m_lowPolyMesh.wireframeLineIndices.size(); i += 2) {
+                        uint32_t ea = m_lowPolyMesh.wireframeLineIndices[i];
+                        uint32_t eb = m_lowPolyMesh.wireframeLineIndices[i + 1];
+                        TestEdge(ea, eb);
                     }
+                }
 
-                    // Highlight edge under cursor in neon cyan
-                    Vec3 pA = m_lowPolyMesh.vertices[bestV0].position;
-                    Vec3 pB = m_lowPolyMesh.vertices[bestV1].position;
-                    float sAX, sAY, sBX, sBY;
-                    m_viewportRenderer.ProjectToScreen(DirectX::XMFLOAT3(pA.x, pA.y, pA.z), sAX, sAY);
-                    m_viewportRenderer.ProjectToScreen(DirectX::XMFLOAT3(pB.x, pB.y, pB.z), sBX, sBY);
-
+                // If an edge is found within picking radius (28 pixels on screen)
+                if (bestV0 >= 0 && bestScreenDist <= 28.0f) {
                     ImDrawList* drawList = ImGui::GetWindowDrawList();
-                    drawList->AddLine(ImVec2(sAX, sAY), ImVec2(sBX, sBY), IM_COL32(0, 255, 255, 255), 3.0f);
-                    drawList->AddCircle(io.MousePos, 7.0f, IM_COL32(0, 255, 255, 240), 16, 2.0f);
+                    // Neon cyan glowing hover line and cursor indicator
+                    drawList->AddLine(bestScreenA, bestScreenB, IM_COL32(0, 255, 255, 255), 3.5f);
+                    drawList->AddCircle(io.MousePos, 6.0f, IM_COL32(0, 255, 255, 240), 16, 2.0f);
 
                     // Maya Double-Click: Select Edge Loop
                     if (io.MouseDoubleClicked[0]) {
-                        UVCutter::SelectEdgeLoop(m_lowPolyMesh, bestV0, bestV1, io.KeyShift);
+                        UVCutter::SelectEdgeLoop(m_lowPolyMesh, static_cast<uint32_t>(bestV0), static_cast<uint32_t>(bestV1), io.KeyShift);
                         m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
                         char msg[128];
                         snprintf(msg, sizeof(msg), "Selected edge loop: %zu edges selected", m_lowPolyMesh.selectedEdges.size());
@@ -833,7 +881,7 @@ void StandaloneUIManager::RenderViewportPanel() {
                     }
                     // Maya Single-Click: Select Edge (or toggle with Shift)
                     else if (ImGui::IsMouseClicked(0)) {
-                        auto edgeKey = MakeEdgeKey(bestV0, bestV1);
+                        auto edgeKey = MakeEdgeKey(static_cast<uint32_t>(bestV0), static_cast<uint32_t>(bestV1));
                         if (io.KeyShift) {
                             if (m_lowPolyMesh.selectedEdges.count(edgeKey)) {
                                 m_lowPolyMesh.selectedEdges.erase(edgeKey);
@@ -851,13 +899,22 @@ void StandaloneUIManager::RenderViewportPanel() {
                     // Maya Shift + Right-Click: Open Marking Menu
                     if (io.KeyShift && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
                         if (m_lowPolyMesh.selectedEdges.empty()) {
-                            m_lowPolyMesh.selectedEdges.insert(MakeEdgeKey(bestV0, bestV1));
+                            m_lowPolyMesh.selectedEdges.insert(MakeEdgeKey(static_cast<uint32_t>(bestV0), static_cast<uint32_t>(bestV1)));
                             m_lowPolyMesh.GenerateSelectedEdgeLines();
                             m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
                         }
                         m_markingMenu.active = true;
                         m_markingMenu.centerPos = io.MousePos;
                         m_markingMenu.armedWedge = -1;
+                    }
+                } else {
+                    // Clicked in empty space without Shift: clear selection
+                    if (ImGui::IsMouseClicked(0) && !io.KeyShift && !io.KeyAlt) {
+                        if (!m_lowPolyMesh.selectedEdges.empty()) {
+                            m_lowPolyMesh.selectedEdges.clear();
+                            m_lowPolyMesh.GenerateSelectedEdgeLines();
+                            m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
+                        }
                     }
                 }
             }
@@ -1228,7 +1285,8 @@ void StandaloneUIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& s
                       io.MousePos.y >= origin.y && io.MousePos.y <= origin.y + size.y);
 
     if (isHovered) {
-        if (ImGui::IsMouseDragging(ImGuiMouseButton_Right) || ImGui::IsMouseDragging(ImGuiMouseButton_Middle) ||
+        if ((!io.KeyShift && !m_markingMenu.active && ImGui::IsMouseDragging(ImGuiMouseButton_Right)) ||
+            ImGui::IsMouseDragging(ImGuiMouseButton_Middle) ||
             (io.KeyAlt && ImGui::IsMouseDragging(ImGuiMouseButton_Left))) {
             m_uvPan.x += io.MouseDelta.x;
             m_uvPan.y += io.MouseDelta.y;
@@ -1357,7 +1415,7 @@ void StandaloneUIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& s
     // 2D Interactive Edge Hover, Click, Double-Click Loop, and Shift+RMB Marking Menu
     if (isHovered && m_hasLowPoly && !m_lowPolyMesh.triangles.empty()) {
         int hoverV0 = -1, hoverV1 = -1;
-        float minEdgeDist2D = 12.0f;
+        float minEdgeDist2D = 16.0f;
         ImVec2 hP0, hP1;
 
         for (const auto& tri : m_lowPolyMesh.triangles) {
@@ -1369,19 +1427,11 @@ void StandaloneUIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& s
                 ImVec2 p0(origin.x + m_uvPan.x + v0.uv.u * currentTileSize, origin.y + m_uvPan.y + (1.0f - v0.uv.v) * currentTileSize);
                 ImVec2 p1(origin.x + m_uvPan.x + v1.uv.u * currentTileSize, origin.y + m_uvPan.y + (1.0f - v1.uv.v) * currentTileSize);
 
-                float dx = p1.x - p0.x;
-                float dy = p1.y - p0.y;
-                float l2 = dx * dx + dy * dy;
-                if (l2 < 1e-4f) continue;
-                float t = std::clamp(((io.MousePos.x - p0.x) * dx + (io.MousePos.y - p0.y) * dy) / l2, 0.0f, 1.0f);
-                float qx = p0.x + t * dx;
-                float qy = p0.y + t * dy;
-                float dist = std::sqrt((io.MousePos.x - qx) * (io.MousePos.x - qx) + (io.MousePos.y - qy) * (io.MousePos.y - qy));
-
+                float dist = DistToSegment2D(io.MousePos, p0, p1);
                 if (dist < minEdgeDist2D) {
                     minEdgeDist2D = dist;
-                    hoverV0 = ea;
-                    hoverV1 = eb;
+                    hoverV0 = static_cast<int>(ea);
+                    hoverV1 = static_cast<int>(eb);
                     hP0 = p0;
                     hP1 = p1;
                 }
@@ -1389,17 +1439,17 @@ void StandaloneUIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& s
         }
 
         if (hoverV0 >= 0) {
-            drawList->AddLine(hP0, hP1, IM_COL32(0, 255, 255, 255), 3.0f);
+            drawList->AddLine(hP0, hP1, IM_COL32(0, 255, 255, 255), 3.5f);
             drawList->AddCircle(io.MousePos, 6.0f, IM_COL32(0, 255, 255, 230), 16, 2.0f);
 
             if (io.MouseDoubleClicked[0]) {
-                UVCutter::SelectEdgeLoop(m_lowPolyMesh, hoverV0, hoverV1, io.KeyShift);
+                UVCutter::SelectEdgeLoop(m_lowPolyMesh, static_cast<uint32_t>(hoverV0), static_cast<uint32_t>(hoverV1), io.KeyShift);
                 m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
                 char msg[128];
                 snprintf(msg, sizeof(msg), "Selected edge loop in 2D: %zu edges selected", m_lowPolyMesh.selectedEdges.size());
                 m_uvStatusMessage = msg;
             } else if (ImGui::IsMouseClicked(0)) {
-                auto edgeKey = MakeEdgeKey(hoverV0, hoverV1);
+                auto edgeKey = MakeEdgeKey(static_cast<uint32_t>(hoverV0), static_cast<uint32_t>(hoverV1));
                 if (io.KeyShift) {
                     if (m_lowPolyMesh.selectedEdges.count(edgeKey)) {
                         m_lowPolyMesh.selectedEdges.erase(edgeKey);
@@ -1416,7 +1466,7 @@ void StandaloneUIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& s
 
             if (io.KeyShift && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
                 if (m_lowPolyMesh.selectedEdges.empty()) {
-                    m_lowPolyMesh.selectedEdges.insert(MakeEdgeKey(hoverV0, hoverV1));
+                    m_lowPolyMesh.selectedEdges.insert(MakeEdgeKey(static_cast<uint32_t>(hoverV0), static_cast<uint32_t>(hoverV1)));
                     m_lowPolyMesh.GenerateSelectedEdgeLines();
                     m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
                 }
@@ -1424,10 +1474,19 @@ void StandaloneUIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& s
                 m_markingMenu.centerPos = io.MousePos;
                 m_markingMenu.armedWedge = -1;
             }
-        } else if (io.KeyShift && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
-            m_markingMenu.active = true;
-            m_markingMenu.centerPos = io.MousePos;
-            m_markingMenu.armedWedge = -1;
+        } else {
+            if (ImGui::IsMouseClicked(0) && !io.KeyShift && !io.KeyAlt) {
+                if (!m_lowPolyMesh.selectedEdges.empty()) {
+                    m_lowPolyMesh.selectedEdges.clear();
+                    m_lowPolyMesh.GenerateSelectedEdgeLines();
+                    m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
+                }
+            }
+            if (io.KeyShift && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+                m_markingMenu.active = true;
+                m_markingMenu.centerPos = io.MousePos;
+                m_markingMenu.armedWedge = -1;
+            }
         }
     }
 
@@ -1505,6 +1564,12 @@ void StandaloneUIManager::RenderMarkingMenu() {
         if (io.MousePos.x >= minP.x && io.MousePos.x <= maxP.x && io.MousePos.y >= minP.y && io.MousePos.y <= maxP.y) {
             isArmed = true;
             m_markingMenu.armedWedge = id;
+            if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                ExecuteMarkingMenuAction(id);
+                m_markingMenu.active = false;
+                m_markingMenu.armedWedge = -1;
+                return;
+            }
         }
 
         ImU32 bgCol = isArmed ? IM_COL32(24, 38, 52, 250) : IM_COL32(20, 22, 28, 230);
@@ -1540,8 +1605,8 @@ void StandaloneUIManager::RenderMarkingMenu() {
         m_markingMenu.armedWedge = -1;
     }
 
-    // Dismiss on Escape
-    if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+    // Dismiss on Escape or LMB click outside
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape) || (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && dist > 140.0f)) {
         m_markingMenu.active = false;
         m_markingMenu.armedWedge = -1;
     }
