@@ -537,9 +537,23 @@ int main(int argc, char** argv) {
         c1->MovePoint(1, Vec3(0.0f, 0.0f, 0.0f), Vec3(0, 0, 1), 16);
         assert(c1->points[1].position.y == 0.0f);
 
-        // Sample path generation
-        c1->UpdateSampledPath(planeMesh);
-        assert(c1->sampledPath.size() > 3);
+        // Sample path generation with camera projection
+        DirectX::XMMATRIX worldM = DirectX::XMMatrixIdentity();
+        DirectX::XMVECTOR eye = DirectX::XMVectorSet(0.0f, 0.0f, 5.0f, 1.0f);
+        DirectX::XMVECTOR target = DirectX::XMVectorSet(0.0f, 0.0f, 0.0f, 1.0f);
+        DirectX::XMVECTOR up = DirectX::XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
+        DirectX::XMMATRIX viewM = DirectX::XMMatrixLookAtLH(eye, target, up);
+        DirectX::XMMATRIX projM = DirectX::XMMatrixPerspectiveFovLH(DirectX::XMConvertToRadians(45.0f), 1.0f, 0.1f, 100.0f);
+        DirectX::XMMATRIX vpM = DirectX::XMMatrixMultiply(viewM, projM);
+
+        auto camPath = CurveManager::SampleCameraSurfacePath(
+            planeMesh, worldM, vpM, 800, 600,
+            c1->points[0].position, c1->points[1].position, 30
+        );
+        assert(camPath.size() >= 30);
+        c1->UpdateSampledPath(planeMesh, &worldM, &vpM, 800, 600);
+        assert(c1->sampledPath.size() >= 30);
+        std::cout << "  Camera-projected surface path contoured across mesh: " << c1->sampledPath.size() << " surface samples." << std::endl;
 
         // 2. Test Dijkstra Edge Snapping to Seams
         std::vector<std::pair<uint32_t, uint32_t>> snappedEdges;

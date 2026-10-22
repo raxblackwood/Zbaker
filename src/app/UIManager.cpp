@@ -1388,7 +1388,12 @@ void UIManager::RenderViewportPanel() {
         if (relX >= 0.0f && relX <= maxActiveW && relY >= 0.0f && relY <= avail.y) {
             DirectX::XMFLOAT3 rOrgW, rDirW;
             if (m_viewportRenderer.UnprojectRay(relX, relY, rOrgW, rDirW)) {
-                DirectX::XMMATRIX invWorld = DirectX::XMMatrixInverse(nullptr, m_viewportRenderer.GetLowPolyWorldMatrix());
+                DirectX::XMMATRIX worldMat = m_viewportRenderer.GetLowPolyWorldMatrix();
+                DirectX::XMMATRIX viewProjMat = m_viewportRenderer.GetViewProjectionMatrix();
+                int vpW = m_viewportRenderer.GetWidth();
+                int vpH = m_viewportRenderer.GetHeight();
+
+                DirectX::XMMATRIX invWorld = DirectX::XMMatrixInverse(nullptr, worldMat);
                 DirectX::XMVECTOR vOrg = DirectX::XMVector3TransformCoord(DirectX::XMLoadFloat3(&rOrgW), invWorld);
                 DirectX::XMVECTOR vDir = DirectX::XMVector3Normalize(DirectX::XMVector3TransformNormal(DirectX::XMLoadFloat3(&rDirW), invWorld));
                 Vec3 localOrg(DirectX::XMVectorGetX(vOrg), DirectX::XMVectorGetY(vOrg), DirectX::XMVectorGetZ(vOrg));
@@ -1421,23 +1426,36 @@ void UIManager::RenderViewportPanel() {
                 if (m_draggingPointIndex >= 0 && io.MouseDown[0]) {
                     if (hit && activeCurve) {
                         m_curveManager.MoveActivePoint(m_draggingPointIndex, hitPos, hitNormal, hitTriIdx);
-                        m_curveManager.UpdateActiveSampledPath(m_lowPolyMesh);
+                        m_curveManager.UpdateActiveSampledPath(m_lowPolyMesh, &worldMat, &viewProjMat, vpW, vpH);
                     }
                 } else if (io.MouseReleased[0]) {
                     m_draggingPointIndex = -1;
                 }
 
-                // 3. Handle Click to Grab or Add Point
+                // 3. Handle Click to Grab or Add Point on Surface
                 if (ImGui::IsMouseClicked(0)) {
                     if (hoveredPt >= 0) {
                         m_draggingPointIndex = hoveredPt;
                         m_curveManager.selectedPointIndex = hoveredPt;
                     } else if (hit) {
                         m_curveManager.AddPointToActive(hitPos, hitNormal, hitTriIdx);
-                        m_curveManager.UpdateActiveSampledPath(m_lowPolyMesh);
-                        char msg[128];
-                        snprintf(msg, sizeof(msg), "Placed curve point %zu on mesh surface.", activeCurve ? activeCurve->points.size() : 1);
-                        m_uvStatusMessage = msg;
+                        m_curveManager.UpdateActiveSampledPath(m_lowPolyMesh, &worldMat, &viewProjMat, vpW, vpH);
+
+                        // Automatically contour and cut seams along curve trajectory
+                        if (activeCurve && activeCurve->points.size() >= 2) {
+                            std::vector<std::pair<uint32_t, uint32_t>> newSeams;
+                            CurveManager::SnapCurveToMeshEdges(*activeCurve, m_lowPolyMesh, newSeams);
+                            m_viewportRenderer.UpdateSeams(m_lowPolyMesh);
+                            m_viewportRenderer.showSeams = true;
+                            char msg[128];
+                            snprintf(msg, sizeof(msg), "Contoured curve across mesh: %zu total seam edges cut.", m_lowPolyMesh.cutSeams.size());
+                            m_uvStatusMessage = msg;
+                            m_logEntries.push_back(std::string("[Curve Cut] ") + msg);
+                        } else {
+                            char msg[128];
+                            snprintf(msg, sizeof(msg), "Placed curve point %zu on mesh surface.", activeCurve ? activeCurve->points.size() : 1);
+                            m_uvStatusMessage = msg;
+                        }
                     }
                 }
 
@@ -1455,30 +1473,46 @@ void UIManager::RenderViewportPanel() {
         ImDrawList* drawList = ImGui::GetWindowDrawList();
         float viewX0 = origin.x;
         float viewY0 = origin.y;
+        DirectX::XMMATRIX worldMat = m_viewportRenderer.GetLowPolyWorldMatrix();
+        DirectX::XMMATRIX viewProjMat = m_viewportRenderer.GetViewProjectionMatrix();
+        int vpW = m_viewportRenderer.GetWidth();
+        int vpH = m_viewportRenderer.GetHeight();
 
         for (size_t cIdx = 0; cIdx < m_curveManager.curves.size(); ++cIdx) {
             const auto& curve = m_curveManager.curves[cIdx];
             if (curve.points.empty()) continue;
 
             bool isActive = (static_cast<int>(cIdx) == m_curveManager.activeCurveIndex);
-            ImU32 curveColor = isActive ? IM_COL32(255, 204, 34, 250) : IM_COL32(140, 210, 255, 200);
-            float thickness = isActive ? 2.5f : 1.8f;
+            ImU32 curveColor = isActive ? IM_COL32(255, 204, 34, 255) : IM_COL32(140, 210, 255, 200);
+            float thickness = isActive ? 3.0f : 2.0f;
 
-            // Draw line segments between control points
-            size_t ptCount = curve.points.size();
-            size_t segCount = curve.isClosed ? ptCount : (ptCount - 1);
-
-            for (size_t i = 0; i < segCount; ++i) {
-                const Vec3& p0 = curve.points[i].position;
-                const Vec3& p1 = curve.points[(i + 1) % ptCount].position;
-                float s0X, s0Y, s1X, s1Y;
-                if (m_viewportRenderer.ProjectToScreen(DirectX::XMFLOAT3(p0.x, p0.y, p0.z), s0X, s0Y) &&
-                    m_viewportRenderer.ProjectToScreen(DirectX::XMFLOAT3(p1.x, p1.y, p1.z), s1X, s1Y)) {
-                    drawList->AddLine(ImVec2(viewX0 + s0X, viewY0 + s0Y), ImVec2(viewX0 + s1X, viewY0 + s1Y), curveColor, thickness);
+            // Draw dense surface-following path contoured over mesh bumps and crevices
+            if (curve.sampledPath.size() >= 2) {
+                for (size_t s = 0; s + 1 < curve.sampledPath.size(); ++s) {
+                    const Vec3& p0 = curve.sampledPath[s];
+                    const Vec3& p1 = curve.sampledPath[s + 1];
+                    float s0X, s0Y, s1X, s1Y;
+                    if (m_viewportRenderer.ProjectToScreen(DirectX::XMFLOAT3(p0.x, p0.y, p0.z), s0X, s0Y) &&
+                        m_viewportRenderer.ProjectToScreen(DirectX::XMFLOAT3(p1.x, p1.y, p1.z), s1X, s1Y)) {
+                        drawList->AddLine(ImVec2(viewX0 + s0X, viewY0 + s0Y), ImVec2(viewX0 + s1X, viewY0 + s1Y), curveColor, thickness);
+                    }
+                }
+            } else {
+                size_t ptCount = curve.points.size();
+                size_t segCount = curve.isClosed ? ptCount : (ptCount - 1);
+                for (size_t i = 0; i < segCount; ++i) {
+                    const Vec3& p0 = curve.points[i].position;
+                    const Vec3& p1 = curve.points[(i + 1) % ptCount].position;
+                    float s0X, s0Y, s1X, s1Y;
+                    if (m_viewportRenderer.ProjectToScreen(DirectX::XMFLOAT3(p0.x, p0.y, p0.z), s0X, s0Y) &&
+                        m_viewportRenderer.ProjectToScreen(DirectX::XMFLOAT3(p1.x, p1.y, p1.z), s1X, s1Y)) {
+                        drawList->AddLine(ImVec2(viewX0 + s0X, viewY0 + s0Y), ImVec2(viewX0 + s1X, viewY0 + s1Y), curveColor, thickness);
+                    }
                 }
             }
 
             // Draw control point handles
+            size_t ptCount = curve.points.size();
             for (size_t p = 0; p < ptCount; ++p) {
                 const Vec3& pt = curve.points[p].position;
                 float sX, sY;
@@ -1490,26 +1524,46 @@ void UIManager::RenderViewportPanel() {
                     if (isSelected || isHovered) {
                         drawList->AddCircle(scrP, 9.0f, IM_COL32(255, 120, 0, 255), 18, 2.5f);
                     }
-                    drawList->AddCircleFilled(scrP, 5.0f, isSelected ? IM_COL32(255, 220, 50, 255) : IM_COL32(255, 255, 255, 255));
-                    drawList->AddCircle(scrP, 5.0f, IM_COL32(20, 20, 20, 240), 16, 1.2f);
+                    drawList->AddCircleFilled(scrP, 5.5f, isSelected ? IM_COL32(255, 220, 50, 255) : IM_COL32(255, 255, 255, 255));
+                    drawList->AddCircle(scrP, 5.5f, IM_COL32(20, 20, 20, 240), 16, 1.5f);
 
                     char pLabel[16];
                     snprintf(pLabel, sizeof(pLabel), "P%zu", p);
-                    drawList->AddText(ImVec2(scrP.x + 7.0f, scrP.y - 14.0f), isSelected ? IM_COL32(255, 220, 50, 255) : IM_COL32(220, 220, 220, 220), pLabel);
+                    drawList->AddText(ImVec2(scrP.x + 8.0f, scrP.y - 14.0f), isSelected ? IM_COL32(255, 220, 50, 255) : IM_COL32(220, 220, 220, 220), pLabel);
                 }
             }
 
-            // If in DrawCurve mode and curve is active, draw rubber-band preview to cursor
+            // If in DrawCurve mode and curve is active, draw camera-angle surface contour preview to cursor
             if (isActive && m_toolMode == ToolMode::DrawCurve && m_draggingPointIndex < 0 && !curve.points.empty()) {
-                const Vec3& lastP = curve.points.back().position;
-                float sLastX, sLastY;
-                if (m_viewportRenderer.ProjectToScreen(DirectX::XMFLOAT3(lastP.x, lastP.y, lastP.z), sLastX, sLastY)) {
-                    float relX = io.MousePos.x - origin.x;
-                    float relY = io.MousePos.y - origin.y;
-                    float maxActiveW = (m_viewportMode == ViewportMode::SplitBoth) ? avail.x * 0.5f : avail.x;
-                    if (relX >= 0.0f && relX <= maxActiveW && relY >= 0.0f && relY <= avail.y) {
-                        drawList->AddLine(ImVec2(viewX0 + sLastX, viewY0 + sLastY), io.MousePos, IM_COL32(255, 220, 60, 180), 1.8f);
-                        drawList->AddCircle(io.MousePos, 6.0f, IM_COL32(255, 220, 60, 220), 16, 1.5f);
+                float relX = io.MousePos.x - origin.x;
+                float relY = io.MousePos.y - origin.y;
+                float maxActiveW = (m_viewportMode == ViewportMode::SplitBoth) ? avail.x * 0.5f : avail.x;
+                if (relX >= 0.0f && relX <= maxActiveW && relY >= 0.0f && relY <= avail.y) {
+                    DirectX::XMFLOAT3 rOrgW, rDirW;
+                    if (m_viewportRenderer.UnprojectRay(relX, relY, rOrgW, rDirW)) {
+                        DirectX::XMMATRIX invWorld = DirectX::XMMatrixInverse(nullptr, worldMat);
+                        DirectX::XMVECTOR vOrg = DirectX::XMVector3TransformCoord(DirectX::XMLoadFloat3(&rOrgW), invWorld);
+                        DirectX::XMVECTOR vDir = DirectX::XMVector3Normalize(DirectX::XMVector3TransformNormal(DirectX::XMLoadFloat3(&rDirW), invWorld));
+                        Vec3 localOrg(DirectX::XMVectorGetX(vOrg), DirectX::XMVectorGetY(vOrg), DirectX::XMVectorGetZ(vOrg));
+                        Vec3 localDir(DirectX::XMVectorGetX(vDir), DirectX::XMVectorGetY(vDir), DirectX::XMVectorGetZ(vDir));
+
+                        float hitT = 0.0f;
+                        Vec3 hitPos, hitNormal;
+                        int hitTriIdx = -1;
+                        if (m_lowPolyMesh.Raycast(localOrg, localDir, hitT, hitPos, hitNormal, hitTriIdx)) {
+                            const Vec3& lastP = curve.points.back().position;
+                            auto previewPath = CurveManager::SampleCameraSurfacePath(
+                                m_lowPolyMesh, worldMat, viewProjMat, vpW, vpH, lastP, hitPos, 32
+                            );
+                            for (size_t s = 0; s + 1 < previewPath.size(); ++s) {
+                                float s0X, s0Y, s1X, s1Y;
+                                if (m_viewportRenderer.ProjectToScreen(DirectX::XMFLOAT3(previewPath[s].x, previewPath[s].y, previewPath[s].z), s0X, s0Y) &&
+                                    m_viewportRenderer.ProjectToScreen(DirectX::XMFLOAT3(previewPath[s + 1].x, previewPath[s + 1].y, previewPath[s + 1].z), s1X, s1Y)) {
+                                    drawList->AddLine(ImVec2(viewX0 + s0X, viewY0 + s0Y), ImVec2(viewX0 + s1X, viewY0 + s1Y), IM_COL32(255, 220, 60, 240), 2.5f);
+                                }
+                            }
+                            drawList->AddCircle(io.MousePos, 6.0f, IM_COL32(255, 220, 60, 255), 16, 2.0f);
+                        }
                     }
                 }
             }
@@ -1595,10 +1649,12 @@ void UIManager::RenderViewportPanel() {
             {
                 if (m_toolMode == ToolMode::DrawCurve) {
                     ImGui::AlignTextToFramePadding();
-                    ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.1f, 1.0f), "CURVE CUT TOOL");
+                    ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.1f, 1.0f), "CAMERA CURVE CUT");
                     ImGui::SameLine();
                     SurfaceCurve* c = m_curveManager.GetActiveCurve();
                     ImGui::TextDisabled("%s (%zu pts)", c ? c->name.c_str() : "Curve", c ? c->points.size() : 0);
+                    ImGui::SameLine();
+                    ImGui::TextColored(ImVec4(0.0f, 0.95f, 1.0f, 1.0f), "| Seams: %zu", m_lowPolyMesh.cutSeams.size());
                     ImGui::SameLine();
                     if (ImGui::Button("Snap Seams")) {
                         SnapActiveCurveToSeams();

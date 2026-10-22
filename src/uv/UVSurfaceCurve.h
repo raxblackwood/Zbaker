@@ -2,6 +2,7 @@
 
 #include "../baker/MeshTypes.h"
 #include "UVTypes.h"
+#include <DirectXMath.h>
 #include <vector>
 #include <string>
 #include <utility>
@@ -27,14 +28,18 @@ struct SurfaceCurve {
     bool isClosed = false;
     bool isBaked = false;
 
-    // Interpolated points along mesh surface for smooth visualization
+    // Dense surface-following points contoured to the mesh surface along camera perspective
     std::vector<Vec3> sampledPath;
 
     void AddPoint(const Vec3& pos, const Vec3& norm, int triIdx);
+    void AddSegmentPath(const std::vector<Vec3>& segmentSurfacePoints);
     void MovePoint(size_t index, const Vec3& newPos, const Vec3& newNorm, int newTriIdx);
     void RemovePoint(size_t index);
     void Clear();
-    void UpdateSampledPath(const LowPolyMesh& mesh);
+    void UpdateSampledPath(const LowPolyMesh& mesh,
+                           const DirectX::XMMATRIX* worldMat = nullptr,
+                           const DirectX::XMMATRIX* viewProjMat = nullptr,
+                           int vpWidth = 0, int vpHeight = 0);
 };
 
 class CurveManager {
@@ -44,6 +49,7 @@ public:
     int selectedPointIndex = -1;
     int hoveredPointIndex = -1;
     bool isDrawing = false;
+    bool autoCutSeams = true; // Auto-cut seams on mesh as curve points are placed
     int nextCurveId = 1;
 
     CurveManager();
@@ -58,9 +64,23 @@ public:
     void AddPointToActive(const Vec3& pos, const Vec3& normal, int triIdx);
     void MoveActivePoint(int pointIdx, const Vec3& newPos, const Vec3& newNormal, int newTriIdx);
     void RemoveActivePoint(int pointIdx);
-    void UpdateActiveSampledPath(const LowPolyMesh& mesh);
+    void UpdateActiveSampledPath(const LowPolyMesh& mesh,
+                                 const DirectX::XMMATRIX* worldMat = nullptr,
+                                 const DirectX::XMMATRIX* viewProjMat = nullptr,
+                                 int vpWidth = 0, int vpHeight = 0);
 
-    // 1. Snaps curve directly to closest low-poly mesh edges via Dijkstra shortest surface edge path
+    // Samples dense 3D points on the mesh surface along the 2D screen line between start and end as seen from camera
+    static std::vector<Vec3> SampleCameraSurfacePath(
+        const LowPolyMesh& mesh,
+        const DirectX::XMMATRIX& worldMatrix,
+        const DirectX::XMMATRIX& viewProjMatrix,
+        int vpWidth, int vpHeight,
+        const Vec3& startLocal,
+        const Vec3& endLocal,
+        int numSamples = 36
+    );
+
+    // 1. Snaps curve directly to closest low-poly mesh edges via geometric Dijkstra shortest surface edge path
     static bool SnapCurveToMeshEdges(const SurfaceCurve& curve, LowPolyMesh& mesh, std::vector<std::pair<uint32_t, uint32_t>>& outSeamEdges);
 
     // 2. Cuts curve directly into mesh topology by bisecting/splitting triangles along curve trajectory
