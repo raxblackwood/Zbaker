@@ -1338,8 +1338,8 @@ void StandaloneUIManager::RenderViewportPanel() {
         ImGui::SetCursorScreenPos(ImVec2(screenPos.x + 12.0f, screenPos.y + 44.0f));
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8.0f, 4.0f));
         ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.11f, 0.137f, 0.18f, 0.94f));
-        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.14f, 0.18f, 0.23f, 0.85f));
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(29.0f / 255.0f, 32.0f / 255.0f, 37.0f / 255.0f, 0.96f));
+        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(42.0f / 255.0f, 46.0f / 255.0f, 53.0f / 255.0f, 0.90f));
         float barW = (std::min)(940.0f, avail.x - 24.0f);
         ImGui::BeginChild("##brush_bar", ImVec2(barW, 36.0f), true, ImGuiWindowFlags_NoScrollbar);
         {

@@ -35,59 +35,59 @@ inline ImVec4 Hex(unsigned rgb, float a = 1.f) {
 }
 namespace Col {
     inline ImVec4 Bg() {
-        if (gCurrentTheme == UITheme::StudioSlateTeal) return Hex(0x0E1217); // Obsidian slate-navy root
+        if (gCurrentTheme == UITheme::StudioSlateTeal) return Hex(0x181B20); // Exact reference: RGB(24, 27, 32)
         if (gCurrentTheme == UITheme::BlenderDark)     return Hex(0x1D1D1D);
         if (gCurrentTheme == UITheme::MarmosetEmber)   return Hex(0x111317);
         if (gCurrentTheme == UITheme::CyberTeal)       return Hex(0x0E1316);
         return Hex(0x131519);
     }
     inline ImVec4 Panel() {
-        if (gCurrentTheme == UITheme::StudioSlateTeal) return Hex(0x151A22); // Deep dark slate-charcoal panel
+        if (gCurrentTheme == UITheme::StudioSlateTeal) return Hex(0x1D2025); // Exact reference: RGB(29, 32, 37)
         if (gCurrentTheme == UITheme::BlenderDark)     return Hex(0x282828);
         if (gCurrentTheme == UITheme::MarmosetEmber)   return Hex(0x181B22);
         if (gCurrentTheme == UITheme::CyberTeal)       return Hex(0x141B20);
         return Hex(0x191C22);
     }
     inline ImVec4 PanelHi() {
-        if (gCurrentTheme == UITheme::StudioSlateTeal) return Hex(0x1B222C); // Inset / elevated card
+        if (gCurrentTheme == UITheme::StudioSlateTeal) return Hex(0x22262C); // Neutral elevated card: RGB(34, 38, 44)
         if (gCurrentTheme == UITheme::BlenderDark)     return Hex(0x323232);
         if (gCurrentTheme == UITheme::MarmosetEmber)   return Hex(0x20242D);
         if (gCurrentTheme == UITheme::CyberTeal)       return Hex(0x1A232A);
         return Hex(0x21252D);
     }
     inline ImVec4 Border() {
-        if (gCurrentTheme == UITheme::StudioSlateTeal) return Hex(0x242E3B); // Crisp 1px slate border
+        if (gCurrentTheme == UITheme::StudioSlateTeal) return Hex(0x2A2E35); // Subtle dark charcoal border
         if (gCurrentTheme == UITheme::BlenderDark)     return Hex(0x1B1B1B);
         if (gCurrentTheme == UITheme::MarmosetEmber)   return Hex(0x2E3442);
         if (gCurrentTheme == UITheme::CyberTeal)       return Hex(0x25353F);
         return Hex(0x2C313C);
     }
     inline ImVec4 Text() {
-        if (gCurrentTheme == UITheme::StudioSlateTeal) return Hex(0xF1F5F9); // Crisp readable light silver
+        if (gCurrentTheme == UITheme::StudioSlateTeal) return Hex(0xF1F3F5); // Crisp readable light silver
         if (gCurrentTheme == UITheme::BlenderDark)     return Hex(0xEDEDED);
         return Hex(0xEDEDF2);
     }
     inline ImVec4 TextDim() {
-        if (gCurrentTheme == UITheme::StudioSlateTeal) return Hex(0x768699); // Muted slate blue
+        if (gCurrentTheme == UITheme::StudioSlateTeal) return Hex(0x8A909A); // Neutral secondary text
         if (gCurrentTheme == UITheme::BlenderDark)     return Hex(0x9E9E9E);
         return Hex(0x8D94A5);
     }
     inline ImVec4 Accent() {
-        if (gCurrentTheme == UITheme::StudioSlateTeal) return Hex(0x4EE2B6); // Signature Mint Cyber Teal
+        if (gCurrentTheme == UITheme::StudioSlateTeal) return Hex(0x4CC3A6); // Exact reference button: RGB(76, 195, 166)
         if (gCurrentTheme == UITheme::BlenderDark)     return Hex(0xE87D0D); // Blender Orange
         if (gCurrentTheme == UITheme::MarmosetEmber)   return Hex(0xFF7A18);
         if (gCurrentTheme == UITheme::CyberTeal)       return Hex(0x00D2B4);
         return Hex(0x4E92F9);
     }
     inline ImVec4 AccentHi() {
-        if (gCurrentTheme == UITheme::StudioSlateTeal) return Hex(0x63E8BF); // Bright glowing mint
+        if (gCurrentTheme == UITheme::StudioSlateTeal) return Hex(0x5FD2B6); // Bright glowing mint
         if (gCurrentTheme == UITheme::BlenderDark)     return Hex(0xF68E28);
         if (gCurrentTheme == UITheme::MarmosetEmber)   return Hex(0xFF9438);
         if (gCurrentTheme == UITheme::CyberTeal)       return Hex(0x38F0D6);
         return Hex(0x73ABFF);
     }
     inline ImVec4 AccentLo() {
-        if (gCurrentTheme == UITheme::StudioSlateTeal) return Hex(0x3BC79D); // Pressed deep mint teal
+        if (gCurrentTheme == UITheme::StudioSlateTeal) return Hex(0x3EB496); // Pressed deep mint
         if (gCurrentTheme == UITheme::BlenderDark)     return Hex(0xB85F00);
         if (gCurrentTheme == UITheme::MarmosetEmber)   return Hex(0xD96206);
         if (gCurrentTheme == UITheme::CyberTeal)       return Hex(0x00A890);
@@ -98,7 +98,7 @@ namespace Col {
         return Hex(0xFFFFFF);
     }
     inline ImVec4 Ok() {
-        if (gCurrentTheme == UITheme::StudioSlateTeal) return Hex(0x4EE2B6); // Mint teal
+        if (gCurrentTheme == UITheme::StudioSlateTeal) return Hex(0x4CC3A6); // Mint green
         if (gCurrentTheme == UITheme::BlenderDark)     return Hex(0x47B34F);
         return Hex(0x3DDC97);
     }
@@ -159,30 +159,30 @@ inline void ApplyTheme(float dpi = 1.f) {
     ImVec4* c = s.Colors;
     c[ImGuiCol_Text]                 = Col::Text();
     c[ImGuiCol_TextDisabled]         = Col::TextDim();
-    c[ImGuiCol_WindowBg]             = Col::Panel();
-    c[ImGuiCol_ChildBg]              = Col::PanelHi();
-    c[ImGuiCol_PopupBg]              = Hex(0x161B23, 0.98f);
-    c[ImGuiCol_Border]               = Col::Border();
+    c[ImGuiCol_WindowBg]             = Col::Panel();         // Exact reference: RGB(29, 32, 37) Hex(0x1D2025)
+    c[ImGuiCol_ChildBg]              = Col::PanelHi();       // Exact reference: RGB(34, 38, 44) Hex(0x22262C)
+    c[ImGuiCol_PopupBg]              = Hex(0x1D2025, 0.98f);
+    c[ImGuiCol_Border]               = Col::Border();        // Exact reference: Hex(0x2A2E35)
     c[ImGuiCol_BorderShadow]         = Hex(0, 0);
-    c[ImGuiCol_FrameBg]              = Hex(0x13171F);
-    c[ImGuiCol_FrameBgHovered]       = Hex(0x1C232E);
-    c[ImGuiCol_FrameBgActive]        = Hex(0x232D3B);
-    c[ImGuiCol_TitleBg]              = Hex(0x10141A);
-    c[ImGuiCol_TitleBgActive]        = Hex(0x141920);
-    c[ImGuiCol_TitleBgCollapsed]     = Hex(0x10141A);
-    c[ImGuiCol_MenuBarBg]            = Hex(0x0E1217);
+    c[ImGuiCol_FrameBg]              = Hex(0x171A1E);        // Neutral dark input field
+    c[ImGuiCol_FrameBgHovered]       = Hex(0x22262D);
+    c[ImGuiCol_FrameBgActive]        = Hex(0x2A2F37);
+    c[ImGuiCol_TitleBg]              = Hex(0x16181D);
+    c[ImGuiCol_TitleBgActive]        = Hex(0x1A1D22);
+    c[ImGuiCol_TitleBgCollapsed]     = Hex(0x16181D);
+    c[ImGuiCol_MenuBarBg]            = Hex(0x181B20);        // Exact top bar: RGB(24, 27, 32)
     c[ImGuiCol_ScrollbarBg]          = Hex(0, 0);
-    c[ImGuiCol_ScrollbarGrab]        = Hex(0x242E3B);
-    c[ImGuiCol_ScrollbarGrabHovered] = Hex(0x323E4F);
+    c[ImGuiCol_ScrollbarGrab]        = Hex(0x2C3037);
+    c[ImGuiCol_ScrollbarGrabHovered] = Hex(0x3A3F48);
     c[ImGuiCol_ScrollbarGrabActive]  = Col::Accent();
     c[ImGuiCol_CheckMark]            = Col::Accent();
     c[ImGuiCol_SliderGrab]           = Col::Accent();
     c[ImGuiCol_SliderGrabActive]     = Col::AccentHi();
-    c[ImGuiCol_Button]               = Hex(0x1F2733);
-    c[ImGuiCol_ButtonHovered]        = Hex(0x283342);
-    c[ImGuiCol_ButtonActive]         = Hex(0x19202B);
-    c[ImGuiCol_Header]               = Hex(0x1F2733);
-    c[ImGuiCol_HeaderHovered]        = Hex(0x283342);
+    c[ImGuiCol_Button]               = Hex(0x24282F);        // Exact neutral charcoal button
+    c[ImGuiCol_ButtonHovered]        = Hex(0x2E333C);
+    c[ImGuiCol_ButtonActive]         = Hex(0x1C2025);
+    c[ImGuiCol_Header]               = Hex(0x24282F);
+    c[ImGuiCol_HeaderHovered]        = Hex(0x2E333C);
     c[ImGuiCol_HeaderActive]         = Col::Accent();
     c[ImGuiCol_Separator]            = Col::Border();
     c[ImGuiCol_SeparatorHovered]     = Col::Accent();
@@ -190,16 +190,16 @@ inline void ApplyTheme(float dpi = 1.f) {
     c[ImGuiCol_ResizeGrip]           = Hex(0, 0);
     c[ImGuiCol_ResizeGripHovered]    = Col::Accent();
     c[ImGuiCol_ResizeGripActive]     = Col::AccentHi();
-    c[ImGuiCol_Tab]                  = Hex(0x10141A);
-    c[ImGuiCol_TabHovered]           = Hex(0x1E2632);
-    c[ImGuiCol_TabSelected]          = Hex(0x263242);
-    c[ImGuiCol_TabDimmed]            = Hex(0x10141A);
-    c[ImGuiCol_TabDimmedSelected]    = Hex(0x1C232E);
-    c[ImGuiCol_DockingPreview]       = Hex(0x4EE2B6, 0.40f);
+    c[ImGuiCol_Tab]                  = Hex(0x16191D);
+    c[ImGuiCol_TabHovered]           = Hex(0x24282F);
+    c[ImGuiCol_TabSelected]          = Hex(0x1D2025);        // Active tab merges seamlessly with panel
+    c[ImGuiCol_TabDimmed]            = Hex(0x16191D);
+    c[ImGuiCol_TabDimmedSelected]    = Hex(0x1D2025);
+    c[ImGuiCol_DockingPreview]       = Hex(0x4CC3A6, 0.40f);
     c[ImGuiCol_DockingEmptyBg]       = Col::Bg();
-    c[ImGuiCol_TableHeaderBg]        = Hex(0x13171F);
+    c[ImGuiCol_TableHeaderBg]        = Hex(0x171A1E);
     c[ImGuiCol_TableBorderLight]     = Col::Border();
-    c[ImGuiCol_TextSelectedBg]       = Hex(0x4EE2B6, 0.35f);
+    c[ImGuiCol_TextSelectedBg]       = Hex(0x4CC3A6, 0.35f);
     c[ImGuiCol_PlotHistogram]        = Col::Accent();
 }
 
@@ -210,13 +210,13 @@ inline void SectionLabel(const char* text) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImVec2 p = ImGui::GetCursorScreenPos();
     float w = ImGui::GetContentRegionAvail().x;
-    float h = ImGui::GetFontSize() + 10.0f;
+    float h = ImGui::GetFontSize() + 8.0f;
 
-    dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), ImGui::GetColorU32(Hex(0x171E28, 0.85f)), 4.0f);
+    dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), ImGui::GetColorU32(Hex(0x1A1D22, 0.90f)), 4.0f);
     dl->AddRect(p, ImVec2(p.x + w, p.y + h), ImGui::GetColorU32(Col::Border()), 4.0f, 0, 1.0f);
 
     if (gFontBold) ImGui::PushFont(gFontBold);
-    dl->AddText(ImVec2(p.x + 8.0f, p.y + (h - ImGui::GetFontSize()) * 0.5f), ImGui::GetColorU32(Hex(0x8B9BB0)), text);
+    dl->AddText(ImVec2(p.x + 8.0f, p.y + (h - ImGui::GetFontSize()) * 0.5f), ImGui::GetColorU32(Hex(0x8A909A)), text);
     if (gFontBold) ImGui::PopFont();
 
     ImGui::Dummy(ImVec2(0, h + 3.0f));
@@ -240,11 +240,11 @@ inline bool PrimaryButton(const char* label, float w = -FLT_MIN, float h = 0) {
 // Subtle full-width secondary button.
 inline bool SecondaryButton(const char* label, float w = -FLT_MIN, float h = 0) {
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 5.0f);
-    ImGui::PushStyleColor(ImGuiCol_Button, Hex(0x1F2733));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, Hex(0x283342));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, Hex(0x19202B));
-    ImGui::PushStyleColor(ImGuiCol_Border, Hex(0x2C3746));
-    ImGui::PushStyleColor(ImGuiCol_Text, Hex(0xE2E8F0));
+    ImGui::PushStyleColor(ImGuiCol_Button, Hex(0x24282F));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, Hex(0x2E333C));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, Hex(0x1C2025));
+    ImGui::PushStyleColor(ImGuiCol_Border, Hex(0x323740));
+    ImGui::PushStyleColor(ImGuiCol_Text, Hex(0xE2E4E8));
     bool r = ImGui::Button(label, ImVec2(w, h));
     ImGui::PopStyleColor(5);
     ImGui::PopStyleVar();
@@ -256,14 +256,14 @@ inline bool ToggleChip(const char* label, bool* v) {
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10, 4));
     if (*v) {
-        ImGui::PushStyleColor(ImGuiCol_Button,        Hex(0x263242));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, Hex(0x2F3D50));
+        ImGui::PushStyleColor(ImGuiCol_Button,        Hex(0x2A2F37));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, Hex(0x343A44));
         ImGui::PushStyleColor(ImGuiCol_Border,         Col::Accent());
         ImGui::PushStyleColor(ImGuiCol_Text,          Col::Accent());
     } else {
-        ImGui::PushStyleColor(ImGuiCol_Button,        Hex(0x161C24, 0.90f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, Hex(0x202834, 0.95f));
-        ImGui::PushStyleColor(ImGuiCol_Border,         Hex(0x222A36));
+        ImGui::PushStyleColor(ImGuiCol_Button,        Hex(0x181B20, 0.90f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, Hex(0x24282F, 0.95f));
+        ImGui::PushStyleColor(ImGuiCol_Border,         Hex(0x2A2E35));
         ImGui::PushStyleColor(ImGuiCol_Text,          Col::TextDim());
     }
     bool clicked = ImGui::Button(label);
@@ -587,8 +587,8 @@ inline void BeginFrameHost(ShellState& st) {
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, Col::AccentHi());
             ImGui::PushStyleColor(ImGuiCol_Text, Col::AccentText());
         } else {
-            ImGui::PushStyleColor(ImGuiCol_Button, Hex(0x1F2733));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, Hex(0x283342));
+            ImGui::PushStyleColor(ImGuiCol_Button, Hex(0x24282F));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, Hex(0x2E333C));
             ImGui::PushStyleColor(ImGuiCol_Text, Col::TextDim());
         }
         if (gFontBold) ImGui::PushFont(gFontBold);
@@ -601,12 +601,12 @@ inline void BeginFrameHost(ShellState& st) {
         ImGui::SameLine(0, 4.0f);
 
         if (isUV) {
-            ImGui::PushStyleColor(ImGuiCol_Button, Hex(0x38BDF8));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, Hex(0x60A5FA));
+            ImGui::PushStyleColor(ImGuiCol_Button, Hex(0x4CC3A6));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, Hex(0x5FD2B6));
             ImGui::PushStyleColor(ImGuiCol_Text, Hex(0x0C1412));
         } else {
-            ImGui::PushStyleColor(ImGuiCol_Button, Hex(0x1F2733));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, Hex(0x283342));
+            ImGui::PushStyleColor(ImGuiCol_Button, Hex(0x24282F));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, Hex(0x2E333C));
             ImGui::PushStyleColor(ImGuiCol_Text, Col::TextDim());
         }
         if (gFontBold) ImGui::PushFont(gFontBold);

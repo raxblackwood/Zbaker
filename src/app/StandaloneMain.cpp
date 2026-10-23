@@ -134,7 +134,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
         // Rendering
         ImGui::Render();
-        const float clear_color[4] = { 0.055f, 0.071f, 0.090f, 1.00f };
+        const float clear_color[4] = { 24.0f / 255.0f, 27.0f / 255.0f, 32.0f / 255.0f, 1.00f };
         g_pd3dDeviceContext->OMSetRenderTargets(1, &g_mainRenderTargetView, nullptr);
         g_pd3dDeviceContext->ClearRenderTargetView(g_mainRenderTargetView, clear_color);
         ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());

@@ -138,14 +138,14 @@ float4 PSMain(PS_INPUT input) : SV_TARGET {
         distFade = distFade * distFade;
         if (distFade <= 0.001f) discard;
 
-        // Studio Slate-Navy grid: subtle dark teal lines matching reference design
-        float3 col = float3(0.13f, 0.17f, 0.22f); // Subtle slate-teal for minor grid lines
-        float alpha = lineMinor * 0.28f;
+        // Neutral dark charcoal grid matching reference design (no blue tint)
+        float3 col = float3(0.16f, 0.18f, 0.20f); // Neutral dark charcoal for minor grid lines
+        float alpha = lineMinor * 0.22f;
 
-        // Major subdivisions: clean, refined slate-cyan
+        // Major subdivisions: clean, refined graphite
         if (lineMajor > 0.001f) {
-            col = lerp(col, float3(0.19f, 0.26f, 0.34f), lineMajor);
-            alpha = max(alpha, lineMajor * 0.48f);
+            col = lerp(col, float3(0.22f, 0.25f, 0.28f), lineMajor);
+            alpha = max(alpha, lineMajor * 0.42f);
         }
 
         // Red X Axis (along Z = 0)
@@ -938,8 +938,8 @@ void ViewportRenderer::Render() {
     vp.MaxDepth = 1.0f;
     m_context->RSSetViewports(1, &vp);
 
-    // Studio Slate-Navy 3D Viewport Background matching reference design
-    const float clearColor[4] = { 0.088f, 0.106f, 0.133f, 1.0f };
+    // Exact 3D Viewport background sampled from reference: RGB(32, 36, 42) Hex(#20242A)
+    const float clearColor[4] = { 32.0f / 255.0f, 36.0f / 255.0f, 42.0f / 255.0f, 1.0f };
     m_context->ClearRenderTargetView(m_colorRTV, clearColor);
     m_context->ClearDepthStencilView(m_depthDSV, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
 
@@ -1028,7 +1028,7 @@ void ViewportRenderer::Render() {
             m_context->OMSetBlendState(m_alphaBlendState, nullptr, 0xFFFFFFFF);
             m_context->RSSetState(m_wireframeRS);
 
-            DirectX::XMFLOAT4 wireColor = { 0.22f, 0.28f, 0.35f, 0.85f };
+            DirectX::XMFLOAT4 wireColor = { 0.18f, 0.20f, 0.23f, 0.85f };
             UpdateConstantBuffer(worldLP, wireColor, 4);
 
             if (m_lowPolyWireGPU.indexBuffer && m_lowPolyWireGPU.indexCount > 0) {
