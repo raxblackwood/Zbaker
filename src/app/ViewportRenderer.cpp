@@ -138,14 +138,14 @@ float4 PSMain(PS_INPUT input) : SV_TARGET {
         distFade = distFade * distFade;
         if (distFade <= 0.001f) discard;
 
-        // Blender refined slate colors: subtle, elegant, smooth anti-aliased
-        float3 col = float3(0.38f, 0.39f, 0.41f); // Soft neutral gray for minor grid lines
-        float alpha = lineMinor * 0.16f;
+        // Studio Slate-Navy grid: subtle dark teal lines matching reference design
+        float3 col = float3(0.13f, 0.17f, 0.22f); // Subtle slate-teal for minor grid lines
+        float alpha = lineMinor * 0.28f;
 
-        // Major subdivisions: clean, refined accent
+        // Major subdivisions: clean, refined slate-cyan
         if (lineMajor > 0.001f) {
-            col = lerp(col, float3(0.50f, 0.51f, 0.53f), lineMajor);
-            alpha = max(alpha, lineMajor * 0.32f);
+            col = lerp(col, float3(0.19f, 0.26f, 0.34f), lineMajor);
+            alpha = max(alpha, lineMajor * 0.48f);
         }
 
         // Red X Axis (along Z = 0)
@@ -938,8 +938,8 @@ void ViewportRenderer::Render() {
     vp.MaxDepth = 1.0f;
     m_context->RSSetViewports(1, &vp);
 
-    // Blender 4.x/5.x open medium slate viewport background
-    const float clearColor[4] = { 0.30f, 0.305f, 0.315f, 1.0f };
+    // Studio Slate-Navy 3D Viewport Background matching reference design
+    const float clearColor[4] = { 0.088f, 0.106f, 0.133f, 1.0f };
     m_context->ClearRenderTargetView(m_colorRTV, clearColor);
     m_context->ClearDepthStencilView(m_depthDSV, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
 
@@ -1028,7 +1028,7 @@ void ViewportRenderer::Render() {
             m_context->OMSetBlendState(m_alphaBlendState, nullptr, 0xFFFFFFFF);
             m_context->RSSetState(m_wireframeRS);
 
-            DirectX::XMFLOAT4 wireColor = { 0.12f, 0.14f, 0.17f, 0.90f };
+            DirectX::XMFLOAT4 wireColor = { 0.22f, 0.28f, 0.35f, 0.85f };
             UpdateConstantBuffer(worldLP, wireColor, 4);
 
             if (m_lowPolyWireGPU.indexBuffer && m_lowPolyWireGPU.indexCount > 0) {
@@ -1081,7 +1081,7 @@ void ViewportRenderer::Render() {
         m_context->OMSetBlendState(m_alphaBlendState, nullptr, 0xFFFFFFFF);
         m_context->RSSetState(m_solidNoCullRS);
 
-        DirectX::XMFLOAT4 cageColor = { 1.0f, 0.52f, 0.12f, cageOpacity };
+        DirectX::XMFLOAT4 cageColor = { 0.30f, 0.88f, 0.72f, cageOpacity * 0.35f };
         UpdateConstantBuffer(worldLP, cageColor, 3);
 
         m_context->IASetVertexBuffers(0, 1, &m_cageGPU.vertexBuffer, &stride, &offset);
@@ -1090,7 +1090,7 @@ void ViewportRenderer::Render() {
 
         // Cage wireframe (Pure polygon edges)
         m_context->RSSetState(m_wireframeRS);
-        DirectX::XMFLOAT4 cageWire = { 1.0f, 0.68f, 0.22f, 0.92f };
+        DirectX::XMFLOAT4 cageWire = { 0.30f, 0.88f, 0.72f, 0.85f };
         UpdateConstantBuffer(worldLP, cageWire, 4);
 
         if (m_cageWireGPU.indexBuffer && m_cageWireGPU.indexCount > 0) {

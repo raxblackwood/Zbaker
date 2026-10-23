@@ -20,13 +20,14 @@
 namespace BakerUI {
 
 enum class UITheme {
-    BlenderDark = 0,
-    MarmosetEmber = 1,
-    CyberTeal = 2,
-    StudioSlate = 3
+    StudioSlateTeal = 0, // Signature Slate-Navy & Mint Cyber Teal (Primary Reference)
+    BlenderDark = 1,
+    MarmosetEmber = 2,
+    CyberTeal = 3,
+    StudioSlate = 4
 };
 
-inline UITheme gCurrentTheme = UITheme::BlenderDark;
+inline UITheme gCurrentTheme = UITheme::StudioSlateTeal;
 
 // ---------------------------------------------------------------- palette
 inline ImVec4 Hex(unsigned rgb, float a = 1.f) {
@@ -34,66 +35,80 @@ inline ImVec4 Hex(unsigned rgb, float a = 1.f) {
 }
 namespace Col {
     inline ImVec4 Bg() {
-        if (gCurrentTheme == UITheme::BlenderDark)   return Hex(0x1D1D1D); // Blender deep dark background
-        if (gCurrentTheme == UITheme::MarmosetEmber) return Hex(0x111317);
-        if (gCurrentTheme == UITheme::CyberTeal)     return Hex(0x0E1316);
+        if (gCurrentTheme == UITheme::StudioSlateTeal) return Hex(0x0E1217); // Obsidian slate-navy root
+        if (gCurrentTheme == UITheme::BlenderDark)     return Hex(0x1D1D1D);
+        if (gCurrentTheme == UITheme::MarmosetEmber)   return Hex(0x111317);
+        if (gCurrentTheme == UITheme::CyberTeal)       return Hex(0x0E1316);
         return Hex(0x131519);
     }
     inline ImVec4 Panel() {
-        if (gCurrentTheme == UITheme::BlenderDark)   return Hex(0x282828); // Blender main panel gray
-        if (gCurrentTheme == UITheme::MarmosetEmber) return Hex(0x181B22);
-        if (gCurrentTheme == UITheme::CyberTeal)     return Hex(0x141B20);
+        if (gCurrentTheme == UITheme::StudioSlateTeal) return Hex(0x151A22); // Deep dark slate-charcoal panel
+        if (gCurrentTheme == UITheme::BlenderDark)     return Hex(0x282828);
+        if (gCurrentTheme == UITheme::MarmosetEmber)   return Hex(0x181B22);
+        if (gCurrentTheme == UITheme::CyberTeal)       return Hex(0x141B20);
         return Hex(0x191C22);
     }
     inline ImVec4 PanelHi() {
-        if (gCurrentTheme == UITheme::BlenderDark)   return Hex(0x323232); // Blender inset / elevated card
-        if (gCurrentTheme == UITheme::MarmosetEmber) return Hex(0x20242D);
-        if (gCurrentTheme == UITheme::CyberTeal)     return Hex(0x1A232A);
+        if (gCurrentTheme == UITheme::StudioSlateTeal) return Hex(0x1B222C); // Inset / elevated card
+        if (gCurrentTheme == UITheme::BlenderDark)     return Hex(0x323232);
+        if (gCurrentTheme == UITheme::MarmosetEmber)   return Hex(0x20242D);
+        if (gCurrentTheme == UITheme::CyberTeal)       return Hex(0x1A232A);
         return Hex(0x21252D);
     }
     inline ImVec4 Border() {
-        if (gCurrentTheme == UITheme::BlenderDark)   return Hex(0x1B1B1B); // Blender subtle crisp border
-        if (gCurrentTheme == UITheme::MarmosetEmber) return Hex(0x2E3442);
-        if (gCurrentTheme == UITheme::CyberTeal)     return Hex(0x25353F);
+        if (gCurrentTheme == UITheme::StudioSlateTeal) return Hex(0x242E3B); // Crisp 1px slate border
+        if (gCurrentTheme == UITheme::BlenderDark)     return Hex(0x1B1B1B);
+        if (gCurrentTheme == UITheme::MarmosetEmber)   return Hex(0x2E3442);
+        if (gCurrentTheme == UITheme::CyberTeal)       return Hex(0x25353F);
         return Hex(0x2C313C);
     }
     inline ImVec4 Text() {
-        if (gCurrentTheme == UITheme::BlenderDark)   return Hex(0xEDEDED); // Blender crisp text
+        if (gCurrentTheme == UITheme::StudioSlateTeal) return Hex(0xF1F5F9); // Crisp readable light silver
+        if (gCurrentTheme == UITheme::BlenderDark)     return Hex(0xEDEDED);
         return Hex(0xEDEDF2);
     }
     inline ImVec4 TextDim() {
-        if (gCurrentTheme == UITheme::BlenderDark)   return Hex(0x9E9E9E); // Blender readable secondary text
+        if (gCurrentTheme == UITheme::StudioSlateTeal) return Hex(0x768699); // Muted slate blue
+        if (gCurrentTheme == UITheme::BlenderDark)     return Hex(0x9E9E9E);
         return Hex(0x8D94A5);
     }
     inline ImVec4 Accent() {
-        if (gCurrentTheme == UITheme::BlenderDark)   return Hex(0xE87D0D); // Blender Signature Warm Orange
-        if (gCurrentTheme == UITheme::MarmosetEmber) return Hex(0xFF7A18); // Warm Marmoset Ember Orange
-        if (gCurrentTheme == UITheme::CyberTeal)     return Hex(0x00D2B4); // Cyber Teal
-        return Hex(0x4E92F9); // Crisp Studio Blue
+        if (gCurrentTheme == UITheme::StudioSlateTeal) return Hex(0x4EE2B6); // Signature Mint Cyber Teal
+        if (gCurrentTheme == UITheme::BlenderDark)     return Hex(0xE87D0D); // Blender Orange
+        if (gCurrentTheme == UITheme::MarmosetEmber)   return Hex(0xFF7A18);
+        if (gCurrentTheme == UITheme::CyberTeal)       return Hex(0x00D2B4);
+        return Hex(0x4E92F9);
     }
     inline ImVec4 AccentHi() {
-        if (gCurrentTheme == UITheme::BlenderDark)   return Hex(0xF68E28); // Hover orange
-        if (gCurrentTheme == UITheme::MarmosetEmber) return Hex(0xFF9438);
-        if (gCurrentTheme == UITheme::CyberTeal)     return Hex(0x38F0D6);
+        if (gCurrentTheme == UITheme::StudioSlateTeal) return Hex(0x63E8BF); // Bright glowing mint
+        if (gCurrentTheme == UITheme::BlenderDark)     return Hex(0xF68E28);
+        if (gCurrentTheme == UITheme::MarmosetEmber)   return Hex(0xFF9438);
+        if (gCurrentTheme == UITheme::CyberTeal)       return Hex(0x38F0D6);
         return Hex(0x73ABFF);
     }
     inline ImVec4 AccentLo() {
-        if (gCurrentTheme == UITheme::BlenderDark)   return Hex(0xB85F00); // Active/pressed deep orange
-        if (gCurrentTheme == UITheme::MarmosetEmber) return Hex(0xD96206);
-        if (gCurrentTheme == UITheme::CyberTeal)     return Hex(0x00A890);
+        if (gCurrentTheme == UITheme::StudioSlateTeal) return Hex(0x3BC79D); // Pressed deep mint teal
+        if (gCurrentTheme == UITheme::BlenderDark)     return Hex(0xB85F00);
+        if (gCurrentTheme == UITheme::MarmosetEmber)   return Hex(0xD96206);
+        if (gCurrentTheme == UITheme::CyberTeal)       return Hex(0x00A890);
         return Hex(0x3472D9);
     }
+    inline ImVec4 AccentText() {
+        if (gCurrentTheme == UITheme::StudioSlateTeal) return Hex(0x0C1412); // High-contrast dark text on mint
+        return Hex(0xFFFFFF);
+    }
     inline ImVec4 Ok() {
-        if (gCurrentTheme == UITheme::BlenderDark)   return Hex(0x47B34F); // Blender green
+        if (gCurrentTheme == UITheme::StudioSlateTeal) return Hex(0x4EE2B6); // Mint teal
+        if (gCurrentTheme == UITheme::BlenderDark)     return Hex(0x47B34F);
         return Hex(0x3DDC97);
     }
     inline ImVec4 Warn() {
-        if (gCurrentTheme == UITheme::BlenderDark)   return Hex(0xE5A83B); // Blender amber
+        if (gCurrentTheme == UITheme::StudioSlateTeal) return Hex(0xF59E0B); // Warm amber
+        if (gCurrentTheme == UITheme::BlenderDark)     return Hex(0xE5A83B);
         return Hex(0xFFB547);
     }
     inline ImVec4 Err() {
-        if (gCurrentTheme == UITheme::BlenderDark)   return Hex(0xE83D3D); // Blender red
-        return Hex(0xFF5C6C);
+        return Hex(0xEF4444); // Clean red
     }
 }
 
@@ -121,21 +136,21 @@ inline void ApplyTheme(float dpi = 1.f) {
     ImGuiStyle& s = ImGui::GetStyle();
     s = ImGuiStyle();
     s.WindowPadding     = ImVec2(10, 10);
-    s.FramePadding      = ImVec2(8, 5);     // Blender compact padding
+    s.FramePadding      = ImVec2(8, 5);
     s.ItemSpacing       = ImVec2(8, 6);
     s.ItemInnerSpacing  = ImVec2(6, 4);
     s.CellPadding       = ImVec2(6, 4);
     s.ScrollbarSize     = 10;
     s.GrabMinSize       = 10;
-    s.WindowRounding    = 4;                // Blender 4.x subtle rounding
-    s.ChildRounding     = 4;
-    s.FrameRounding     = 4;
-    s.PopupRounding     = 4;
+    s.WindowRounding    = 6;                // Smooth modern studio rounding
+    s.ChildRounding     = 6;
+    s.FrameRounding     = 5;
+    s.PopupRounding     = 6;
     s.ScrollbarRounding = 4;
-    s.GrabRounding      = 3;
-    s.TabRounding       = 4;
+    s.GrabRounding      = 4;
+    s.TabRounding       = 5;
     s.WindowBorderSize  = 1;
-    s.FrameBorderSize   = 1;                // Inset input borders
+    s.FrameBorderSize   = 1;
     s.TabBarBorderSize  = 1;
     s.DockingSeparatorSize = 2;
     s.WindowMenuButtonPosition = ImGuiDir_None;
@@ -144,109 +159,132 @@ inline void ApplyTheme(float dpi = 1.f) {
     ImVec4* c = s.Colors;
     c[ImGuiCol_Text]                 = Col::Text();
     c[ImGuiCol_TextDisabled]         = Col::TextDim();
-    c[ImGuiCol_WindowBg]             = (gCurrentTheme == UITheme::BlenderDark) ? Hex(0x282828) : Col::Panel();
-    c[ImGuiCol_ChildBg]              = (gCurrentTheme == UITheme::BlenderDark) ? Hex(0x222222) : Col::PanelHi();
-    c[ImGuiCol_PopupBg]              = (gCurrentTheme == UITheme::BlenderDark) ? Hex(0x1F1F1F, 0.98f) : Hex(0x1B2029, 0.98f);
-    c[ImGuiCol_Border]               = (gCurrentTheme == UITheme::BlenderDark) ? Hex(0x1A1A1A) : Col::Border();
+    c[ImGuiCol_WindowBg]             = Col::Panel();
+    c[ImGuiCol_ChildBg]              = Col::PanelHi();
+    c[ImGuiCol_PopupBg]              = Hex(0x161B23, 0.98f);
+    c[ImGuiCol_Border]               = Col::Border();
     c[ImGuiCol_BorderShadow]         = Hex(0, 0);
-    c[ImGuiCol_FrameBg]              = (gCurrentTheme == UITheme::BlenderDark) ? Hex(0x181818) : Col::PanelHi();
-    c[ImGuiCol_FrameBgHovered]       = (gCurrentTheme == UITheme::BlenderDark) ? Hex(0x282828) : Hex(0x232A36);
-    c[ImGuiCol_FrameBgActive]        = (gCurrentTheme == UITheme::BlenderDark) ? Hex(0x323232) : Hex(0x2A3342);
-    c[ImGuiCol_TitleBg]              = (gCurrentTheme == UITheme::BlenderDark) ? Hex(0x202020) : Col::Bg();
-    c[ImGuiCol_TitleBgActive]        = (gCurrentTheme == UITheme::BlenderDark) ? Hex(0x262626) : Col::Bg();
-    c[ImGuiCol_TitleBgCollapsed]     = Hex(0x181818);
-    c[ImGuiCol_MenuBarBg]            = (gCurrentTheme == UITheme::BlenderDark) ? Hex(0x202020) : Col::Bg();
+    c[ImGuiCol_FrameBg]              = Hex(0x13171F);
+    c[ImGuiCol_FrameBgHovered]       = Hex(0x1C232E);
+    c[ImGuiCol_FrameBgActive]        = Hex(0x232D3B);
+    c[ImGuiCol_TitleBg]              = Hex(0x10141A);
+    c[ImGuiCol_TitleBgActive]        = Hex(0x141920);
+    c[ImGuiCol_TitleBgCollapsed]     = Hex(0x10141A);
+    c[ImGuiCol_MenuBarBg]            = Hex(0x0E1217);
     c[ImGuiCol_ScrollbarBg]          = Hex(0, 0);
-    c[ImGuiCol_ScrollbarGrab]        = (gCurrentTheme == UITheme::BlenderDark) ? Hex(0x3C3C3C) : Hex(0x2E3544);
-    c[ImGuiCol_ScrollbarGrabHovered] = (gCurrentTheme == UITheme::BlenderDark) ? Hex(0x4C4C4C) : Hex(0x3A4356);
+    c[ImGuiCol_ScrollbarGrab]        = Hex(0x242E3B);
+    c[ImGuiCol_ScrollbarGrabHovered] = Hex(0x323E4F);
     c[ImGuiCol_ScrollbarGrabActive]  = Col::Accent();
     c[ImGuiCol_CheckMark]            = Col::Accent();
-    c[ImGuiCol_SliderGrab]           = (gCurrentTheme == UITheme::BlenderDark) ? Hex(0x505050) : Col::Accent();
-    c[ImGuiCol_SliderGrabActive]     = Col::Accent();
-    c[ImGuiCol_Button]               = (gCurrentTheme == UITheme::BlenderDark) ? Hex(0x363636) : Hex(0x222936);
-    c[ImGuiCol_ButtonHovered]        = (gCurrentTheme == UITheme::BlenderDark) ? Hex(0x444444) : Hex(0x2B3445);
-    c[ImGuiCol_ButtonActive]         = (gCurrentTheme == UITheme::BlenderDark) ? Col::Accent() : Hex(0x343F54);
-    c[ImGuiCol_Header]               = (gCurrentTheme == UITheme::BlenderDark) ? Hex(0x353535) : Hex(0x222936);
-    c[ImGuiCol_HeaderHovered]        = (gCurrentTheme == UITheme::BlenderDark) ? Hex(0x424242) : Hex(0x2B3445);
+    c[ImGuiCol_SliderGrab]           = Col::Accent();
+    c[ImGuiCol_SliderGrabActive]     = Col::AccentHi();
+    c[ImGuiCol_Button]               = Hex(0x1F2733);
+    c[ImGuiCol_ButtonHovered]        = Hex(0x283342);
+    c[ImGuiCol_ButtonActive]         = Hex(0x19202B);
+    c[ImGuiCol_Header]               = Hex(0x1F2733);
+    c[ImGuiCol_HeaderHovered]        = Hex(0x283342);
     c[ImGuiCol_HeaderActive]         = Col::Accent();
-    c[ImGuiCol_Separator]            = (gCurrentTheme == UITheme::BlenderDark) ? Hex(0x1C1C1C) : Col::Border();
+    c[ImGuiCol_Separator]            = Col::Border();
     c[ImGuiCol_SeparatorHovered]     = Col::Accent();
     c[ImGuiCol_SeparatorActive]      = Col::AccentHi();
     c[ImGuiCol_ResizeGrip]           = Hex(0, 0);
     c[ImGuiCol_ResizeGripHovered]    = Col::Accent();
     c[ImGuiCol_ResizeGripActive]     = Col::AccentHi();
-    c[ImGuiCol_Tab]                  = (gCurrentTheme == UITheme::BlenderDark) ? Hex(0x202020) : Col::Bg();
-    c[ImGuiCol_TabHovered]           = (gCurrentTheme == UITheme::BlenderDark) ? Hex(0x323232) : Hex(0x232A36);
-    c[ImGuiCol_TabSelected]          = (gCurrentTheme == UITheme::BlenderDark) ? Hex(0x383838) : Col::Panel();
-    c[ImGuiCol_TabDimmed]            = (gCurrentTheme == UITheme::BlenderDark) ? Hex(0x1C1C1C) : Col::Bg();
-    c[ImGuiCol_TabDimmedSelected]    = (gCurrentTheme == UITheme::BlenderDark) ? Hex(0x2C2C2C) : Col::Panel();
-    c[ImGuiCol_DockingPreview]       = Hex(0xE87D0D, 0.40f);
-    c[ImGuiCol_DockingEmptyBg]       = (gCurrentTheme == UITheme::BlenderDark) ? Hex(0x181818) : Col::Bg();
-    c[ImGuiCol_TableHeaderBg]        = (gCurrentTheme == UITheme::BlenderDark) ? Hex(0x242424) : Col::Bg();
-    c[ImGuiCol_TableBorderLight]     = (gCurrentTheme == UITheme::BlenderDark) ? Hex(0x1F1F1F) : Col::Border();
-    c[ImGuiCol_TextSelectedBg]       = Hex(0xE87D0D, 0.35f);
+    c[ImGuiCol_Tab]                  = Hex(0x10141A);
+    c[ImGuiCol_TabHovered]           = Hex(0x1E2632);
+    c[ImGuiCol_TabSelected]          = Hex(0x263242);
+    c[ImGuiCol_TabDimmed]            = Hex(0x10141A);
+    c[ImGuiCol_TabDimmedSelected]    = Hex(0x1C232E);
+    c[ImGuiCol_DockingPreview]       = Hex(0x4EE2B6, 0.40f);
+    c[ImGuiCol_DockingEmptyBg]       = Col::Bg();
+    c[ImGuiCol_TableHeaderBg]        = Hex(0x13171F);
+    c[ImGuiCol_TableBorderLight]     = Col::Border();
+    c[ImGuiCol_TextSelectedBg]       = Hex(0x4EE2B6, 0.35f);
     c[ImGuiCol_PlotHistogram]        = Col::Accent();
 }
 
 // ---------------------------------------------------------------- widgets
-// Blender styled solid category bar
+// Refined section header matching reference design
 inline void SectionLabel(const char* text) {
-    ImGui::Dummy(ImVec2(0, 4));
+    ImGui::Spacing();
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImVec2 p = ImGui::GetCursorScreenPos();
     float w = ImGui::GetContentRegionAvail().x;
-    float h = ImGui::GetFrameHeight() * 1.05f;
+    float h = ImGui::GetFontSize() + 10.0f;
 
-    // Blender section header card
-    dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), ImGui::GetColorU32(Hex(0x343434)), 4.0f);
-    dl->AddRect(p, ImVec2(p.x + w, p.y + h), ImGui::GetColorU32(Hex(0x1F1F1F)), 4.0f, 0, 1.0f);
+    dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), ImGui::GetColorU32(Hex(0x171E28, 0.85f)), 4.0f);
+    dl->AddRect(p, ImVec2(p.x + w, p.y + h), ImGui::GetColorU32(Col::Border()), 4.0f, 0, 1.0f);
 
     if (gFontBold) ImGui::PushFont(gFontBold);
-    dl->AddText(ImVec2(p.x + 8.0f, p.y + (h - ImGui::GetFontSize()) * 0.5f), ImGui::GetColorU32(Col::Text()), text);
+    dl->AddText(ImVec2(p.x + 8.0f, p.y + (h - ImGui::GetFontSize()) * 0.5f), ImGui::GetColorU32(Hex(0x8B9BB0)), text);
     if (gFontBold) ImGui::PopFont();
 
-    ImGui::Dummy(ImVec2(0, h + 4.0f));
+    ImGui::Dummy(ImVec2(0, h + 3.0f));
 }
 
-// Accent (primary) button, full width by default.
+// Accent (primary) button, full width by default. High contrast dark text on vibrant mint teal.
 inline bool PrimaryButton(const char* label, float w = -FLT_MIN, float h = 0) {
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 5.0f);
     ImGui::PushStyleColor(ImGuiCol_Button, Col::Accent());
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, Col::AccentHi());
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, Col::AccentLo());
-    ImGui::PushStyleColor(ImGuiCol_Text, Hex(0xFFFFFF));
+    ImGui::PushStyleColor(ImGuiCol_Text, Col::AccentText());
+    if (gFontBold) ImGui::PushFont(gFontBold);
     bool r = ImGui::Button(label, ImVec2(w, h));
+    if (gFontBold) ImGui::PopFont();
     ImGui::PopStyleColor(4);
+    ImGui::PopStyleVar();
     return r;
 }
 
 // Subtle full-width secondary button.
-inline bool SecondaryButton(const char* label, float w = -FLT_MIN) {
-    ImGui::PushStyleColor(ImGuiCol_Button, Hex(0x363636));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, Hex(0x444444));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, Hex(0x2C2C2C));
-    bool r = ImGui::Button(label, ImVec2(w, 0));
-    ImGui::PopStyleColor(3);
+inline bool SecondaryButton(const char* label, float w = -FLT_MIN, float h = 0) {
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 5.0f);
+    ImGui::PushStyleColor(ImGuiCol_Button, Hex(0x1F2733));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, Hex(0x283342));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, Hex(0x19202B));
+    ImGui::PushStyleColor(ImGuiCol_Border, Hex(0x2C3746));
+    ImGui::PushStyleColor(ImGuiCol_Text, Hex(0xE2E8F0));
+    bool r = ImGui::Button(label, ImVec2(w, h));
+    ImGui::PopStyleColor(5);
+    ImGui::PopStyleVar();
     return r;
 }
 
 // Pill-shaped toggle (used on the viewport overlay instead of checkboxes).
 inline bool ToggleChip(const char* label, bool* v) {
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.f);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10, 4));
     if (*v) {
-        ImGui::PushStyleColor(ImGuiCol_Button,        Hex(0x444444));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, Hex(0x525252));
+        ImGui::PushStyleColor(ImGuiCol_Button,        Hex(0x263242));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, Hex(0x2F3D50));
+        ImGui::PushStyleColor(ImGuiCol_Border,         Col::Accent());
         ImGui::PushStyleColor(ImGuiCol_Text,          Col::Accent());
     } else {
-        ImGui::PushStyleColor(ImGuiCol_Button,        Hex(0x262626, 0.90f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, Hex(0x343434, 0.95f));
+        ImGui::PushStyleColor(ImGuiCol_Button,        Hex(0x161C24, 0.90f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, Hex(0x202834, 0.95f));
+        ImGui::PushStyleColor(ImGuiCol_Border,         Hex(0x222A36));
         ImGui::PushStyleColor(ImGuiCol_Text,          Col::TextDim());
     }
     bool clicked = ImGui::Button(label);
     if (clicked) *v = !*v;
-    ImGui::PopStyleColor(3);
+    ImGui::PopStyleColor(4);
     ImGui::PopStyleVar(2);
     return clicked;
+}
+
+// Status dot indicator matching reference design
+inline void StatusDot(ImVec4 col, bool filled = true, float radius = 3.5f) {
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    float lineH = ImGui::GetFrameHeight();
+    ImVec2 center(p.x + radius + 2.0f, p.y + lineH * 0.5f);
+    if (filled) {
+        dl->AddCircleFilled(center, radius, ImGui::GetColorU32(col), 16);
+    } else {
+        dl->AddCircle(center, radius, ImGui::GetColorU32(col), 16, 1.5f);
+    }
+    ImGui::Dummy(ImVec2(radius * 2.0f + 6.0f, lineH));
 }
 
 // Colored status pill ("BVH ready", "No low-poly").
@@ -300,20 +338,24 @@ inline bool PropCombo(const char* label, int* cur, const char* const* items, int
 inline bool PropCheck(const char* label, bool* v, const char* tip = nullptr) {
     PropLabel(label, tip);
     char id[64]; snprintf(id, sizeof id, "##%s", label);
-    return ImGui::Checkbox(id, v);
+    bool r = ImGui::Checkbox(id, v);
+    ImGui::SameLine();
+    StatusDot(*v ? Col::Ok() : Hex(0x475569), *v, 3.0f);
+    return r;
 }
 
-// Rounded "card" container; use for grouping (e.g. one per mesh source).
+// Rounded "card" container; use for grouping.
 inline bool BeginCard(const char* id, float h = 0) {
-    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 4.f);
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 6.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10, 8));
     ImGui::PushStyleColor(ImGuiCol_Border, Col::Border());
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, Col::PanelHi());
     return ImGui::BeginChild(id, ImVec2(0, h),
         ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding);
 }
 inline void EndCard() {
     ImGui::EndChild();
-    ImGui::PopStyleColor();
+    ImGui::PopStyleColor(2);
     ImGui::PopStyleVar(2);
 }
 
@@ -364,24 +406,25 @@ inline bool FloatingBakeBar(
 
     // Drop shadow
     dl->AddRectFilled(ImVec2(minP.x + 2, minP.y + 3), ImVec2(maxP.x + 2, maxP.y + 4),
-                      ImGui::GetColorU32(Hex(0x000000, 0.45f)), 6.0f);
-    // Dark Blender panel background
-    dl->AddRectFilled(minP, maxP, ImGui::GetColorU32(Hex(0x222222, 0.96f)), 6.0f);
-    // Blender border
-    dl->AddRect(minP, maxP, ImGui::GetColorU32(Hex(0x3C3C3C, 0.95f)), 6.0f, 0, 1.2f);
+                      ImGui::GetColorU32(Hex(0x000000, 0.55f)), 6.0f);
+    // Dark slate panel background matching reference
+    dl->AddRectFilled(minP, maxP, ImGui::GetColorU32(Hex(0x141A22, 0.96f)), 6.0f);
+    // Subtle border
+    dl->AddRect(minP, maxP, ImGui::GetColorU32(Hex(0x263242, 0.95f)), 6.0f, 0, 1.2f);
 
     bool clicked = false;
 
     if (isBaking) {
         float progClamped = (progress < 0.03f) ? 0.03f : (progress > 1.0f ? 1.0f : progress);
         ImVec2 progMax(minP.x + barWidth * progClamped, maxP.y);
-        dl->AddRectFilled(minP, progMax, ImGui::GetColorU32(Hex(0xB85F00, 0.85f)), 6.0f);
+        // Mint teal progress bar fill!
+        dl->AddRectFilled(minP, progMax, ImGui::GetColorU32(Hex(0x4EE2B6, 0.90f)), 6.0f);
 
         char textBuf[128];
         snprintf(textBuf, sizeof(textBuf), "%s (%.0f%%)", statusText ? statusText : "Baking...", progress * 100.0f);
         ImVec2 ts = ImGui::CalcTextSize(textBuf);
         dl->AddText(ImVec2(minP.x + (barWidth - ts.x) * 0.5f, minP.y + (barHeight - ts.y) * 0.5f),
-                    ImGui::GetColorU32(Hex(0xFFFFFF)), textBuf);
+                    ImGui::GetColorU32(Hex(0x0C1412)), textBuf);
     } else {
         // Left info section: UDIMs & Resolution
         char infoBuf[128];
@@ -396,7 +439,7 @@ inline bool FloatingBakeBar(
         float infoY = minP.y + (barHeight - infoTs.y) * 0.5f;
         dl->AddText(ImVec2(minP.x + 18.0f, infoY), ImGui::GetColorU32(canBake ? Col::Text() : Col::Warn()), infoBuf);
 
-        // Right side: Blender Orange Bake Button
+        // Right side: Mint Teal Bake Button with dark text
         float btnW = 160.0f;
         float btnH = 32.0f;
         float btnX = maxP.x - btnW - 8.0f;
@@ -407,11 +450,11 @@ inline bool FloatingBakeBar(
             ImGui::BeginDisabled();
         }
 
-        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
-        ImGui::PushStyleColor(ImGuiCol_Button, canBake ? Hex(0xE87D0D) : Hex(0x383838));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, canBake ? Hex(0xF68E28) : Hex(0x444444));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, canBake ? Hex(0xB85F00) : Hex(0x303030));
-        ImGui::PushStyleColor(ImGuiCol_Text, canBake ? Hex(0xFFFFFF) : Hex(0x9E9E9E));
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 5.0f);
+        ImGui::PushStyleColor(ImGuiCol_Button, canBake ? Hex(0x4EE2B6) : Hex(0x202834));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, canBake ? Hex(0x63E8BF) : Hex(0x283342));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, canBake ? Hex(0x3BC79D) : Hex(0x19202B));
+        ImGui::PushStyleColor(ImGuiCol_Text, canBake ? Hex(0x0C1412) : Hex(0x768699));
 
         if (gFontBold) ImGui::PushFont(gFontBold);
         if (ImGui::Button(canBake ? "START BAKE##float_bake" : "BAKE (NO MESH)##float_bake", ImVec2(btnW, btnH))) {
@@ -532,41 +575,45 @@ inline void BeginFrameHost(ShellState& st) {
         ImGui::Dummy(ImVec2(18.0f, 0.0f));
         ImGui::SameLine();
 
-        // Workspace mode tabs (Blender style)
+        // Workspace mode tabs matching studio styling
         bool isBaking = (st.activeTab == ShellState::AppTab::Baking);
         bool isUV = (st.activeTab == ShellState::AppTab::UVCutAndPack);
 
-        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
-        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(14.0f, 3.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 5.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(14.0f, 4.0f));
 
         if (isBaking) {
-            ImGui::PushStyleColor(ImGuiCol_Button, Hex(0xE87D0D));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, Hex(0xF68E28));
-            ImGui::PushStyleColor(ImGuiCol_Text, Hex(0xFFFFFF));
+            ImGui::PushStyleColor(ImGuiCol_Button, Col::Accent());
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, Col::AccentHi());
+            ImGui::PushStyleColor(ImGuiCol_Text, Col::AccentText());
         } else {
-            ImGui::PushStyleColor(ImGuiCol_Button, Hex(0x282828));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, Hex(0x383838));
-            ImGui::PushStyleColor(ImGuiCol_Text, Hex(0x9E9E9E));
+            ImGui::PushStyleColor(ImGuiCol_Button, Hex(0x1F2733));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, Hex(0x283342));
+            ImGui::PushStyleColor(ImGuiCol_Text, Col::TextDim());
         }
+        if (gFontBold) ImGui::PushFont(gFontBold);
         if (ImGui::Button("Bake Project")) {
             st.activeTab = ShellState::AppTab::Baking;
         }
+        if (gFontBold) ImGui::PopFont();
         ImGui::PopStyleColor(3);
 
         ImGui::SameLine(0, 4.0f);
 
         if (isUV) {
-            ImGui::PushStyleColor(ImGuiCol_Button, Hex(0x00A8FF));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, Hex(0x28BAFF));
-            ImGui::PushStyleColor(ImGuiCol_Text, Hex(0xFFFFFF));
+            ImGui::PushStyleColor(ImGuiCol_Button, Hex(0x38BDF8));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, Hex(0x60A5FA));
+            ImGui::PushStyleColor(ImGuiCol_Text, Hex(0x0C1412));
         } else {
-            ImGui::PushStyleColor(ImGuiCol_Button, Hex(0x282828));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, Hex(0x383838));
-            ImGui::PushStyleColor(ImGuiCol_Text, Hex(0x9E9E9E));
+            ImGui::PushStyleColor(ImGuiCol_Button, Hex(0x1F2733));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, Hex(0x283342));
+            ImGui::PushStyleColor(ImGuiCol_Text, Col::TextDim());
         }
+        if (gFontBold) ImGui::PushFont(gFontBold);
         if (ImGui::Button("UV Cut & Pack")) {
             st.activeTab = ShellState::AppTab::UVCutAndPack;
         }
+        if (gFontBold) ImGui::PopFont();
         ImGui::PopStyleColor(3);
         ImGui::PopStyleVar(2);
 

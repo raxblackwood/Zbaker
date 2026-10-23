@@ -1099,7 +1099,8 @@ void StandaloneUIManager::RenderViewportPanel() {
             if (curve.points.empty()) continue;
 
             bool isActive = (static_cast<int>(cIdx) == m_curveManager.activeCurveIndex);
-            ImU32 curveColor = isActive ? IM_COL32(255, 204, 34, 255) : IM_COL32(140, 210, 255, 200);
+            // Golden amber curve matching reference design
+            ImU32 curveColor = isActive ? IM_COL32(255, 172, 48, 255) : IM_COL32(78, 226, 182, 190);
             float thickness = isActive ? 3.0f : 2.0f;
 
             // Draw dense surface-following path contoured over mesh bumps and crevices
@@ -1164,14 +1165,14 @@ void StandaloneUIManager::RenderViewportPanel() {
                     bool isHovered = isActive && (m_curveManager.hoveredPointIndex == static_cast<int>(p));
 
                     if (isSelected || isHovered) {
-                        drawList->AddCircle(scrP, 9.0f, IM_COL32(255, 120, 0, 255), 18, 2.5f);
+                        drawList->AddCircle(scrP, 9.0f, IM_COL32(255, 172, 48, 255), 18, 2.0f);
                     }
-                    drawList->AddCircleFilled(scrP, 5.5f, isSelected ? IM_COL32(255, 220, 50, 255) : IM_COL32(255, 255, 255, 255));
-                    drawList->AddCircle(scrP, 5.5f, IM_COL32(20, 20, 20, 240), 16, 1.5f);
+                    drawList->AddCircleFilled(scrP, 5.0f, isSelected ? IM_COL32(255, 172, 48, 255) : IM_COL32(245, 248, 252, 255));
+                    drawList->AddCircle(scrP, 5.0f, IM_COL32(20, 27, 36, 240), 16, 1.5f);
 
                     char pLabel[16];
                     snprintf(pLabel, sizeof(pLabel), "P%zu", p);
-                    drawList->AddText(ImVec2(scrP.x + 8.0f, scrP.y - 14.0f), isSelected ? IM_COL32(255, 220, 50, 255) : IM_COL32(220, 220, 220, 220), pLabel);
+                    drawList->AddText(ImVec2(scrP.x + 8.0f, scrP.y - 14.0f), isSelected ? IM_COL32(255, 172, 48, 255) : IM_COL32(180, 195, 210, 220), pLabel);
                 }
             }
 
@@ -1209,6 +1210,13 @@ void StandaloneUIManager::RenderViewportPanel() {
                 }
             }
         }
+    }
+
+    // 3D Viewport bottom status hint text matching reference design
+    if (m_viewportMode == ViewportMode::View3D || m_viewportMode == ViewportMode::SplitBoth) {
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        const char* hint3D = "Alt+LMB orbit  *  Shift+RMB marking menu  *  Enter finalize cut";
+        dl->AddText(ImVec2(screenPos.x + 14.0f, screenPos.y + avail.y - 20.0f), ImGui::GetColorU32(BakerUI::Hex(0x5A6878)), hint3D);
     }
 
     // Viewport Mode overlay buttons (Top Left)
@@ -1330,8 +1338,8 @@ void StandaloneUIManager::RenderViewportPanel() {
         ImGui::SetCursorScreenPos(ImVec2(screenPos.x + 12.0f, screenPos.y + 44.0f));
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8.0f, 4.0f));
         ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.14f, 0.15f, 0.18f, 0.94f));
-        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.30f, 0.32f, 0.38f, 0.85f));
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.11f, 0.137f, 0.18f, 0.94f));
+        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.14f, 0.18f, 0.23f, 0.85f));
         float barW = (std::min)(940.0f, avail.x - 24.0f);
         ImGui::BeginChild("##brush_bar", ImVec2(barW, 36.0f), true, ImGuiWindowFlags_NoScrollbar);
         {
@@ -1574,8 +1582,23 @@ void StandaloneUIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& s
         }
     }
 
-    // Draw packed island bounds
+    // Draw packed island bounds matching reference color scheme
     if (m_hasUnwrappedIslands && !m_currentIslands.empty()) {
+        const ImU32 islandFills[] = {
+            IM_COL32(45, 212, 191, 160),  // Mint Teal
+            IM_COL32(96, 165, 250, 160),  // Sky Blue
+            IM_COL32(245, 158, 11, 160),  // Warm Amber
+            IM_COL32(167, 139, 250, 160), // Soft Lavender
+            IM_COL32(52, 211, 153, 160)   // Emerald Green
+        };
+        const ImU32 islandBorders[] = {
+            IM_COL32(45, 212, 191, 230),
+            IM_COL32(96, 165, 250, 230),
+            IM_COL32(245, 158, 11, 230),
+            IM_COL32(167, 139, 250, 230),
+            IM_COL32(52, 211, 153, 230)
+        };
+        size_t islIdx = 0;
         for (const auto& isl : m_currentIslands) {
             int uTile = (isl.targetUDIM - 1001) % 10;
             int vTile = (isl.targetUDIM - 1001) / 10;
@@ -1585,8 +1608,11 @@ void StandaloneUIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& s
             ImVec2 b0(tileX + isl.bounds.minU * currentTileSize, tileY + (1.0f - isl.bounds.maxV) * currentTileSize);
             ImVec2 b1(tileX + isl.bounds.maxU * currentTileSize, tileY + (1.0f - isl.bounds.minV) * currentTileSize);
 
-            drawList->AddRectFilled(b0, b1, IM_COL32(0, 180, 255, 22), 2.0f);
-            drawList->AddRect(b0, b1, IM_COL32(0, 200, 255, 120), 2.0f, 0, 1.0f);
+            ImU32 fillCol = islandFills[islIdx % 5];
+            ImU32 borderCol = islandBorders[islIdx % 5];
+            drawList->AddRectFilled(b0, b1, fillCol, 3.0f);
+            drawList->AddRect(b0, b1, borderCol, 3.0f, 0, 1.2f);
+            islIdx++;
         }
     }
 
@@ -1707,6 +1733,13 @@ void StandaloneUIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& s
             }
         }
     }
+
+    // 2D UV Canvas bottom status hint text matching reference design
+    char hintUV[128];
+    snprintf(hintUV, sizeof(hintUV), "Texel density %.2f px/cm  *  padding %d px",
+             m_packStats.averageTexelDensity > 0.01f ? m_packStats.averageTexelDensity : 10.24f,
+             m_packSettings.paddingPixels);
+    drawList->AddText(ImVec2(origin.x + 14.0f, origin.y + size.y - 20.0f), ImGui::GetColorU32(BakerUI::Hex(0x5A6878)), hintUV);
 
     drawList->PopClipRect();
 }
