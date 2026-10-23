@@ -726,8 +726,8 @@ void UIManager::RenderOutlinerPanel() {
 void UIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& size) {
     ImDrawList* drawList = ImGui::GetWindowDrawList();
 
-    // Background fill
-    drawList->AddRectFilled(origin, ImVec2(origin.x + size.x, origin.y + size.y), ImGui::GetColorU32(BakerUI::Col::Bg()));
+    // Deep dark background matching Blender UV Editor
+    drawList->AddRectFilled(origin, ImVec2(origin.x + size.x, origin.y + size.y), IM_COL32(22, 22, 24, 255));
 
     // Clip to canvas rectangle
     drawList->PushClipRect(origin, ImVec2(origin.x + size.x, origin.y + size.y), true);
@@ -773,80 +773,73 @@ void UIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& size) {
         }
     }
 
-    // Draw UDIM tiles (1001..1010, up to 4 rows)
-    for (int vTile = 0; vTile < 4; ++vTile) {
-        for (int uTile = 0; uTile < 10; ++uTile) {
-            int udim = 1001 + uTile + vTile * 10;
-
-            float x0 = origin.x + m_uvPan.x + uTile * currentTileSize;
-            float y0 = origin.y + m_uvPan.y + (1.0f - (vTile + 1)) * currentTileSize;
-            float x1 = x0 + currentTileSize;
-            float y1 = y0 + currentTileSize;
-
-            if (x1 < origin.x || x0 > origin.x + size.x || y1 < origin.y || y0 > origin.y + size.y) {
-                continue;
-            }
-
-            bool isDetected = std::find(m_lowPolyMesh.detectedUDIMs.begin(), m_lowPolyMesh.detectedUDIMs.end(), udim) != m_lowPolyMesh.detectedUDIMs.end();
-            bool isSelected = IsUDIMSelected(udim);
-
-            // Handle tile click to toggle bake inclusion
-            if (isDetected && isHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !io.KeyShift && !io.KeyAlt) {
-                if (io.MousePos.x >= x0 && io.MousePos.x <= x1 && io.MousePos.y >= y0 && io.MousePos.y <= y1) {
-                    ToggleUDIM(udim);
-                    isSelected = IsUDIMSelected(udim);
-                }
-            }
-
-            ImU32 tileBg = isSelected ? ImGui::GetColorU32(ImVec4(0.12f, 0.28f, 0.44f, 0.35f)) :
-                           (isDetected ? ImGui::GetColorU32(ImVec4(0.20f, 0.22f, 0.25f, 0.25f)) :
-                                         ImGui::GetColorU32(ImVec4(0.12f, 0.14f, 0.16f, 0.15f)));
-
-            drawList->AddRectFilled(ImVec2(x0, y0), ImVec2(x1, y1), tileBg);
-
-            // Live Baked Texture Display (xNormal / Substance 2D canvas style)
-            if (m_viewportRenderer.GetBakedNormalSRV() && (udim == 1001 || (isDetected && isSelected))) {
-                drawList->AddImage(
-                    (ImTextureID)m_viewportRenderer.GetBakedNormalSRV(),
-                    ImVec2(x0, y0),
-                    ImVec2(x1, y1),
-                    ImVec2(0.0f, 0.0f),
-                    ImVec2(1.0f, 1.0f)
-                );
-            }
-
-            ImU32 borderCol = isSelected ? ImGui::GetColorU32(BakerUI::Col::Accent()) : ImGui::GetColorU32(BakerUI::Col::Border());
-            float borderThick = isSelected ? 2.0f : 1.0f;
-            drawList->AddRect(ImVec2(x0, y0), ImVec2(x1, y1), borderCol, 0, 0, borderThick);
-
-            // Subgrid lines
-            if (currentTileSize > 140.0f) {
-                ImU32 subLineCol = ImGui::GetColorU32(ImVec4(0.20f, 0.24f, 0.30f, 0.35f));
-                for (int g = 1; g < 4; ++g) {
-                    float fx = x0 + (g / 4.0f) * currentTileSize;
-                    float fy = y0 + (g / 4.0f) * currentTileSize;
-                    drawList->AddLine(ImVec2(fx, y0), ImVec2(fx, y1), subLineCol);
-                    drawList->AddLine(ImVec2(x0, fy), ImVec2(x1, fy), subLineCol);
-                }
-            }
-
-            char tileStr[16];
-            snprintf(tileStr, sizeof(tileStr), "%d", udim);
-            drawList->AddText(ImVec2(x0 + 8.0f, y0 + 6.0f), isSelected ? ImGui::GetColorU32(BakerUI::Col::Accent()) : ImGui::GetColorU32(BakerUI::Col::TextDim()), tileStr);
-
-            if (isDetected) {
-                if (isSelected) {
-                    drawList->AddText(ImVec2(x0 + 8.0f, y0 + 24.0f), ImGui::GetColorU32(BakerUI::Col::Ok()), "[✓ Bake]");
-                } else {
-                    drawList->AddText(ImVec2(x0 + 8.0f, y0 + 24.0f), ImGui::GetColorU32(BakerUI::Col::Warn()), "[Excluded]");
-                }
+    // 1. Determine which tiles to draw:
+    // By default, draw the standard unit tile 1001 [0, 1]x[0, 1].
+    // If multiple UDIM tiles are detected in the loaded mesh, draw only those detected tiles.
+    std::vector<int> tilesToDraw = { 1001 };
+    for (int t : m_lowPolyMesh.detectedUDIMs) {
+        if (t >= 1001 && t <= 1099) {
+            if (std::find(tilesToDraw.begin(), tilesToDraw.end(), t) == tilesToDraw.end()) {
+                tilesToDraw.push_back(t);
             }
         }
     }
 
-    // Draw UV triangles
+    // Draw active tile canvases & subgrids (matching Blender UV editor)
+    for (int udim : tilesToDraw) {
+        int uTile = (udim - 1001) % 10;
+        int vTile = (udim - 1001) / 10;
+
+        float x0 = origin.x + m_uvPan.x + uTile * currentTileSize;
+        float y0 = origin.y + m_uvPan.y + (1.0f - (vTile + 1)) * currentTileSize;
+        float x1 = x0 + currentTileSize;
+        float y1 = y0 + currentTileSize;
+
+        if (x1 < origin.x || x0 > origin.x + size.x || y1 < origin.y || y0 > origin.y + size.y) {
+            continue;
+        }
+
+        // Blender neutral dark tile fill
+        drawList->AddRectFilled(ImVec2(x0, y0), ImVec2(x1, y1), IM_COL32(28, 28, 31, 255));
+
+        // Live Baked Texture Display (xNormal / Substance style) if present
+        if (m_viewportRenderer.GetBakedNormalSRV() && udim == 1001) {
+            drawList->AddImage(
+                (ImTextureID)m_viewportRenderer.GetBakedNormalSRV(),
+                ImVec2(x0, y0),
+                ImVec2(x1, y1),
+                ImVec2(0.0f, 0.0f),
+                ImVec2(1.0f, 1.0f)
+            );
+        }
+
+        // Blender 8x8 subgrid lines
+        if (currentTileSize > 80.0f) {
+            ImU32 subLineCol = IM_COL32(38, 38, 42, 255);
+            for (int g = 1; g < 8; ++g) {
+                float fx = x0 + (g / 8.0f) * currentTileSize;
+                float fy = y0 + (g / 8.0f) * currentTileSize;
+                drawList->AddLine(ImVec2(fx, y0), ImVec2(fx, y1), subLineCol, 1.0f);
+                drawList->AddLine(ImVec2(x0, fy), ImVec2(x1, fy), subLineCol, 1.0f);
+            }
+        }
+
+        // Clean subtle 1px border matching Blender
+        drawList->AddRect(ImVec2(x0, y0), ImVec2(x1, y1), IM_COL32(60, 60, 65, 255), 0.0f, 0, 1.0f);
+
+        // UDIM label in muted grey
+        char tileStr[16];
+        snprintf(tileStr, sizeof(tileStr), "%d", udim);
+        drawList->AddText(ImVec2(x0 + 8.0f, y0 + 6.0f), IM_COL32(110, 110, 118, 255), tileStr);
+    }
+
+    // Draw Low-Poly UV Faces, Wireframe, and Vertices (Default Blender UV Shells)
     if (m_hasLowPoly && !m_lowPolyMesh.triangles.empty()) {
-        ImU32 uvWireCol = ImGui::GetColorU32(ImVec4(0.95f, 0.95f, 0.98f, 0.40f));
+        ImU32 faceFillCol = IM_COL32(220, 225, 235, 18);   // Subtle ~7% translucent face fill
+        ImU32 edgeCol = IM_COL32(100, 105, 115, 200);      // Clean 1px wireframe edge
+        ImU32 vertDotCol = IM_COL32(18, 18, 22, 240);       // Tiny 2px vertex dots at corners
+
+        // 1. Face fill
         for (const auto& tri : m_lowPolyMesh.triangles) {
             const auto& v0 = m_lowPolyMesh.vertices[tri.indices[0]];
             const auto& v1 = m_lowPolyMesh.vertices[tri.indices[1]];
@@ -856,7 +849,28 @@ void UIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& size) {
             ImVec2 p1(origin.x + m_uvPan.x + v1.uv.u * currentTileSize, origin.y + m_uvPan.y + (1.0f - v1.uv.v) * currentTileSize);
             ImVec2 p2(origin.x + m_uvPan.x + v2.uv.u * currentTileSize, origin.y + m_uvPan.y + (1.0f - v2.uv.v) * currentTileSize);
 
-            drawList->AddTriangle(p0, p1, p2, uvWireCol, 1.0f);
+            drawList->AddTriangleFilled(p0, p1, p2, faceFillCol);
+        }
+
+        // 2. Wireframe edges
+        for (const auto& tri : m_lowPolyMesh.triangles) {
+            const auto& v0 = m_lowPolyMesh.vertices[tri.indices[0]];
+            const auto& v1 = m_lowPolyMesh.vertices[tri.indices[1]];
+            const auto& v2 = m_lowPolyMesh.vertices[tri.indices[2]];
+
+            ImVec2 p0(origin.x + m_uvPan.x + v0.uv.u * currentTileSize, origin.y + m_uvPan.y + (1.0f - v0.uv.v) * currentTileSize);
+            ImVec2 p1(origin.x + m_uvPan.x + v1.uv.u * currentTileSize, origin.y + m_uvPan.y + (1.0f - v1.uv.v) * currentTileSize);
+            ImVec2 p2(origin.x + m_uvPan.x + v2.uv.u * currentTileSize, origin.y + m_uvPan.y + (1.0f - v2.uv.v) * currentTileSize);
+
+            drawList->AddLine(p0, p1, edgeCol, 1.0f);
+            drawList->AddLine(p1, p2, edgeCol, 1.0f);
+            drawList->AddLine(p2, p0, edgeCol, 1.0f);
+        }
+
+        // 3. Vertex dots like Blender
+        for (const auto& vert : m_lowPolyMesh.vertices) {
+            ImVec2 p(origin.x + m_uvPan.x + vert.uv.u * currentTileSize, origin.y + m_uvPan.y + (1.0f - vert.uv.v) * currentTileSize);
+            drawList->AddCircleFilled(p, 2.0f, vertDotCol);
         }
     }
 
@@ -873,40 +887,6 @@ void UIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& size) {
                 ImVec2 p1(origin.x + m_uvPan.x + v1.uv.u * currentTileSize, origin.y + m_uvPan.y + (1.0f - v1.uv.v) * currentTileSize);
                 drawList->AddLine(p0, p1, seamCol, 2.0f);
             }
-        }
-    }
-
-    // Draw packed island bounds matching reference color scheme
-    if (m_hasUnwrappedIslands && !m_currentIslands.empty()) {
-        const ImU32 islandFills[] = {
-            IM_COL32(45, 212, 191, 160),  // Mint Teal
-            IM_COL32(96, 165, 250, 160),  // Sky Blue
-            IM_COL32(245, 158, 11, 160),  // Warm Amber
-            IM_COL32(167, 139, 250, 160), // Soft Lavender
-            IM_COL32(52, 211, 153, 160)   // Emerald Green
-        };
-        const ImU32 islandBorders[] = {
-            IM_COL32(45, 212, 191, 230),
-            IM_COL32(96, 165, 250, 230),
-            IM_COL32(245, 158, 11, 230),
-            IM_COL32(167, 139, 250, 230),
-            IM_COL32(52, 211, 153, 230)
-        };
-        size_t islIdx = 0;
-        for (const auto& isl : m_currentIslands) {
-            int uTile = (isl.targetUDIM - 1001) % 10;
-            int vTile = (isl.targetUDIM - 1001) / 10;
-            float tileX = origin.x + m_uvPan.x + uTile * currentTileSize;
-            float tileY = origin.y + m_uvPan.y + (1.0f - (vTile + 1)) * currentTileSize;
-
-            ImVec2 b0(tileX + isl.bounds.minU * currentTileSize, tileY + (1.0f - isl.bounds.maxV) * currentTileSize);
-            ImVec2 b1(tileX + isl.bounds.maxU * currentTileSize, tileY + (1.0f - isl.bounds.minV) * currentTileSize);
-
-            ImU32 fillCol = islandFills[islIdx % 5];
-            ImU32 borderCol = islandBorders[islIdx % 5];
-            drawList->AddRectFilled(b0, b1, fillCol, 3.0f);
-            drawList->AddRect(b0, b1, borderCol, 3.0f, 0, 1.2f);
-            islIdx++;
         }
     }
 

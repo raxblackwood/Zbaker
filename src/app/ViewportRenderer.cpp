@@ -98,76 +98,53 @@ float4 PSMain(PS_INPUT input) : SV_TARGET {
         float distToCam = length(viewVec);
         float3 viewDir = viewVec / max(distToCam, 0.0001f);
 
-        // Blender/Maya clean unit grid with dynamic scale:
+        // Blender clean unit grid: 1.0 unit spacing
         float unit = 1.0f;
         if (GridScale > 500.0f) unit = 50.0f;
         else if (GridScale > 50.0f) unit = 5.0f;
         else if (GridScale < 0.5f) unit = 0.1f;
 
+        float2 uv = coord / unit;
+        float2 fw = max(fwidth(uv), 0.000001f);
+
+        // Screen-space 1-pixel analytic line anti-aliasing (exact Blender line width)
+        float2 grid = abs(frac(uv - 0.5f) - 0.5f) / fw;
+        float lineDist = min(grid.x, grid.y);
+        float line = 1.0f - saturate(lineDist);
+
+        // Cell LOD fade: smoothly fade when a cell shrinks to less than 2.5 screen pixels to eliminate moire
+        float cellPixels = 1.0f / max(fw.x, fw.y);
+        float cellFade = smoothstep(1.5f, 4.0f, cellPixels);
+        line *= cellFade;
+
+        // Red X Axis (Z == 0) and Green Z Axis (X == 0)
         float2 dCoord = max(fwidth(coord), 0.000001f);
+        float axisX = 1.0f - saturate(abs(input.WorldPos.z) / dCoord.y);
+        float axisZ = 1.0f - saturate(abs(input.WorldPos.x) / dCoord.x);
 
-        // Minor Grid (1 unit) with analytic smoothstep anti-aliasing (1.5px line width)
-        float2 uvMinor = coord / unit;
-        float2 fwMinor = max(fwidth(uvMinor), 0.000001f);
-        float2 halfWMinor = fwMinor * 0.75f;
-        float2 distMinor = abs(frac(uvMinor - 0.5f) - 0.5f);
-        float2 aaMinor = 1.0f - smoothstep(halfWMinor * 0.4f, halfWMinor * 1.6f, distMinor);
-        float lineMinor = max(aaMinor.x, aaMinor.y);
-        // Nyquist anti-aliasing fade: as pixel size approaches cell size, smoothly dissolve to prevent moire
-        float fadeMinor = saturate(1.0f - (max(fwMinor.x, fwMinor.y) - 0.08f) / 0.35f);
-        lineMinor *= fadeMinor;
+        // Single smooth continuous distance fade into the dark background (Blender horizon fade)
+        float fadeStart = max(GridScale * 14.0f, 30.0f);
+        float fadeEnd   = max(GridScale * 45.0f, 110.0f);
+        float distFade  = smoothstep(fadeEnd, fadeStart, distToCam);
 
-        // Major Grid (every 5 units) with analytic smoothstep anti-aliasing
-        float majorUnit = unit * 5.0f;
-        float2 uvMajor = coord / majorUnit;
-        float2 fwMajor = max(fwidth(uvMajor), 0.000001f);
-        float2 halfWMajor = fwMajor * 0.85f;
-        float2 distMajor = abs(frac(uvMajor - 0.5f) - 0.5f);
-        float2 aaMajor = 1.0f - smoothstep(halfWMajor * 0.4f, halfWMajor * 1.6f, distMajor);
-        float lineMajor = max(aaMajor.x, aaMajor.y);
-        float fadeMajor = saturate(1.0f - (max(fwMajor.x, fwMajor.y) - 0.10f) / 0.40f);
-        lineMajor *= fadeMajor;
+        if (distFade <= 0.001f) discard;
 
-        // Red X Axis (Z == 0) and Green Z Axis (X == 0) with smooth anti-aliased boundaries
-        float halfWAxisX = dCoord.y * 1.0f;
-        float alphaAxisX = 1.0f - smoothstep(halfWAxisX * 0.4f, halfWAxisX * 1.6f, abs(input.WorldPos.z));
-
-        float halfWAxisZ = dCoord.x * 1.0f;
-        float alphaAxisZ = 1.0f - smoothstep(halfWAxisZ * 0.4f, halfWAxisZ * 1.6f, abs(input.WorldPos.x));
-
-        // Horizon Grazing Angle Fade: smoothly dissolves into background as view vector approaches horizontal
-        float grazingAngle = abs(viewDir.y);
-        float horizonFade = smoothstep(0.004f, 0.08f, grazingAngle);
-
-        // Distance horizon fade extending to 3500+ units (eliminates harsh circle/sphere cutoff)
-        float maxFadeDist = max(GridScale * 40.0f, 3500.0f);
-        float distFade = smoothstep(maxFadeDist, maxFadeDist * 0.15f, distToCam);
-        float totalFade = horizonFade * distFade;
-
-        if (totalFade <= 0.001f) discard;
-
-        // Blender-style ground grid: neutral dark lines matching Blender dark theme
-        float3 col = float3(0.20f, 0.20f, 0.20f); // Neutral dark gray for minor grid lines
-        float alpha = lineMinor * 0.22f;
-
-        // Major subdivisions: clean, refined neutral gray
-        if (lineMajor > 0.001f) {
-            col = lerp(col, float3(0.28f, 0.28f, 0.28f), lineMajor);
-            alpha = max(alpha, lineMajor * 0.45f);
-        }
+        // Blender grid lines: LIGHTER than the background (crisp light-grey #4D4D50 over #161616)
+        float3 col = float3(0.30f, 0.30f, 0.32f);
+        float alpha = line * 0.38f;
 
         // Red X Axis (along Z = 0 in DX coordinate space)
-        if (alphaAxisX > 0.001f) {
-            col = lerp(col, float3(0.85f, 0.25f, 0.25f), alphaAxisX); // Blender Red X
-            alpha = max(alpha, alphaAxisX * 0.85f);
+        if (axisX > 0.001f) {
+            col = lerp(col, float3(0.85f, 0.28f, 0.28f), axisX);
+            alpha = max(alpha, axisX * 0.90f);
         }
         // Green Z Axis (along X = 0 in DX coordinate space)
-        if (alphaAxisZ > 0.001f) {
-            col = lerp(col, float3(0.34f, 0.64f, 0.15f), alphaAxisZ); // Blender Green Y
-            alpha = max(alpha, alphaAxisZ * 0.85f);
+        if (axisZ > 0.001f) {
+            col = lerp(col, float3(0.38f, 0.72f, 0.22f), axisZ);
+            alpha = max(alpha, axisZ * 0.90f);
         }
 
-        alpha *= totalFade;
+        alpha *= distFade;
         if (alpha < 0.002f) discard;
 
         return float4(col, alpha);
@@ -442,9 +419,9 @@ bool ViewportRenderer::CreateRasterizerAndBlendStates() {
 void ViewportRenderer::CreateGridBuffers() {
     m_groundPlaneGPU.Release();
 
-    // 32x32 subdivided ground mesh covering [-4000, 4000] for infinite horizon feel without clipping
-    const int GRID_RES = 32;
-    const float GRID_SIZE = 4000.0f;
+    // 48x48 subdivided ground mesh covering [-5000, 5000] for infinite horizon feel without clipping
+    const int GRID_RES = 48;
+    const float GRID_SIZE = 5000.0f;
     const float STEP = (GRID_SIZE * 2.0f) / GRID_RES;
 
     std::vector<ViewportVertex> groundVerts;
@@ -946,8 +923,8 @@ void ViewportRenderer::Render() {
     vp.MaxDepth = 1.0f;
     m_context->RSSetViewports(1, &vp);
 
-    // Blender Dark 3D Viewport background: neutral dark gray RGB(42, 42, 42) Hex(#2A2A2A)
-    const float clearColor[4] = { 42.0f / 255.0f, 42.0f / 255.0f, 42.0f / 255.0f, 1.0f };
+    // Blender Dark 3D Viewport background: deep dark gray RGB(22, 22, 22) Hex(#161616)
+    const float clearColor[4] = { 22.0f / 255.0f, 22.0f / 255.0f, 22.0f / 255.0f, 1.0f };
     m_context->ClearRenderTargetView(m_colorRTV, clearColor);
     m_context->ClearDepthStencilView(m_depthDSV, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
 
