@@ -737,7 +737,18 @@ void UIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& size) {
     bool isHovered = (io.MousePos.x >= origin.x && io.MousePos.x <= origin.x + size.x &&
                       io.MousePos.y >= origin.y && io.MousePos.y <= origin.y + size.y);
 
+    float baseTileSize = (std::min)(size.x, size.y) * 0.72f;
+    if (baseTileSize < 120.0f) baseTileSize = 300.0f;
+    float currentTileSize = baseTileSize * m_uvZoom;
+
+    // Helper functions for true UV <-> Screen mapping
+    auto UVToScreen = [&](float u, float v) -> ImVec2 {
+        return ImVec2(origin.x + m_uvPan.x + u * currentTileSize,
+                      origin.y + m_uvPan.y + (1.0f - v) * currentTileSize);
+    };
+
     if (isHovered) {
+        // Pan (RMB drag, MMB drag, or Alt + LMB drag)
         if ((!io.KeyShift && !m_markingMenu.active && ImGui::IsMouseDragging(ImGuiMouseButton_Right)) ||
             ImGui::IsMouseDragging(ImGuiMouseButton_Middle) ||
             (io.KeyAlt && ImGui::IsMouseDragging(ImGuiMouseButton_Left))) {
@@ -745,75 +756,60 @@ void UIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& size) {
             m_uvPan.y += io.MouseDelta.y;
         }
 
+        // True Cursor-Anchored Zoom: the exact UV point under the mouse cursor remains frozen at the cursor
         if (io.MouseWheel != 0.0f) {
-            float prevZoom = m_uvZoom;
-            m_uvZoom *= std::pow(1.18f, io.MouseWheel);
-            m_uvZoom = std::clamp(m_uvZoom, 0.10f, 30.0f);
+            float u = (io.MousePos.x - origin.x - m_uvPan.x) / currentTileSize;
+            float v = 1.0f - (io.MousePos.y - origin.y - m_uvPan.y) / currentTileSize;
 
-            // Zoom toward mouse pointer
-            float mx = io.MousePos.x - origin.x;
-            float my = io.MousePos.y - origin.y;
-            m_uvPan.x = mx - (mx - m_uvPan.x) * (m_uvZoom / prevZoom);
-            m_uvPan.y = my - (my - m_uvPan.y) * (m_uvZoom / prevZoom);
+            float zoomFactor = std::pow(1.15f, io.MouseWheel);
+            float newZoom = std::clamp(m_uvZoom * zoomFactor, 0.05f, 50.0f);
+            float newTileSize = baseTileSize * newZoom;
+
+            m_uvPan.x = io.MousePos.x - origin.x - u * newTileSize;
+            m_uvPan.y = io.MousePos.y - origin.y - (1.0f - v) * newTileSize;
+
+            m_uvZoom = newZoom;
+            currentTileSize = newTileSize;
         }
     }
 
-    float baseTileSize = (std::min)(size.x, size.y) * 0.72f;
-    if (baseTileSize < 120.0f) baseTileSize = 300.0f;
-    float currentTileSize = baseTileSize * m_uvZoom;
+    // Draw UDIM tiles (1001..1010, up to 4 rows)
+    for (int vTile = 0; vTile < 4; ++vTile) {
+        for (int uTile = 0; uTile < 10; ++uTile) {
+            int udim = 1001 + uTile + vTile * 10;
 
-    float initialOffsetX = (size.x - currentTileSize) * 0.5f;
-    float initialOffsetY = (size.y - currentTileSize) * 0.5f;
+            float x0 = origin.x + m_uvPan.x + uTile * currentTileSize;
+            float y0 = origin.y + m_uvPan.y + (1.0f - (vTile + 1)) * currentTileSize;
+            float x1 = x0 + currentTileSize;
+            float y1 = y0 + currentTileSize;
 
-    float originX = origin.x + initialOffsetX + m_uvPan.x;
-    float originY = origin.y + initialOffsetY + m_uvPan.y;
-
-    // Determine UDIM grid bounds
-    int maxUdimTile = 1001;
-    for (int t : m_lowPolyMesh.detectedUDIMs) {
-        if (t > maxUdimTile) maxUdimTile = t;
-    }
-    int maxCols = 10;
-    int maxRows = ((maxUdimTile - 1001) / 10) + 1;
-    if (maxRows < 1) maxRows = 1;
-
-    // Draw UDIM tile borders & subgrids
-    for (int r = 0; r < maxRows; ++r) {
-        for (int c = 0; c < maxCols; ++c) {
-            int tileId = 1001 + c + r * 10;
-            float tX0 = originX + c * currentTileSize;
-            float tY0 = originY + (maxRows - 1 - r) * currentTileSize;
-            float tX1 = tX0 + currentTileSize;
-            float tY1 = tY0 + currentTileSize;
-
-            if (tX1 < origin.x || tX0 > origin.x + size.x || tY1 < origin.y || tY0 > origin.y + size.y) {
+            if (x1 < origin.x || x0 > origin.x + size.x || y1 < origin.y || y0 > origin.y + size.y) {
                 continue;
             }
 
-            bool isDetected = false;
-            for (int dt : m_lowPolyMesh.detectedUDIMs) {
-                if (dt == tileId) { isDetected = true; break; }
-            }
-
-            bool isSelected = isDetected && IsUDIMSelected(tileId);
+            bool isDetected = std::find(m_lowPolyMesh.detectedUDIMs.begin(), m_lowPolyMesh.detectedUDIMs.end(), udim) != m_lowPolyMesh.detectedUDIMs.end();
+            bool isSelected = IsUDIMSelected(udim);
 
             // Handle tile click to toggle bake inclusion
-            if (isDetected && isHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-                if (io.MousePos.x >= tX0 && io.MousePos.x <= tX1 && io.MousePos.y >= tY0 && io.MousePos.y <= tY1) {
-                    ToggleUDIM(tileId);
-                    isSelected = IsUDIMSelected(tileId);
+            if (isDetected && isHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !io.KeyShift && !io.KeyAlt) {
+                if (io.MousePos.x >= x0 && io.MousePos.x <= x1 && io.MousePos.y >= y0 && io.MousePos.y <= y1) {
+                    ToggleUDIM(udim);
+                    isSelected = IsUDIMSelected(udim);
                 }
             }
 
-            ImU32 tileBg = isDetected ? (isSelected ? ImGui::GetColorU32(BakerUI::Col::Panel()) : ImGui::GetColorU32(BakerUI::Col::Bg())) : ImGui::GetColorU32(BakerUI::Col::Bg());
-            drawList->AddRectFilled(ImVec2(tX0, tY0), ImVec2(tX1, tY1), tileBg);
+            ImU32 tileBg = isSelected ? ImGui::GetColorU32(ImVec4(0.12f, 0.28f, 0.44f, 0.35f)) :
+                           (isDetected ? ImGui::GetColorU32(ImVec4(0.20f, 0.22f, 0.25f, 0.25f)) :
+                                         ImGui::GetColorU32(ImVec4(0.12f, 0.14f, 0.16f, 0.15f)));
+
+            drawList->AddRectFilled(ImVec2(x0, y0), ImVec2(x1, y1), tileBg);
 
             // Live Baked Texture Display (xNormal / Substance 2D canvas style)
-            if (m_viewportRenderer.GetBakedNormalSRV() && (tileId == 1001 || (isDetected && isSelected))) {
+            if (m_viewportRenderer.GetBakedNormalSRV() && (udim == 1001 || (isDetected && isSelected))) {
                 drawList->AddImage(
                     (ImTextureID)m_viewportRenderer.GetBakedNormalSRV(),
-                    ImVec2(tX0, tY0),
-                    ImVec2(tX1, tY1),
+                    ImVec2(x0, y0),
+                    ImVec2(x1, y1),
                     ImVec2(0.0f, 0.0f),
                     ImVec2(1.0f, 1.0f)
                 );
@@ -821,64 +817,46 @@ void UIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& size) {
 
             ImU32 borderCol = isSelected ? ImGui::GetColorU32(BakerUI::Col::Accent()) : ImGui::GetColorU32(BakerUI::Col::Border());
             float borderThick = isSelected ? 2.0f : 1.0f;
-            drawList->AddRect(ImVec2(tX0, tY0), ImVec2(tX1, tY1), borderCol, 0, 0, borderThick);
+            drawList->AddRect(ImVec2(x0, y0), ImVec2(x1, y1), borderCol, 0, 0, borderThick);
 
             // Subgrid lines
             if (currentTileSize > 140.0f) {
                 ImU32 subLineCol = ImGui::GetColorU32(ImVec4(0.20f, 0.24f, 0.30f, 0.35f));
                 for (int g = 1; g < 4; ++g) {
-                    float fx = tX0 + (g / 4.0f) * currentTileSize;
-                    float fy = tY0 + (g / 4.0f) * currentTileSize;
-                    drawList->AddLine(ImVec2(fx, tY0), ImVec2(fx, tY1), subLineCol);
-                    drawList->AddLine(ImVec2(tX0, fy), ImVec2(tX1, fy), subLineCol);
+                    float fx = x0 + (g / 4.0f) * currentTileSize;
+                    float fy = y0 + (g / 4.0f) * currentTileSize;
+                    drawList->AddLine(ImVec2(fx, y0), ImVec2(fx, y1), subLineCol);
+                    drawList->AddLine(ImVec2(x0, fy), ImVec2(x1, fy), subLineCol);
                 }
             }
 
-            char tileLabel[32];
-            snprintf(tileLabel, sizeof(tileLabel), "%d", tileId);
-            ImU32 labelCol = isSelected ? ImGui::GetColorU32(BakerUI::Col::Accent()) : ImGui::GetColorU32(BakerUI::Col::TextDim());
-            drawList->AddText(ImVec2(tX0 + 8, tY0 + 6), labelCol, tileLabel);
+            char tileStr[16];
+            snprintf(tileStr, sizeof(tileStr), "%d", udim);
+            drawList->AddText(ImVec2(x0 + 8.0f, y0 + 6.0f), isSelected ? ImGui::GetColorU32(BakerUI::Col::Accent()) : ImGui::GetColorU32(BakerUI::Col::TextDim()), tileStr);
 
             if (isDetected) {
                 if (isSelected) {
-                    drawList->AddText(ImVec2(tX0 + 8, tY0 + 24), ImGui::GetColorU32(BakerUI::Col::Ok()), "[✓ Bake]");
+                    drawList->AddText(ImVec2(x0 + 8.0f, y0 + 24.0f), ImGui::GetColorU32(BakerUI::Col::Ok()), "[✓ Bake]");
                 } else {
-                    drawList->AddText(ImVec2(tX0 + 8, tY0 + 24), ImGui::GetColorU32(BakerUI::Col::Warn()), "[Excluded]");
+                    drawList->AddText(ImVec2(x0 + 8.0f, y0 + 24.0f), ImGui::GetColorU32(BakerUI::Col::Warn()), "[Excluded]");
                 }
             }
         }
     }
 
-    // Draw Low-Poly UV Wireframe
+    // Draw UV triangles
     if (m_hasLowPoly && !m_lowPolyMesh.triangles.empty()) {
-        ImU32 wireColor = ImGui::GetColorU32(ImVec4(0.92f, 0.94f, 0.98f, 0.65f));
-
+        ImU32 uvWireCol = ImGui::GetColorU32(ImVec4(0.95f, 0.95f, 0.98f, 0.40f));
         for (const auto& tri : m_lowPolyMesh.triangles) {
             const auto& v0 = m_lowPolyMesh.vertices[tri.indices[0]];
             const auto& v1 = m_lowPolyMesh.vertices[tri.indices[1]];
             const auto& v2 = m_lowPolyMesh.vertices[tri.indices[2]];
 
-            float p0x = originX + v0.uv.u * currentTileSize;
-            float p0y = originY + (maxRows - v0.uv.v) * currentTileSize;
+            ImVec2 p0(origin.x + m_uvPan.x + v0.uv.u * currentTileSize, origin.y + m_uvPan.y + (1.0f - v0.uv.v) * currentTileSize);
+            ImVec2 p1(origin.x + m_uvPan.x + v1.uv.u * currentTileSize, origin.y + m_uvPan.y + (1.0f - v1.uv.v) * currentTileSize);
+            ImVec2 p2(origin.x + m_uvPan.x + v2.uv.u * currentTileSize, origin.y + m_uvPan.y + (1.0f - v2.uv.v) * currentTileSize);
 
-            float p1x = originX + v1.uv.u * currentTileSize;
-            float p1y = originY + (maxRows - v1.uv.v) * currentTileSize;
-
-            float p2x = originX + v2.uv.u * currentTileSize;
-            float p2y = originY + (maxRows - v2.uv.v) * currentTileSize;
-
-            float minX = (std::min)({ p0x, p1x, p2x });
-            float maxX = (std::max)({ p0x, p1x, p2x });
-            float minY = (std::min)({ p0y, p1y, p2y });
-            float maxY = (std::max)({ p0y, p1y, p2y });
-
-            if (maxX < origin.x || minX > origin.x + size.x || maxY < origin.y || minY > origin.y + size.y) {
-                continue;
-            }
-
-            drawList->AddLine(ImVec2(p0x, p0y), ImVec2(p1x, p1y), wireColor);
-            drawList->AddLine(ImVec2(p1x, p1y), ImVec2(p2x, p2y), wireColor);
-            drawList->AddLine(ImVec2(p2x, p2y), ImVec2(p0x, p0y), wireColor);
+            drawList->AddTriangle(p0, p1, p2, uvWireCol, 1.0f);
         }
     }
 
@@ -891,11 +869,9 @@ void UIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& size) {
             if (i0 < m_lowPolyMesh.vertices.size() && i1 < m_lowPolyMesh.vertices.size()) {
                 const auto& v0 = m_lowPolyMesh.vertices[i0];
                 const auto& v1 = m_lowPolyMesh.vertices[i1];
-                float p0x = originX + v0.uv.u * currentTileSize;
-                float p0y = originY + (maxRows - v0.uv.v) * currentTileSize;
-                float p1x = originX + v1.uv.u * currentTileSize;
-                float p1y = originY + (maxRows - v1.uv.v) * currentTileSize;
-                drawList->AddLine(ImVec2(p0x, p0y), ImVec2(p1x, p1y), seamCol, 2.0f);
+                ImVec2 p0(origin.x + m_uvPan.x + v0.uv.u * currentTileSize, origin.y + m_uvPan.y + (1.0f - v0.uv.v) * currentTileSize);
+                ImVec2 p1(origin.x + m_uvPan.x + v1.uv.u * currentTileSize, origin.y + m_uvPan.y + (1.0f - v1.uv.v) * currentTileSize);
+                drawList->AddLine(p0, p1, seamCol, 2.0f);
             }
         }
     }
@@ -920,11 +896,11 @@ void UIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& size) {
         for (const auto& isl : m_currentIslands) {
             int uTile = (isl.targetUDIM - 1001) % 10;
             int vTile = (isl.targetUDIM - 1001) / 10;
-            float tX0 = originX + uTile * currentTileSize;
-            float tY0 = originY + (maxRows - 1 - vTile) * currentTileSize;
+            float tileX = origin.x + m_uvPan.x + uTile * currentTileSize;
+            float tileY = origin.y + m_uvPan.y + (1.0f - (vTile + 1)) * currentTileSize;
 
-            ImVec2 b0(tX0 + isl.bounds.minU * currentTileSize, tY0 + (1.0f - isl.bounds.maxV) * currentTileSize);
-            ImVec2 b1(tX0 + isl.bounds.maxU * currentTileSize, tY0 + (1.0f - isl.bounds.minV) * currentTileSize);
+            ImVec2 b0(tileX + isl.bounds.minU * currentTileSize, tileY + (1.0f - isl.bounds.maxV) * currentTileSize);
+            ImVec2 b1(tileX + isl.bounds.maxU * currentTileSize, tileY + (1.0f - isl.bounds.minV) * currentTileSize);
 
             ImU32 fillCol = islandFills[islIdx % 5];
             ImU32 borderCol = islandBorders[islIdx % 5];
@@ -941,11 +917,9 @@ void UIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& size) {
             if (edge.first < m_lowPolyMesh.vertices.size() && edge.second < m_lowPolyMesh.vertices.size()) {
                 const auto& v0 = m_lowPolyMesh.vertices[edge.first];
                 const auto& v1 = m_lowPolyMesh.vertices[edge.second];
-                float p0x = originX + v0.uv.u * currentTileSize;
-                float p0y = originY + (maxRows - v0.uv.v) * currentTileSize;
-                float p1x = originX + v1.uv.u * currentTileSize;
-                float p1y = originY + (maxRows - v1.uv.v) * currentTileSize;
-                drawList->AddLine(ImVec2(p0x, p0y), ImVec2(p1x, p1y), selCol, 3.5f);
+                ImVec2 p0(origin.x + m_uvPan.x + v0.uv.u * currentTileSize, origin.y + m_uvPan.y + (1.0f - v0.uv.v) * currentTileSize);
+                ImVec2 p1(origin.x + m_uvPan.x + v1.uv.u * currentTileSize, origin.y + m_uvPan.y + (1.0f - v1.uv.v) * currentTileSize);
+                drawList->AddLine(p0, p1, selCol, 3.5f);
             }
         }
     }
@@ -962,12 +936,8 @@ void UIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& size) {
                 uint32_t eb = tri.indices[(e + 1) % 3];
                 const auto& v0 = m_lowPolyMesh.vertices[ea];
                 const auto& v1 = m_lowPolyMesh.vertices[eb];
-                float p0x = originX + v0.uv.u * currentTileSize;
-                float p0y = originY + (maxRows - v0.uv.v) * currentTileSize;
-                float p1x = originX + v1.uv.u * currentTileSize;
-                float p1y = originY + (maxRows - v1.uv.v) * currentTileSize;
-                ImVec2 p0(p0x, p0y);
-                ImVec2 p1(p1x, p1y);
+                ImVec2 p0(origin.x + m_uvPan.x + v0.uv.u * currentTileSize, origin.y + m_uvPan.y + (1.0f - v0.uv.v) * currentTileSize);
+                ImVec2 p1(origin.x + m_uvPan.x + v1.uv.u * currentTileSize, origin.y + m_uvPan.y + (1.0f - v1.uv.v) * currentTileSize);
 
                 float dist = DistToSegment2D(io.MousePos, p0, p1);
                 if (dist < minEdgeDist2D) {
@@ -1094,53 +1064,32 @@ void UIManager::RenderViewportPanel() {
         return;
     }
 
-    if (m_viewportMode == ViewportMode::View3D) {
-        m_viewportRenderer.Resize((int)avail.x, (int)avail.y);
-        m_viewportRenderer.Render();
+    ImGuiIO& io = ImGui::GetIO();
 
-        ID3D11ShaderResourceView* srv = m_viewportRenderer.GetViewportSRV();
-        if (srv) {
-            ImGui::Image((ImTextureID)srv, avail);
+    float splitterW = 6.0f;
+    float leftW = avail.x;
+    float rightW = 0.0f;
 
-            if (ImGui::IsItemHovered()) {
-                ImGuiIO& io = ImGui::GetIO();
-                int button = 0;
-                if (io.KeyAlt) {
-                    if (ImGui::IsMouseDragging(ImGuiMouseButton_Left)) button = 1;       // Maya Alt + LMB: Tumble/Orbit
-                    else if (ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) button = 2; // Maya Alt + MMB: Track/Pan
-                    else if (ImGui::IsMouseDragging(ImGuiMouseButton_Right)) button = 3;  // Maya Alt + RMB: Dolly/Zoom
-                } else {
-                    bool isUVActive = (m_toolMode == ToolMode::CutSeam) || (m_shellState.activeTab == BakerUI::ShellState::AppTab::UVCutAndPack);
-                    bool suppressNav = m_markingMenu.active || io.KeyShift;
-                    if (!suppressNav) {
-                        if (ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) button = 2;      // MMB: Track/Pan
-                        else if (ImGui::IsMouseDragging(ImGuiMouseButton_Right)) button = 3; // RMB: Dolly/Zoom
-                        else if (m_toolMode == ToolMode::Navigate && !isUVActive && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) button = 1;  // LMB: Orbit only in pure Navigate mode
-                    }
-                }
-
-                if (button != 0 || io.MouseWheel != 0.0f) {
-                    m_viewportRenderer.HandleMouseInput(io.MouseDelta.x, io.MouseDelta.y, button, io.MouseWheel);
-                }
-
-                if (ImGui::IsKeyPressed(ImGuiKey_F)) {
-                    m_viewportRenderer.FrameAll();
-                }
-            }
+    if (m_viewportMode == ViewportMode::SplitBoth) {
+        leftW = std::floor((avail.x - splitterW) * m_splitRatio);
+        if (leftW < 80.0f) leftW = 80.0f;
+        rightW = avail.x - leftW - splitterW;
+        if (rightW < 80.0f) {
+            rightW = 80.0f;
+            leftW = avail.x - rightW - splitterW;
         }
     } else if (m_viewportMode == ViewportMode::View2D) {
-        Render2DUVCanvas(origin, avail);
-    } else if (m_viewportMode == ViewportMode::SplitBoth) {
-        float halfW = std::floor(avail.x * 0.5f);
-        m_viewportRenderer.Resize((int)halfW, (int)avail.y);
-        m_viewportRenderer.Render();
+        leftW = 0.0f;
+        rightW = avail.x;
+    }
 
-        ID3D11ShaderResourceView* srv = m_viewportRenderer.GetViewportSRV();
-        if (srv) {
-            ImGui::Image((ImTextureID)srv, ImVec2(halfW, avail.y));
+    if (leftW > 0.0f) {
+        m_viewportRenderer.Resize((int)leftW, (int)avail.y);
 
-            if (ImGui::IsItemHovered()) {
-                ImGuiIO& io = ImGui::GetIO();
+        if (ImGui::IsWindowHovered()) {
+            bool in3DZone = (io.MousePos.x >= origin.x && io.MousePos.x <= origin.x + leftW &&
+                             io.MousePos.y >= origin.y && io.MousePos.y <= origin.y + avail.y);
+            if (in3DZone) {
                 int button = 0;
                 if (io.KeyAlt) {
                     if (ImGui::IsMouseDragging(ImGuiMouseButton_Left)) button = 1;       // Maya Alt + LMB: Tumble/Orbit
@@ -1166,22 +1115,17 @@ void UIManager::RenderViewportPanel() {
             }
         }
 
-        ImGui::GetWindowDrawList()->AddLine(
-            ImVec2(origin.x + halfW, origin.y),
-            ImVec2(origin.x + halfW, origin.y + avail.y),
-            ImGui::GetColorU32(BakerUI::Col::Border()),
-            2.0f
-        );
+        m_viewportRenderer.Render();
 
-        ImVec2 uvOrigin(origin.x + halfW, origin.y);
-        ImVec2 uvSize(avail.x - halfW, avail.y);
-        Render2DUVCanvas(uvOrigin, uvSize);
+        ID3D11ShaderResourceView* srv = m_viewportRenderer.GetViewportSRV();
+        if (srv) {
+            ImGui::Image((ImTextureID)srv, ImVec2(leftW, avail.y));
+        }
     }
 
     // Marmoset-style 3D interactive brush ray-casting & reticle
     if (m_toolMode != ToolMode::Navigate && !ImGui::GetIO().KeyAlt && m_hasLowPoly && (m_viewportMode == ViewportMode::View3D || m_viewportMode == ViewportMode::SplitBoth)) {
-        ImGuiIO& io = ImGui::GetIO();
-        float maxActiveW = (m_viewportMode == ViewportMode::SplitBoth) ? std::floor(avail.x * 0.5f) : avail.x;
+        float maxActiveW = (m_viewportMode == ViewportMode::SplitBoth) ? leftW : avail.x;
         float relX = io.MousePos.x - origin.x;
         float relY = io.MousePos.y - origin.y;
 
@@ -1263,11 +1207,10 @@ void UIManager::RenderViewportPanel() {
     }
 
     // Interactive Seam Cutting mode
-    ImGuiIO& io = ImGui::GetIO();
     // Interactive Seam Cutting & Maya Edge Selection mode
     bool isUVCuttingActive = (m_toolMode == ToolMode::CutSeam) || (m_shellState.activeTab == BakerUI::ShellState::AppTab::UVCutAndPack);
     if (isUVCuttingActive && !io.KeyAlt && m_hasLowPoly && (m_viewportMode == ViewportMode::View3D || m_viewportMode == ViewportMode::SplitBoth)) {
-        float maxActiveW = (m_viewportMode == ViewportMode::SplitBoth) ? std::floor(avail.x * 0.5f) : avail.x;
+        float maxActiveW = (m_viewportMode == ViewportMode::SplitBoth) ? leftW : avail.x;
         float relX = io.MousePos.x - origin.x;
         float relY = io.MousePos.y - origin.y;
 
@@ -1418,7 +1361,7 @@ void UIManager::RenderViewportPanel() {
 
     // Maya Shift + Right-Click general 3D viewport trigger
     if (io.KeyShift && ImGui::IsMouseClicked(ImGuiMouseButton_Right) && !m_markingMenu.active && (m_viewportMode == ViewportMode::View3D || m_viewportMode == ViewportMode::SplitBoth)) {
-        float maxActiveW = (m_viewportMode == ViewportMode::SplitBoth) ? std::floor(avail.x * 0.5f) : avail.x;
+        float maxActiveW = (m_viewportMode == ViewportMode::SplitBoth) ? leftW : avail.x;
         float relX = io.MousePos.x - origin.x;
         float relY = io.MousePos.y - origin.y;
         if (relX >= 0.0f && relX <= maxActiveW && relY >= 0.0f && relY <= avail.y) {
@@ -1430,7 +1373,7 @@ void UIManager::RenderViewportPanel() {
 
     // Interactive 3D Surface Curve Drawing and Point Movement
     if (m_toolMode == ToolMode::DrawCurve && !io.KeyAlt && m_hasLowPoly && (m_viewportMode == ViewportMode::View3D || m_viewportMode == ViewportMode::SplitBoth)) {
-        float maxActiveW = (m_viewportMode == ViewportMode::SplitBoth) ? avail.x * 0.5f : avail.x;
+        float maxActiveW = (m_viewportMode == ViewportMode::SplitBoth) ? leftW : avail.x;
         float relX = io.MousePos.x - origin.x;
         float relY = io.MousePos.y - origin.y;
 
@@ -1630,7 +1573,7 @@ void UIManager::RenderViewportPanel() {
             if (isActive && m_toolMode == ToolMode::DrawCurve && m_draggingPointIndex < 0 && !curve.points.empty()) {
                 float relX = io.MousePos.x - origin.x;
                 float relY = io.MousePos.y - origin.y;
-                float maxActiveW = (m_viewportMode == ViewportMode::SplitBoth) ? avail.x * 0.5f : avail.x;
+                float maxActiveW = (m_viewportMode == ViewportMode::SplitBoth) ? leftW : avail.x;
                 if (relX >= 0.0f && relX <= maxActiveW && relY >= 0.0f && relY <= avail.y) {
                     DirectX::XMFLOAT3 rOrgW, rDirW;
                     if (m_viewportRenderer.UnprojectRay(relX, relY, rOrgW, rDirW)) {
@@ -1910,6 +1853,38 @@ void UIManager::RenderViewportPanel() {
         }
 
         ImGui::EndGroup();
+    }
+
+    // 2D UV Canvas overlay & sliding splitter if 2D or Split mode is active
+    if (m_viewportMode == ViewportMode::View2D) {
+        Render2DUVCanvas(origin, avail);
+    } else if (m_viewportMode == ViewportMode::SplitBoth) {
+        // Interactive Draggable Splitter Bar
+        ImGui::SetCursorScreenPos(ImVec2(origin.x + leftW, origin.y));
+        ImGui::InvisibleButton("##split_slider", ImVec2(splitterW, avail.y));
+        bool isSplitHovered = ImGui::IsItemHovered();
+        bool isSplitActive = ImGui::IsItemActive();
+        if (isSplitHovered || isSplitActive) {
+            ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+        }
+        if (isSplitActive) {
+            m_splitRatio += io.MouseDelta.x / (avail.x - splitterW);
+            m_splitRatio = std::clamp(m_splitRatio, 0.10f, 0.90f);
+        }
+
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        ImU32 splitBg = isSplitActive ? ImGui::GetColorU32(BakerUI::Col::Accent()) :
+                        (isSplitHovered ? ImGui::GetColorU32(BakerUI::Col::AccentHi()) :
+                                           ImGui::GetColorU32(BakerUI::Hex(0x181818)));
+        dl->AddRectFilled(ImVec2(origin.x + leftW, origin.y),
+                          ImVec2(origin.x + leftW + splitterW, origin.y + avail.y), splitBg);
+        dl->AddLine(ImVec2(origin.x + leftW + 3.0f, origin.y),
+                    ImVec2(origin.x + leftW + 3.0f, origin.y + avail.y),
+                    ImGui::GetColorU32(BakerUI::Hex(0x323232)));
+
+        ImVec2 splitPos = ImVec2(origin.x + leftW + splitterW, origin.y);
+        ImVec2 splitSize = ImVec2(rightW, avail.y);
+        Render2DUVCanvas(splitPos, splitSize);
     }
 
     // Floating Bake Button at the bottom of the 3D viewport canvas

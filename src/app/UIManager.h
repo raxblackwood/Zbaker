@@ -107,6 +107,7 @@ private:
     bool m_brushInvert = false;
     float m_uvZoom = 1.0f;
     ImVec2 m_uvPan = ImVec2(0.0f, 0.0f);
+    float m_splitRatio = 0.5f; // Draggable sliding splitter ratio between 3D & 2D views
     int m_selectedUdimTile = 1001;
     bool m_uniformScale = true;
 

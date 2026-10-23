@@ -91,56 +91,64 @@ float4 PSMain(PS_INPUT input) : SV_TARGET {
     }
 
     // 5: Blender Procedural Dynamic Anti-Aliased Ground Grid & Colored Axes
+    // 5: Blender Procedural Dynamic Anti-Aliased Ground Grid & Colored Axes
     if (ShadingMode == 5) {
         float2 coord = input.WorldPos.xz;
-        float distToCam = length(CameraPos.xyz - input.WorldPos);
+        float3 viewVec = input.WorldPos - CameraPos.xyz;
+        float distToCam = length(viewVec);
+        float3 viewDir = viewVec / max(distToCam, 0.0001f);
 
         // Blender/Maya clean unit grid with dynamic scale:
         float unit = 1.0f;
-        if (GridScale > 100.0f) unit = 10.0f;
-        else if (GridScale > 1000.0f) unit = 100.0f;
-        else if (GridScale < 1.0f) unit = 0.1f;
+        if (GridScale > 500.0f) unit = 50.0f;
+        else if (GridScale > 50.0f) unit = 5.0f;
+        else if (GridScale < 0.5f) unit = 0.1f;
 
-        float majorUnit = unit * 5.0f;
+        float2 dCoord = max(fwidth(coord), 0.000001f);
 
-        // Screen-space derivatives for true analytic anti-aliasing
-        float2 d = max(fwidth(coord), 0.00001f);
-
-        // Minor grid lines (1 unit):
-        float2 uMinor = coord / unit;
-        float2 duMinor = max(fwidth(uMinor), 0.00001f);
-        float2 distMinor = abs(frac(uMinor - 0.5f) - 0.5f) / duMinor;
-        float2 aalineMinor = saturate(1.0f - distMinor);
-        float lineMinor = max(aalineMinor.x, aalineMinor.y);
-        // Nyquist anti-aliasing fade: as pixel size approaches grid cell size, fade out smoothly to prevent aliasing/moire
-        float fadeMinor = saturate(1.0f - max(duMinor.x, duMinor.y) * 1.2f);
+        // Minor Grid (1 unit) with analytic smoothstep anti-aliasing (1.5px line width)
+        float2 uvMinor = coord / unit;
+        float2 fwMinor = max(fwidth(uvMinor), 0.000001f);
+        float2 halfWMinor = fwMinor * 0.75f;
+        float2 distMinor = abs(frac(uvMinor - 0.5f) - 0.5f);
+        float2 aaMinor = 1.0f - smoothstep(halfWMinor * 0.4f, halfWMinor * 1.6f, distMinor);
+        float lineMinor = max(aaMinor.x, aaMinor.y);
+        // Nyquist anti-aliasing fade: as pixel size approaches cell size, smoothly dissolve to prevent moire
+        float fadeMinor = saturate(1.0f - (max(fwMinor.x, fwMinor.y) - 0.08f) / 0.35f);
         lineMinor *= fadeMinor;
 
-        // Major grid lines (every 5 units):
-        float2 uMajor = coord / majorUnit;
-        float2 duMajor = max(fwidth(uMajor), 0.00001f);
-        float2 distMajor = abs(frac(uMajor - 0.5f) - 0.5f) / duMajor;
-        float2 aalineMajor = saturate(1.0f - distMajor);
-        float lineMajor = max(aalineMajor.x, aalineMajor.y);
-        float fadeMajor = saturate(1.0f - max(duMajor.x, duMajor.y) * 1.2f);
+        // Major Grid (every 5 units) with analytic smoothstep anti-aliasing
+        float majorUnit = unit * 5.0f;
+        float2 uvMajor = coord / majorUnit;
+        float2 fwMajor = max(fwidth(uvMajor), 0.000001f);
+        float2 halfWMajor = fwMajor * 0.85f;
+        float2 distMajor = abs(frac(uvMajor - 0.5f) - 0.5f);
+        float2 aaMajor = 1.0f - smoothstep(halfWMajor * 0.4f, halfWMajor * 1.6f, distMajor);
+        float lineMajor = max(aaMajor.x, aaMajor.y);
+        float fadeMajor = saturate(1.0f - (max(fwMajor.x, fwMajor.y) - 0.10f) / 0.40f);
         lineMajor *= fadeMajor;
 
-        // Colored Axes: Red X (z == 0) and Green Z (x == 0)
-        float distAxisX = abs(input.WorldPos.z) / d.y;
-        float alphaAxisX = saturate(1.0f - distAxisX);
+        // Red X Axis (Z == 0) and Green Z Axis (X == 0) with smooth anti-aliased boundaries
+        float halfWAxisX = dCoord.y * 1.0f;
+        float alphaAxisX = 1.0f - smoothstep(halfWAxisX * 0.4f, halfWAxisX * 1.6f, abs(input.WorldPos.z));
 
-        float distAxisZ = abs(input.WorldPos.x) / d.x;
-        float alphaAxisZ = saturate(1.0f - distAxisZ);
+        float halfWAxisZ = dCoord.x * 1.0f;
+        float alphaAxisZ = 1.0f - smoothstep(halfWAxisZ * 0.4f, halfWAxisZ * 1.6f, abs(input.WorldPos.x));
 
-        // Smooth quadratic distance horizon fade
-        float maxFadeDist = max(GridScale * 8.0f, 120.0f);
-        float distFade = saturate(1.0f - distToCam / maxFadeDist);
-        distFade = distFade * distFade;
-        if (distFade <= 0.001f) discard;
+        // Horizon Grazing Angle Fade: smoothly dissolves into background as view vector approaches horizontal
+        float grazingAngle = abs(viewDir.y);
+        float horizonFade = smoothstep(0.004f, 0.08f, grazingAngle);
+
+        // Distance horizon fade extending to 3500+ units (eliminates harsh circle/sphere cutoff)
+        float maxFadeDist = max(GridScale * 40.0f, 3500.0f);
+        float distFade = smoothstep(maxFadeDist, maxFadeDist * 0.15f, distToCam);
+        float totalFade = horizonFade * distFade;
+
+        if (totalFade <= 0.001f) discard;
 
         // Blender-style ground grid: neutral dark lines matching Blender dark theme
         float3 col = float3(0.20f, 0.20f, 0.20f); // Neutral dark gray for minor grid lines
-        float alpha = lineMinor * 0.25f;
+        float alpha = lineMinor * 0.22f;
 
         // Major subdivisions: clean, refined neutral gray
         if (lineMajor > 0.001f) {
@@ -151,15 +159,15 @@ float4 PSMain(PS_INPUT input) : SV_TARGET {
         // Red X Axis (along Z = 0 in DX coordinate space)
         if (alphaAxisX > 0.001f) {
             col = lerp(col, float3(0.85f, 0.25f, 0.25f), alphaAxisX); // Blender Red X
-            alpha = max(alpha, alphaAxisX * 0.80f);
+            alpha = max(alpha, alphaAxisX * 0.85f);
         }
         // Green Z Axis (along X = 0 in DX coordinate space)
         if (alphaAxisZ > 0.001f) {
             col = lerp(col, float3(0.34f, 0.64f, 0.15f), alphaAxisZ); // Blender Green Y
-            alpha = max(alpha, alphaAxisZ * 0.80f);
+            alpha = max(alpha, alphaAxisZ * 0.85f);
         }
 
-        alpha *= distFade;
+        alpha *= totalFade;
         if (alpha < 0.002f) discard;
 
         return float4(col, alpha);
@@ -434,9 +442,9 @@ bool ViewportRenderer::CreateRasterizerAndBlendStates() {
 void ViewportRenderer::CreateGridBuffers() {
     m_groundPlaneGPU.Release();
 
-    // 16x16 subdivided ground mesh covering [-400, 400] for rock-solid near-plane clipping
-    const int GRID_RES = 16;
-    const float GRID_SIZE = 400.0f;
+    // 32x32 subdivided ground mesh covering [-4000, 4000] for infinite horizon feel without clipping
+    const int GRID_RES = 32;
+    const float GRID_SIZE = 4000.0f;
     const float STEP = (GRID_SIZE * 2.0f) / GRID_RES;
 
     std::vector<ViewportVertex> groundVerts;

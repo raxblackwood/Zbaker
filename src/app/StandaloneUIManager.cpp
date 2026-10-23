@@ -689,46 +689,69 @@ void StandaloneUIManager::RenderViewportPanel() {
     if (avail.x < 64.0f) avail.x = 64.0f;
     if (avail.y < 64.0f) avail.y = 64.0f;
 
-    m_viewportRenderer.Resize((int)avail.x, (int)avail.y);
-
     ImVec2 screenPos = ImGui::GetCursorScreenPos();
     ImGuiIO& io = ImGui::GetIO();
 
-    if (ImGui::IsWindowHovered()) {
-        int button = 0;
-        if (io.KeyAlt) {
-            if (ImGui::IsMouseDragging(ImGuiMouseButton_Left)) button = 1;       // Maya Alt + LMB: Tumble/Orbit
-            else if (ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) button = 2; // Maya Alt + MMB: Track/Pan
-            else if (ImGui::IsMouseDragging(ImGuiMouseButton_Right)) button = 3;  // Maya Alt + RMB: Dolly/Zoom
-        } else {
-            bool isUVActive = (m_toolMode == ToolMode::CutSeam) || (m_shellState.activeTab == BakerUI::ShellState::AppTab::UVCutAndPack);
-            bool suppressNav = m_markingMenu.active || io.KeyShift;
-            if (!suppressNav) {
-                if (ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) button = 2;      // MMB: Track/Pan
-                else if (ImGui::IsMouseDragging(ImGuiMouseButton_Right)) button = 3; // RMB: Dolly/Zoom
-                else if (m_toolMode == ToolMode::Navigate && !isUVActive && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) button = 1;  // LMB: Orbit only in pure Navigate mode
+    float splitterW = 6.0f;
+    float leftW = avail.x;
+    float rightW = 0.0f;
+
+    if (m_viewportMode == ViewportMode::SplitBoth) {
+        leftW = std::floor((avail.x - splitterW) * m_splitRatio);
+        if (leftW < 80.0f) leftW = 80.0f;
+        rightW = avail.x - leftW - splitterW;
+        if (rightW < 80.0f) {
+            rightW = 80.0f;
+            leftW = avail.x - rightW - splitterW;
+        }
+    } else if (m_viewportMode == ViewportMode::View2D) {
+        leftW = 0.0f;
+        rightW = avail.x;
+    }
+
+    if (leftW > 0.0f) {
+        m_viewportRenderer.Resize((int)leftW, (int)avail.y);
+
+        if (ImGui::IsWindowHovered()) {
+            bool in3DZone = (io.MousePos.x >= screenPos.x && io.MousePos.x <= screenPos.x + leftW &&
+                             io.MousePos.y >= screenPos.y && io.MousePos.y <= screenPos.y + avail.y);
+            if (in3DZone) {
+                int button = 0;
+                if (io.KeyAlt) {
+                    if (ImGui::IsMouseDragging(ImGuiMouseButton_Left)) button = 1;       // Maya Alt + LMB: Tumble/Orbit
+                    else if (ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) button = 2; // Maya Alt + MMB: Track/Pan
+                    else if (ImGui::IsMouseDragging(ImGuiMouseButton_Right)) button = 3;  // Maya Alt + RMB: Dolly/Zoom
+                } else {
+                    bool isUVActive = (m_toolMode == ToolMode::CutSeam) || (m_shellState.activeTab == BakerUI::ShellState::AppTab::UVCutAndPack);
+                    bool suppressNav = m_markingMenu.active || io.KeyShift;
+                    if (!suppressNav) {
+                        if (ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) button = 2;      // MMB: Track/Pan
+                        else if (ImGui::IsMouseDragging(ImGuiMouseButton_Right)) button = 3; // RMB: Dolly/Zoom
+                        else if (m_toolMode == ToolMode::Navigate && !isUVActive && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) button = 1;  // LMB: Orbit only in pure Navigate mode
+                    }
+                }
+
+                if (button != 0 || io.MouseWheel != 0.0f) {
+                    m_viewportRenderer.HandleMouseInput(io.MouseDelta.x, io.MouseDelta.y, button, io.MouseWheel);
+                }
+
+                if (ImGui::IsKeyPressed(ImGuiKey_F)) {
+                    m_viewportRenderer.FrameAll();
+                }
             }
         }
 
-        if (button != 0 || io.MouseWheel != 0.0f) {
-            m_viewportRenderer.HandleMouseInput(io.MouseDelta.x, io.MouseDelta.y, button, io.MouseWheel);
+        m_viewportRenderer.Render();
+
+        ID3D11ShaderResourceView* srv = m_viewportRenderer.GetViewportSRV();
+        if (srv) {
+            ImGui::Image((ImTextureID)srv, ImVec2(leftW, avail.y));
         }
-
-        if (ImGui::IsKeyPressed(ImGuiKey_F)) {
-            m_viewportRenderer.FrameAll();
-        }
-    }
-
-    m_viewportRenderer.Render();
-
-    ID3D11ShaderResourceView* srv = m_viewportRenderer.GetViewportSRV();
-    if (srv) {
-        ImGui::Image((ImTextureID)srv, avail);
     }
 
     // Marmoset-style 3D interactive brush ray-casting & reticle
     if (m_toolMode != ToolMode::Navigate && !io.KeyAlt && m_hasLowPoly && (m_viewportMode == ViewportMode::View3D || m_viewportMode == ViewportMode::SplitBoth)) {
-        float maxActiveW = (m_viewportMode == ViewportMode::SplitBoth) ? avail.x * 0.5f : avail.x;
+        float maxActiveW = (m_viewportMode == ViewportMode::SplitBoth) ? leftW : avail.x;
         float relX = io.MousePos.x - screenPos.x;
         float relY = io.MousePos.y - screenPos.y;
 
@@ -1451,12 +1474,35 @@ void StandaloneUIManager::RenderViewportPanel() {
         ImGui::PopStyleVar(2);
     }
 
-    // 2D UV Canvas overlay if 2D or Split mode is active
+    // 2D UV Canvas overlay & sliding splitter if 2D or Split mode is active
     if (m_viewportMode == ViewportMode::View2D) {
         Render2DUVCanvas(screenPos, avail);
     } else if (m_viewportMode == ViewportMode::SplitBoth) {
-        ImVec2 splitPos = ImVec2(screenPos.x + avail.x * 0.5f, screenPos.y);
-        ImVec2 splitSize = ImVec2(avail.x * 0.5f, avail.y);
+        // Interactive Draggable Splitter Bar
+        ImGui::SetCursorScreenPos(ImVec2(screenPos.x + leftW, screenPos.y));
+        ImGui::InvisibleButton("##split_slider", ImVec2(splitterW, avail.y));
+        bool isSplitHovered = ImGui::IsItemHovered();
+        bool isSplitActive = ImGui::IsItemActive();
+        if (isSplitHovered || isSplitActive) {
+            ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+        }
+        if (isSplitActive) {
+            m_splitRatio += io.MouseDelta.x / (avail.x - splitterW);
+            m_splitRatio = std::clamp(m_splitRatio, 0.10f, 0.90f);
+        }
+
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        ImU32 splitBg = isSplitActive ? ImGui::GetColorU32(BakerUI::Col::Accent()) :
+                        (isSplitHovered ? ImGui::GetColorU32(BakerUI::Col::AccentHi()) :
+                                           ImGui::GetColorU32(BakerUI::Hex(0x181818)));
+        dl->AddRectFilled(ImVec2(screenPos.x + leftW, screenPos.y),
+                          ImVec2(screenPos.x + leftW + splitterW, screenPos.y + avail.y), splitBg);
+        dl->AddLine(ImVec2(screenPos.x + leftW + 3.0f, screenPos.y),
+                    ImVec2(screenPos.x + leftW + 3.0f, screenPos.y + avail.y),
+                    ImGui::GetColorU32(BakerUI::Hex(0x323232)));
+
+        ImVec2 splitPos = ImVec2(screenPos.x + leftW + splitterW, screenPos.y);
+        ImVec2 splitSize = ImVec2(rightW, avail.y);
         Render2DUVCanvas(splitPos, splitSize);
     }
 
@@ -1484,7 +1530,18 @@ void StandaloneUIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& s
     bool isHovered = (io.MousePos.x >= origin.x && io.MousePos.x <= origin.x + size.x &&
                       io.MousePos.y >= origin.y && io.MousePos.y <= origin.y + size.y);
 
+    float baseTileSize = (std::min)(size.x, size.y) * 0.72f;
+    if (baseTileSize < 120.0f) baseTileSize = 300.0f;
+    float currentTileSize = baseTileSize * m_uvZoom;
+
+    // Helper functions for true UV <-> Screen mapping
+    auto UVToScreen = [&](float u, float v) -> ImVec2 {
+        return ImVec2(origin.x + m_uvPan.x + u * currentTileSize,
+                      origin.y + m_uvPan.y + (1.0f - v) * currentTileSize);
+    };
+
     if (isHovered) {
+        // Pan (RMB drag, MMB drag, or Alt + LMB drag)
         if ((!io.KeyShift && !m_markingMenu.active && ImGui::IsMouseDragging(ImGuiMouseButton_Right)) ||
             ImGui::IsMouseDragging(ImGuiMouseButton_Middle) ||
             (io.KeyAlt && ImGui::IsMouseDragging(ImGuiMouseButton_Left))) {
@@ -1492,21 +1549,22 @@ void StandaloneUIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& s
             m_uvPan.y += io.MouseDelta.y;
         }
 
+        // True Cursor-Anchored Zoom: the exact UV point under the mouse cursor remains frozen at the cursor
         if (io.MouseWheel != 0.0f) {
-            float prevZoom = m_uvZoom;
-            m_uvZoom *= std::pow(1.18f, io.MouseWheel);
-            m_uvZoom = std::clamp(m_uvZoom, 0.10f, 30.0f);
+            float u = (io.MousePos.x - origin.x - m_uvPan.x) / currentTileSize;
+            float v = 1.0f - (io.MousePos.y - origin.y - m_uvPan.y) / currentTileSize;
 
-            float mx = io.MousePos.x - origin.x;
-            float my = io.MousePos.y - origin.y;
-            m_uvPan.x = mx - (mx - m_uvPan.x) * (m_uvZoom / prevZoom);
-            m_uvPan.y = my - (my - m_uvPan.y) * (m_uvZoom / prevZoom);
+            float zoomFactor = std::pow(1.15f, io.MouseWheel);
+            float newZoom = std::clamp(m_uvZoom * zoomFactor, 0.05f, 50.0f);
+            float newTileSize = baseTileSize * newZoom;
+
+            m_uvPan.x = io.MousePos.x - origin.x - u * newTileSize;
+            m_uvPan.y = io.MousePos.y - origin.y - (1.0f - v) * newTileSize;
+
+            m_uvZoom = newZoom;
+            currentTileSize = newTileSize;
         }
     }
-
-    float baseTileSize = (std::min)(size.x, size.y) * 0.72f;
-    if (baseTileSize < 120.0f) baseTileSize = 300.0f;
-    float currentTileSize = baseTileSize * m_uvZoom;
 
     // Draw UDIM tiles (1001..1010, up to 4 rows)
     for (int vTile = 0; vTile < 4; ++vTile) {
