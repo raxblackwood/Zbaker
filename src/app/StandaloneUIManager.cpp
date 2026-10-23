@@ -1338,8 +1338,8 @@ void StandaloneUIManager::RenderViewportPanel() {
         ImGui::SetCursorScreenPos(ImVec2(screenPos.x + 12.0f, screenPos.y + 44.0f));
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8.0f, 4.0f));
         ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(29.0f / 255.0f, 32.0f / 255.0f, 37.0f / 255.0f, 0.96f));
-        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(42.0f / 255.0f, 46.0f / 255.0f, 53.0f / 255.0f, 0.90f));
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(30.0f / 255.0f, 30.0f / 255.0f, 30.0f / 255.0f, 0.96f));
+        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(40.0f / 255.0f, 40.0f / 255.0f, 40.0f / 255.0f, 0.90f));
         float barW = (std::min)(940.0f, avail.x - 24.0f);
         ImGui::BeginChild("##brush_bar", ImVec2(barW, 36.0f), true, ImGuiWindowFlags_NoScrollbar);
         {
@@ -1968,10 +1968,8 @@ void StandaloneUIManager::ExecuteMarkingMenuAction(int wedge) {
 void StandaloneUIManager::RenderMeshPanel() {
     ImGui::Begin("Mesh Ingestion###ingest", nullptr);
 
-    // 1. High-Poly Source Card
-    BakerUI::SectionLabel("HIGH-POLY SCULPT / SOURCE");
-    bool openHP = BakerUI::BeginCard("##hp_card");
-    if (openHP) {
+    // 1. High-Poly Source Card (Blender Collapsible Section Card, packed by default)
+    if (BakerUI::BeginSectionCard("HIGH-POLY SCULPT / SOURCE", "##hp_card", false)) {
         if (BakerUI::PrimaryButton("Browse High-Poly Mesh...")) {
             std::string path = OpenFileDialog(L"Mesh Files (*.obj;*.fbx;*.goz;*.bin)\0*.obj;*.fbx;*.goz;*.bin\0All Files (*.*)\0*.*\0");
             if (!path.empty()) {
@@ -2005,13 +2003,11 @@ void StandaloneUIManager::RenderMeshPanel() {
             ImGui::Spacing();
             BakerUI::StatusPill("No High-Poly loaded", BakerUI::Col::TextDim());
         }
+        BakerUI::EndSectionCard();
     }
-    BakerUI::EndCard();
 
-    // 2. Low-Poly Target Card
-    BakerUI::SectionLabel("LOW-POLY TARGET (UDIM)");
-    bool openLP = BakerUI::BeginCard("##lp_card");
-    if (openLP) {
+    // 2. Low-Poly Target Card (Blender Collapsible Section Card, packed by default)
+    if (BakerUI::BeginSectionCard("LOW-POLY TARGET (UDIM)", "##lp_card", false)) {
         if (BakerUI::PrimaryButton("Browse Low-Poly Mesh...")) {
             std::string path = OpenFileDialog(L"Mesh Files (*.obj;*.fbx)\0*.obj;*.fbx\0All Files (*.*)\0*.*\0");
             if (!path.empty()) {
@@ -2063,13 +2059,11 @@ void StandaloneUIManager::RenderMeshPanel() {
             ImGui::Spacing();
             BakerUI::StatusPill("No Low-Poly loaded", BakerUI::Col::TextDim());
         }
+        BakerUI::EndSectionCard();
     }
-    BakerUI::EndCard();
 
-    // 3. Alignment & Transforms Card
-    BakerUI::SectionLabel("ALIGNMENT & TRANSFORMS");
-    bool openAlign = BakerUI::BeginCard("##align_card");
-    if (openAlign) {
+    // 3. Alignment & Transforms Card (Blender Collapsible Section Card, packed by default)
+    if (BakerUI::BeginSectionCard("ALIGNMENT & TRANSFORMS", "##align_card", false)) {
         bool changed = false;
         changed |= ImGui::DragFloat3("Offset (XYZ)", &m_settings.lowPolyTranslation.x, 0.01f);
         changed |= ImGui::DragFloat3("Rotate (Deg)", &m_settings.lowPolyRotation.x, 0.5f);
@@ -2100,13 +2094,11 @@ void StandaloneUIManager::RenderMeshPanel() {
         if (BakerUI::SecondaryButton("Reset")) {
             ResetTransforms();
         }
+        BakerUI::EndSectionCard();
     }
-    BakerUI::EndCard();
 
-    // 4. Cage Configuration Card
-    BakerUI::SectionLabel("CAGE DEFINITION");
-    bool openCage = BakerUI::BeginCard("##cage_card");
-    if (openCage) {
+    // 4. Cage Configuration Card (Blender Collapsible Section Card, packed by default)
+    if (BakerUI::BeginSectionCard("CAGE DEFINITION", "##cage_card", false)) {
         if (m_hasExplicitCage) {
             BakerUI::StatusPill("Explicit Cage Active", BakerUI::Col::Ok());
             ImGui::TextDisabled("Source: %s", m_cagePath.c_str());
@@ -2123,8 +2115,8 @@ void StandaloneUIManager::RenderMeshPanel() {
                 if (!path.empty()) SetCageMeshPath(path);
             }
         }
+        BakerUI::EndSectionCard();
     }
-    BakerUI::EndCard();
 
     ImGui::End();
 }
@@ -2141,83 +2133,88 @@ void StandaloneUIManager::RenderSettingsPanel() {
     float maxSliderDist = (m_hasHighPoly ? m_highPolyMesh.GetBoundingBoxDiagonal() * 0.5f : 10.0f);
     if (maxSliderDist < 1.0f) maxSliderDist = 1.0f;
 
-    BakerUI::SectionLabel("PROJECTION & QUALITY");
-    if (BakerUI::BeginProps("##proj")) {
-        if (BakerUI::PropCombo("Resolution", &currentResIdx, kRes, 5)) {
-            int resMap[] = { 1024, 2048, 4096, 8192, 16384 };
-            m_settings.resolution = resMap[currentResIdx];
-        }
-        if (BakerUI::PropCombo("Antialiasing", &currentAAIdx, kAA, 3)) {
-            int aaMap[] = { 1, 2, 4 };
-            m_settings.antiAliasing = aaMap[currentAAIdx];
-        }
-        BakerUI::PropFloat("Skew factor", &m_settings.skewFactor, 0.01f, 0.0f, 1.0f, "%.2f", "Marmoset Skew: 0=Smooth Normals, 1=Flat Face Normals");
-        if (!m_hasExplicitCage) {
-            if (BakerUI::PropFloat("Cage offset", &m_settings.cageDistance, 0.002f, 0.0001f, maxSliderDist, "%.4f", "Push distance along vertex normal")) {
-                m_viewportRenderer.UpdateCage(m_lowPolyMesh, m_settings.cageDistance, m_settings.lowPolyScale);
+    // 1. Projection & Quality (Blender Collapsible Section Card, packed by default)
+    if (BakerUI::BeginSectionCard("PROJECTION & QUALITY", "##proj_card", false)) {
+        if (BakerUI::BeginProps("##proj")) {
+            if (BakerUI::PropCombo("Resolution", &currentResIdx, kRes, 5)) {
+                int resMap[] = { 1024, 2048, 4096, 8192, 16384 };
+                m_settings.resolution = resMap[currentResIdx];
             }
+            if (BakerUI::PropCombo("Antialiasing", &currentAAIdx, kAA, 3)) {
+                int aaMap[] = { 1, 2, 4 };
+                m_settings.antiAliasing = aaMap[currentAAIdx];
+            }
+            BakerUI::PropFloat("Skew factor", &m_settings.skewFactor, 0.01f, 0.0f, 1.0f, "%.2f", "Marmoset Skew: 0=Smooth Normals, 1=Flat Face Normals");
+            if (!m_hasExplicitCage) {
+                if (BakerUI::PropFloat("Cage offset", &m_settings.cageDistance, 0.002f, 0.0001f, maxSliderDist, "%.4f", "Push distance along vertex normal")) {
+                    m_viewportRenderer.UpdateCage(m_lowPolyMesh, m_settings.cageDistance, m_settings.lowPolyScale);
+                }
+            }
+            BakerUI::PropFloat("Max ray length", &m_settings.maxRayDistance, 0.005f, 0.001f, maxSliderDist, "%.4f");
+            BakerUI::PropInt("Padding (px)", &m_settings.seamPadding, 0, 64, "JFA nearest-texel dilation");
+            BakerUI::PropCheck("Discard Backface", &m_settings.discardBackfaceHits, "Prevents inverted border artifacts");
+            if (m_settings.discardBackfaceHits) {
+                BakerUI::PropFloat("Angle Threshold", &m_settings.angleThreshold, 0.5f, 30.0f, 90.0f, "%.1f deg");
+            }
+            BakerUI::PropCheck("Bidirectional Rays", &m_settings.useBidirectionalRays, "Marmoset/xNormal dual-direction rays");
+            BakerUI::PropCheck("Isolate Mesh Parts", &m_settings.isolateMeshParts, "Prevent ray bleeding between adjacent parts");
+            BakerUI::EndProps();
         }
-        BakerUI::PropFloat("Max ray length", &m_settings.maxRayDistance, 0.005f, 0.001f, maxSliderDist, "%.4f");
-        BakerUI::PropInt("Padding (px)", &m_settings.seamPadding, 0, 64, "JFA nearest-texel dilation");
-        BakerUI::PropCheck("Discard Backface", &m_settings.discardBackfaceHits, "Prevents inverted border artifacts");
-        if (m_settings.discardBackfaceHits) {
-            BakerUI::PropFloat("Angle Threshold", &m_settings.angleThreshold, 0.5f, 30.0f, 90.0f, "%.1f deg");
+
+        if (m_hasLowPoly && !m_lowPolyMesh.detectedUDIMs.empty()) {
+            std::string udimSummary;
+            for (size_t i = 0; i < m_selectedUDIMs.size(); ++i) {
+                if (i > 0) udimSummary += ", ";
+                udimSummary += std::to_string(m_selectedUDIMs[i]);
+            }
+            if (udimSummary.empty()) udimSummary = "None (0 selected)";
+            ImGui::TextDisabled("Target UDIMs: %s (%zu/%zu)", udimSummary.c_str(), m_selectedUDIMs.size(), m_lowPolyMesh.detectedUDIMs.size());
+            ImGui::SameLine();
+            if (ImGui::SmallButton("UDIM Mgr")) {
+                m_shellState.showUdim = true;
+            }
+            ImGui::Spacing();
         }
-        BakerUI::PropCheck("Bidirectional Rays", &m_settings.useBidirectionalRays, "Marmoset/xNormal dual-direction rays");
-        BakerUI::PropCheck("Isolate Mesh Parts", &m_settings.isolateMeshParts, "Prevent ray bleeding between adjacent parts");
-        BakerUI::EndProps();
+        BakerUI::EndSectionCard();
     }
 
-    if (m_hasLowPoly && !m_lowPolyMesh.detectedUDIMs.empty()) {
-        std::string udimSummary;
-        for (size_t i = 0; i < m_selectedUDIMs.size(); ++i) {
-            if (i > 0) udimSummary += ", ";
-            udimSummary += std::to_string(m_selectedUDIMs[i]);
+    // 2. Output Maps (Blender Collapsible Section Card, packed by default)
+    if (BakerUI::BeginSectionCard("OUTPUT MAPS", "##maps_card", false)) {
+        if (BakerUI::BeginProps("##maps")) {
+            BakerUI::PropCheck("Tangent Normal (MikkT)", &m_settings.bakeNormal, "World-standard tangent space normal map");
+            BakerUI::PropCheck("World / Object Normal", &m_settings.bakeWorldNormal, "Raw XYZ world surface vectors");
+            BakerUI::PropCheck("Displacement / Height (32f)", &m_settings.bakeDisplacement, "Vector projection height difference");
+            BakerUI::PropCheck("Ambient Occlusion (AO)", &m_settings.bakeAmbientOcclusion, "Cosine-weighted diffuse contact shadows");
+            if (m_settings.bakeAmbientOcclusion) {
+                BakerUI::PropInt("AO Samples", &m_settings.aoSamples, 4, 128);
+                BakerUI::PropFloat("AO Radius", &m_settings.aoMaxDistance, 0.005f, 0.001f, maxSliderDist, "%.4f");
+            }
+            BakerUI::PropCheck("Cavity Map", &m_settings.bakeCavity, "High-frequency micro-crevices, pores, wrinkles");
+            BakerUI::PropCheck("Curvature Map", &m_settings.bakeCurvature, "Convex ridges (white) & concave crevices (black)");
+            if (m_settings.bakeCavity || m_settings.bakeCurvature) {
+                BakerUI::PropFloat("Cavity Contrast", &m_settings.cavityStrength, 0.1f, 0.1f, 10.0f, "%.1fx");
+            }
+            BakerUI::PropCheck("Thickness / SSS Map", &m_settings.bakeThickness, "Subsurface scattering inward ray thickness");
+            if (m_settings.bakeThickness) {
+                BakerUI::PropFloat("Thickness Depth", &m_settings.thicknessMaxDistance, 0.005f, 0.001f, maxSliderDist, "%.4f");
+            }
+            BakerUI::PropCheck("World Position Map", &m_settings.bakePosition, "World XYZ coordinate gradient map (32f EXR)");
+            BakerUI::PropCheck("Material ID / Groups", &m_settings.bakeMaterialID, "Distinct color per polygroup/submesh");
+            BakerUI::PropCheck("Base Color / Vertex Col", &m_settings.bakeBaseColor, "High-poly vertex colors / polypaint");
+            BakerUI::PropCheck("Diagnostic map", &m_settings.bakeDiagnosticMap, "Missed rays and ray coverage analysis");
+            static const char* const kNormalFormats[] = { "OpenGL (+Y) (Blender/Maya)", "DirectX (-Y) (Unreal/Max)" };
+            int curNormalFmt = m_settings.flipYNormal ? 1 : 0;
+            if (BakerUI::PropCombo("Normal Format", &curNormalFmt, kNormalFormats, 2)) {
+                m_settings.flipYNormal = (curNormalFmt == 1);
+            }
+            BakerUI::PropCheck("Compact BVH", &m_settings.useCompactBVH, "For dense sculpts");
+            BakerUI::EndProps();
         }
-        if (udimSummary.empty()) udimSummary = "None (0 selected)";
-        ImGui::TextDisabled("Target UDIMs: %s (%zu/%zu)", udimSummary.c_str(), m_selectedUDIMs.size(), m_lowPolyMesh.detectedUDIMs.size());
-        ImGui::SameLine();
-        if (ImGui::SmallButton("UDIM Mgr")) {
-            m_shellState.showUdim = true;
-        }
-        ImGui::Spacing();
+        BakerUI::EndSectionCard();
     }
 
-    BakerUI::SectionLabel("OUTPUT MAPS");
-    if (BakerUI::BeginProps("##maps")) {
-        BakerUI::PropCheck("Tangent Normal (MikkT)", &m_settings.bakeNormal, "World-standard tangent space normal map");
-        BakerUI::PropCheck("World / Object Normal", &m_settings.bakeWorldNormal, "Raw XYZ world surface vectors");
-        BakerUI::PropCheck("Displacement / Height (32f)", &m_settings.bakeDisplacement, "Vector projection height difference");
-        BakerUI::PropCheck("Ambient Occlusion (AO)", &m_settings.bakeAmbientOcclusion, "Cosine-weighted diffuse contact shadows");
-        if (m_settings.bakeAmbientOcclusion) {
-            BakerUI::PropInt("AO Samples", &m_settings.aoSamples, 4, 128);
-            BakerUI::PropFloat("AO Radius", &m_settings.aoMaxDistance, 0.005f, 0.001f, maxSliderDist, "%.4f");
-        }
-        BakerUI::PropCheck("Cavity Map", &m_settings.bakeCavity, "High-frequency micro-crevices, pores, wrinkles");
-        BakerUI::PropCheck("Curvature Map", &m_settings.bakeCurvature, "Convex ridges (white) & concave crevices (black)");
-        if (m_settings.bakeCavity || m_settings.bakeCurvature) {
-            BakerUI::PropFloat("Cavity Contrast", &m_settings.cavityStrength, 0.1f, 0.1f, 10.0f, "%.1fx");
-        }
-        BakerUI::PropCheck("Thickness / SSS Map", &m_settings.bakeThickness, "Subsurface scattering inward ray thickness");
-        if (m_settings.bakeThickness) {
-            BakerUI::PropFloat("Thickness Depth", &m_settings.thicknessMaxDistance, 0.005f, 0.001f, maxSliderDist, "%.4f");
-        }
-        BakerUI::PropCheck("World Position Map", &m_settings.bakePosition, "World XYZ coordinate gradient map (32f EXR)");
-        BakerUI::PropCheck("Material ID / Groups", &m_settings.bakeMaterialID, "Distinct color per polygroup/submesh");
-        BakerUI::PropCheck("Base Color / Vertex Col", &m_settings.bakeBaseColor, "High-poly vertex colors / polypaint");
-        BakerUI::PropCheck("Diagnostic map", &m_settings.bakeDiagnosticMap, "Missed rays and ray coverage analysis");
-        static const char* const kNormalFormats[] = { "OpenGL (+Y) (Blender/Maya)", "DirectX (-Y) (Unreal/Max)" };
-        int curNormalFmt = m_settings.flipYNormal ? 1 : 0;
-        if (BakerUI::PropCombo("Normal Format", &curNormalFmt, kNormalFormats, 2)) {
-            m_settings.flipYNormal = (curNormalFmt == 1);
-        }
-        BakerUI::PropCheck("Compact BVH", &m_settings.useCompactBVH, "For dense sculpts");
-        BakerUI::EndProps();
-    }
-
-    BakerUI::SectionLabel("DESTINATION & FORMATS");
-    bool openDest = BakerUI::BeginCard("##dest_card");
-    if (openDest) {
+    // 3. Destination & Formats (Blender Collapsible Section Card, packed by default)
+    if (BakerUI::BeginSectionCard("DESTINATION & FORMATS", "##dest_card", false)) {
         ImGui::TextDisabled("Output Folder:");
         ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 90);
         ImGui::InputText("##outdir", m_outDirBuf, sizeof(m_outDirBuf));
@@ -2248,8 +2245,8 @@ void StandaloneUIManager::RenderSettingsPanel() {
             BakerUI::PropCheck("Export Float EXR", &m_settings.exportEXR, "16-bit half / 32-bit float for production renderers");
             BakerUI::EndProps();
         }
+        BakerUI::EndSectionCard();
     }
-    BakerUI::EndCard();
 
     // Pin BakeButton at the bottom
     float btnH = 44.f * (ImGui::GetFontSize() / 15.f) + ImGui::GetStyle().WindowPadding.y;
@@ -2520,10 +2517,8 @@ void StandaloneUIManager::ClearAllCurves() {
 void StandaloneUIManager::RenderUVCutAndPackPanel() {
     ImGui::Begin("UV Tool###uvpanel", &m_shellState.showUVPanel);
 
-    // 1. Maya UV Workflow Gestures & Status Card
-    BakerUI::SectionLabel("MAYA UV CUTTING (GESTURE-DRIVEN)");
-    bool openMaya = BakerUI::BeginCard("##maya_card");
-    if (openMaya) {
+    // 1. Maya UV Workflow Gestures & Status Card (Blender Collapsible Section Card, packed by default)
+    if (BakerUI::BeginSectionCard("MAYA UV CUTTING (GESTURE-DRIVEN)", "##maya_card", false)) {
         ImGui::TextColored(ImVec4(0.0f, 0.95f, 1.0f, 1.0f), "Viewport & 2D Canvas Gestures:");
         ImGui::BulletText("Double-Click Edge: Select Edge Loop (Collinear)");
         ImGui::BulletText("Shift + Click Edge: Select Shortest Path between edges");
@@ -2541,13 +2536,11 @@ void StandaloneUIManager::RenderUVCutAndPackPanel() {
             ImGui::Spacing();
             BakerUI::StatusPill(m_uvStatusMessage.c_str(), BakerUI::Col::Accent());
         }
+        BakerUI::EndSectionCard();
     }
-    BakerUI::EndCard();
 
     // 2b. 3D Surface Curves (Interactive Surface Cutting)
-    BakerUI::SectionLabel("2. 3D SURFACE CURVES (NEW)");
-    bool openCurves = BakerUI::BeginCard("##curves_card");
-    if (openCurves) {
+    if (BakerUI::BeginSectionCard("3D SURFACE CURVES", "##curves_card", false)) {
         ImGui::TextWrapped("Click anywhere on the low-poly mesh in 3D to draw cutting curves. Move control points dynamically or bake curves into seams.");
         ImGui::Spacing();
 
@@ -2736,13 +2729,11 @@ void StandaloneUIManager::RenderUVCutAndPackPanel() {
         if (ImGui::Button("Bake All (Cut Topology)")) {
             BakeAllCurvesToSeams(true);
         }
+        BakerUI::EndSectionCard();
     }
-    BakerUI::EndCard();
 
-    // 3. Unwrap Section
-    BakerUI::SectionLabel("3. CONFORMAL UNWRAP");
-    bool openUnwrap = BakerUI::BeginCard("##unwrap_card");
-    if (openUnwrap) {
+    // 3. Unwrap Section (Blender Collapsible Section Card, packed by default)
+    if (BakerUI::BeginSectionCard("CONFORMAL UNWRAP", "##unwrap_card", false)) {
         if (BakerUI::BeginProps("##unwrap_props")) {
             BakerUI::PropInt("Spring Iterations", &m_relaxIterations, 5, 200, "Relaxation passes to minimize texture distortion");
             BakerUI::EndProps();
@@ -2753,13 +2744,11 @@ void StandaloneUIManager::RenderUVCutAndPackPanel() {
         }
         ImGui::SameLine();
         ImGui::TextDisabled("Islands: %zu", m_currentIslands.size());
+        BakerUI::EndSectionCard();
     }
-    BakerUI::EndCard();
 
     // 4. Advanced Packing Section (UVPackmaster 4 Inspired)
-    BakerUI::SectionLabel("3. ADVANCED PACKING (UVPACKMASTER)");
-    bool openPack = BakerUI::BeginCard("##pack_card");
-    if (openPack) {
+    if (BakerUI::BeginSectionCard("ADVANCED PACKING (UVPACKMASTER)", "##pack_card", false)) {
         static const char* kResOptions[] = { "512", "1024", "2048", "4096", "8192", "16384" };
         static int resIdx = 2; // 2048
         if (BakerUI::BeginProps("##pack_props")) {
@@ -2795,32 +2784,28 @@ void StandaloneUIManager::RenderUVCutAndPackPanel() {
         if (BakerUI::PrimaryButton("PACK UVs (MaxRects BSSF)")) {
             PackUVs();
         }
+        BakerUI::EndSectionCard();
     }
-    BakerUI::EndCard();
 
     // 5. Packing Statistics Card
     if (m_packStats.packedIslands > 0) {
-        BakerUI::SectionLabel("PACKING METRICS");
-        bool openStats = BakerUI::BeginCard("##stats_card");
-        if (openStats) {
+        if (BakerUI::BeginSectionCard("PACKING METRICS", "##stats_card", false)) {
             ImGui::Text("Packed Islands: %d", m_packStats.packedIslands);
             ImGui::Text("UDIM Tiles Used: %d", m_packStats.udimTilesUsed);
             ImGui::Text("Packing Efficiency: %.1f%%", m_packStats.packingEfficiency * 100.0f);
             float udimProg = m_packStats.packingEfficiency;
             ImGui::ProgressBar(udimProg, ImVec2(-FLT_MIN, 0.0f));
+            BakerUI::EndSectionCard();
         }
-        BakerUI::EndCard();
     }
 
     // 6. Export Card
-    BakerUI::SectionLabel("EXPORT MESH");
-    bool openExp = BakerUI::BeginCard("##exp_card");
-    if (openExp) {
+    if (BakerUI::BeginSectionCard("EXPORT MESH", "##exp_card", false)) {
         if (BakerUI::SecondaryButton("Export Low-Poly OBJ (with New UVs)...")) {
             ExportUnwrappedOBJ();
         }
+        BakerUI::EndSectionCard();
     }
-    BakerUI::EndCard();
 
     ImGui::End();
 }

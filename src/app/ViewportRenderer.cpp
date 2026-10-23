@@ -138,25 +138,25 @@ float4 PSMain(PS_INPUT input) : SV_TARGET {
         distFade = distFade * distFade;
         if (distFade <= 0.001f) discard;
 
-        // Neutral dark charcoal grid matching reference design (no blue tint)
-        float3 col = float3(0.16f, 0.18f, 0.20f); // Neutral dark charcoal for minor grid lines
-        float alpha = lineMinor * 0.22f;
+        // Blender-style ground grid: neutral dark lines matching Blender dark theme
+        float3 col = float3(0.20f, 0.20f, 0.20f); // Neutral dark gray for minor grid lines
+        float alpha = lineMinor * 0.25f;
 
-        // Major subdivisions: clean, refined graphite
+        // Major subdivisions: clean, refined neutral gray
         if (lineMajor > 0.001f) {
-            col = lerp(col, float3(0.22f, 0.25f, 0.28f), lineMajor);
-            alpha = max(alpha, lineMajor * 0.42f);
+            col = lerp(col, float3(0.28f, 0.28f, 0.28f), lineMajor);
+            alpha = max(alpha, lineMajor * 0.45f);
         }
 
-        // Red X Axis (along Z = 0)
+        // Red X Axis (along Z = 0 in DX coordinate space)
         if (alphaAxisX > 0.001f) {
-            col = lerp(col, float3(0.88f, 0.24f, 0.24f), alphaAxisX);
-            alpha = max(alpha, alphaAxisX * 0.75f);
+            col = lerp(col, float3(0.85f, 0.25f, 0.25f), alphaAxisX); // Blender Red X
+            alpha = max(alpha, alphaAxisX * 0.80f);
         }
-        // Green Z Axis (along X = 0)
+        // Green Z Axis (along X = 0 in DX coordinate space)
         if (alphaAxisZ > 0.001f) {
-            col = lerp(col, float3(0.28f, 0.82f, 0.32f), alphaAxisZ);
-            alpha = max(alpha, alphaAxisZ * 0.75f);
+            col = lerp(col, float3(0.34f, 0.64f, 0.15f), alphaAxisZ); // Blender Green Y
+            alpha = max(alpha, alphaAxisZ * 0.80f);
         }
 
         alpha *= distFade;
@@ -938,8 +938,8 @@ void ViewportRenderer::Render() {
     vp.MaxDepth = 1.0f;
     m_context->RSSetViewports(1, &vp);
 
-    // Exact 3D Viewport background sampled from reference: RGB(32, 36, 42) Hex(#20242A)
-    const float clearColor[4] = { 32.0f / 255.0f, 36.0f / 255.0f, 42.0f / 255.0f, 1.0f };
+    // Blender Dark 3D Viewport background: neutral dark gray RGB(42, 42, 42) Hex(#2A2A2A)
+    const float clearColor[4] = { 42.0f / 255.0f, 42.0f / 255.0f, 42.0f / 255.0f, 1.0f };
     m_context->ClearRenderTargetView(m_colorRTV, clearColor);
     m_context->ClearDepthStencilView(m_depthDSV, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
 
@@ -1028,7 +1028,7 @@ void ViewportRenderer::Render() {
             m_context->OMSetBlendState(m_alphaBlendState, nullptr, 0xFFFFFFFF);
             m_context->RSSetState(m_wireframeRS);
 
-            DirectX::XMFLOAT4 wireColor = { 0.18f, 0.20f, 0.23f, 0.85f };
+            DirectX::XMFLOAT4 wireColor = { 0.26f, 0.26f, 0.26f, 0.85f };
             UpdateConstantBuffer(worldLP, wireColor, 4);
 
             if (m_lowPolyWireGPU.indexBuffer && m_lowPolyWireGPU.indexCount > 0) {
