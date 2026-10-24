@@ -585,12 +585,27 @@ struct ShellState {
     float       bakeProgress = -1.f;     // -1 idle
     bool        resetLayout = false;     // View > Reset Layout
     bool        showLog = true, showUdim = true, showOutliner = true, showUVPanel = true;
+    bool        showMeshPanel = true, showBakeParams = true;
     bool        openLowPoly = false;
     bool        openHighPoly = false;
     bool        openCage = false;
     bool        clearScene = false;
     bool        loadZBrushCache = false;
     bool        exitApp = false;
+    // Mode-specific menu action triggers:
+    bool        triggerBake = false;
+    bool        clearNormalPreview = false;
+    bool        triggerUndo = false;
+    bool        triggerRedo = false;
+    bool        selectEdgeLoop = false;
+    bool        selectEdgeRing = false;
+    bool        triggerAutoSeams = false;
+    bool        triggerCutSeams = false;
+    bool        triggerSewSeams = false;
+    bool        triggerClearSeams = false;
+    bool        triggerUnwrap = false;
+    bool        triggerPack = false;
+    bool        exportLowPoly = false;
 };
 
 inline void BuildDefaultLayout(ImGuiID ds, ImVec2 size) {
@@ -625,23 +640,67 @@ inline float ToolbarHeight()   { return 0.0f; }
 inline void BeginFrameHost(ShellState& st) {
     // 1) main menu
     if (ImGui::BeginMainMenuBar()) {
+        bool isBaking = (st.activeTab == ShellState::AppTab::Baking);
+        bool isUV = (st.activeTab == ShellState::AppTab::UVCutAndPack);
+
         if (ImGui::BeginMenu("File")) {
             if (ImGui::MenuItem("New Session (Clear Scene)", "Ctrl+N")) st.clearScene = true;
             ImGui::Separator();
             if (ImGui::MenuItem("Open Low-Poly...", "Ctrl+O")) st.openLowPoly = true;
-            if (ImGui::MenuItem("Open High-Poly...", "Ctrl+Shift+O")) st.openHighPoly = true;
-            if (ImGui::MenuItem("Open Cage...", nullptr)) st.openCage = true;
+            if (isBaking) {
+                if (ImGui::MenuItem("Open High-Poly...", "Ctrl+Shift+O")) st.openHighPoly = true;
+                if (ImGui::MenuItem("Open Cage...", nullptr)) st.openCage = true;
+            } else {
+                if (ImGui::MenuItem("Export UV Low-Poly OBJ...", "Ctrl+E")) st.exportLowPoly = true;
+            }
             ImGui::Separator();
             if (ImGui::MenuItem("Load ZBrush Cache", nullptr)) st.loadZBrushCache = true;
             ImGui::Separator();
             if (ImGui::MenuItem("Exit", "Alt+F4")) st.exitApp = true;
             ImGui::EndMenu();
         }
+
+        // Mode-specific middle menu groups
+        if (isBaking) {
+            if (ImGui::BeginMenu("Bake")) {
+                if (ImGui::MenuItem("Start Bake", "F5")) st.triggerBake = true;
+                ImGui::Separator();
+                if (ImGui::MenuItem("Clear Baked Normal Preview", nullptr)) st.clearNormalPreview = true;
+                ImGui::EndMenu();
+            }
+        } else {
+            if (ImGui::BeginMenu("Edit")) {
+                if (ImGui::MenuItem("Undo", "Ctrl+Z")) st.triggerUndo = true;
+                if (ImGui::MenuItem("Redo", "Ctrl+Shift+Z")) st.triggerRedo = true;
+                ImGui::Separator();
+                if (ImGui::MenuItem("Select Edge Loop", "Alt+L")) st.selectEdgeLoop = true;
+                if (ImGui::MenuItem("Select Edge Ring", "Alt+R")) st.selectEdgeRing = true;
+                ImGui::EndMenu();
+            }
+            if (ImGui::BeginMenu("UV")) {
+                if (ImGui::MenuItem("Auto Seams by Angle", nullptr)) st.triggerAutoSeams = true;
+                if (ImGui::MenuItem("Cut Selected Seams", "C")) st.triggerCutSeams = true;
+                if (ImGui::MenuItem("Sew Selected Seams", "S")) st.triggerSewSeams = true;
+                if (ImGui::MenuItem("Clear All Seams", nullptr)) st.triggerClearSeams = true;
+                ImGui::Separator();
+                if (ImGui::MenuItem("Conformal Unwrap", "Ctrl+U")) st.triggerUnwrap = true;
+                if (ImGui::MenuItem("Pack UDIM Tiles", "Ctrl+P")) st.triggerPack = true;
+                ImGui::EndMenu();
+            }
+        }
+
         if (ImGui::BeginMenu("View")) {
             ImGui::MenuItem("Scene Outliner", nullptr, &st.showOutliner);
-            ImGui::MenuItem("UV Cut & Pack Tool", nullptr, &st.showUVPanel);
-            ImGui::MenuItem("Output Log", nullptr, &st.showLog);
-            ImGui::MenuItem("UDIM Layout", nullptr, &st.showUdim);
+            if (isBaking) {
+                ImGui::MenuItem("Mesh Ingestion", nullptr, &st.showMeshPanel);
+                ImGui::MenuItem("Bake Parameters", nullptr, &st.showBakeParams);
+                ImGui::MenuItem("Output Log", nullptr, &st.showLog);
+                ImGui::MenuItem("UDIM Layout", nullptr, &st.showUdim);
+            } else {
+                ImGui::MenuItem("UV Tool Panel", nullptr, &st.showUVPanel);
+                ImGui::MenuItem("UDIM Layout", nullptr, &st.showUdim);
+                ImGui::MenuItem("Output Log", nullptr, &st.showLog);
+            }
             ImGui::Separator();
             if (ImGui::BeginMenu("Theme")) {
                 if (ImGui::MenuItem("Blender Dark (Default)", nullptr, gCurrentTheme == UITheme::BlenderDark)) {
@@ -673,9 +732,6 @@ inline void BeginFrameHost(ShellState& st) {
         ImGui::SameLine();
 
         // Workspace mode tabs matching studio styling
-        bool isBaking = (st.activeTab == ShellState::AppTab::Baking);
-        bool isUV = (st.activeTab == ShellState::AppTab::UVCutAndPack);
-
         ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 5.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(14.0f, 4.0f));
 

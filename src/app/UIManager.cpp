@@ -498,24 +498,110 @@ void UIManager::RenderUI() {
         PostQuitMessage(0);
     }
 
-    // Mode-specific tab activation & focus
-    if (m_shellState.activeTab == BakerUI::ShellState::AppTab::UVCutAndPack) {
-        if (!m_focusUVTab) {
-            ImGui::SetWindowFocus("UV Tool###uvpanel");
-            m_focusUVTab = true;
-            m_toolMode = ToolMode::CutSeam;
-            m_viewportRenderer.showLowPolyWireframe = true;
-            m_viewportRenderer.showSeams = true;
-        }
-        m_viewportRenderer.showSeams = true;
-    } else {
-        m_focusUVTab = false;
-        if (m_toolMode == ToolMode::CutSeam) {
-            m_toolMode = ToolMode::Navigate;
+    // Menu action triggers
+    if (m_shellState.triggerBake) {
+        m_shellState.triggerBake = false;
+        bool canBake = m_hasLowPoly && m_hasHighPoly && !m_isBaking && !m_isLoadingHighPoly;
+        if (canBake) TriggerBake();
+    }
+    if (m_shellState.clearNormalPreview) {
+        m_shellState.clearNormalPreview = false;
+        m_viewportRenderer.ClearBakedNormalMap();
+        m_logEntries.push_back("[Viewport] Cleared baked normal map preview.");
+    }
+    if (m_shellState.triggerUndo) {
+        m_shellState.triggerUndo = false;
+        PerformUndo();
+    }
+    if (m_shellState.triggerRedo) {
+        m_shellState.triggerRedo = false;
+        PerformRedo();
+    }
+    if (m_shellState.selectEdgeLoop) {
+        m_shellState.selectEdgeLoop = false;
+        if (m_hasLastSelectedEdge) {
+            UVCutter::SelectEdgeLoop(m_lowPolyMesh, m_lastSelectedEdge.first, m_lastSelectedEdge.second, true);
+            m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
+            PushHistoryState("Select Edge Loop");
         }
     }
+    if (m_shellState.selectEdgeRing) {
+        m_shellState.selectEdgeRing = false;
+        if (m_hasLastSelectedEdge) {
+            UVCutter::SelectEdgeRing(m_lowPolyMesh, m_lastSelectedEdge.first, m_lastSelectedEdge.second, true);
+            m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
+            PushHistoryState("Select Edge Ring");
+        }
+    }
+    if (m_shellState.triggerAutoSeams) {
+        m_shellState.triggerAutoSeams = false;
+        MarkSeamsByAngle();
+    }
+    if (m_shellState.triggerCutSeams) {
+        m_shellState.triggerCutSeams = false;
+        if (!m_lowPolyMesh.selectedEdges.empty()) {
+            UVCutter::CutSelectedEdges(m_lowPolyMesh);
+            m_viewportRenderer.UpdateSeams(m_lowPolyMesh);
+            m_viewportRenderer.showSeams = true;
+            PushHistoryState("Cut Seams");
+        }
+    }
+    if (m_shellState.triggerSewSeams) {
+        m_shellState.triggerSewSeams = false;
+        if (!m_lowPolyMesh.selectedEdges.empty()) {
+            UVCutter::SewSelectedEdges(m_lowPolyMesh);
+            m_viewportRenderer.UpdateSeams(m_lowPolyMesh);
+            PushHistoryState("Sew Seams");
+        }
+    }
+    if (m_shellState.triggerClearSeams) {
+        m_shellState.triggerClearSeams = false;
+        ClearSeams();
+    }
+    if (m_shellState.triggerUnwrap) {
+        m_shellState.triggerUnwrap = false;
+        UnwrapMesh();
+    }
+    if (m_shellState.triggerPack) {
+        m_shellState.triggerPack = false;
+        PackUVs();
+    }
+    if (m_shellState.exportLowPoly) {
+        m_shellState.exportLowPoly = false;
+        ExportUnwrappedOBJ();
+    }
 
-    // 0. Scene Outliner
+    bool isUVMode = (m_shellState.activeTab == BakerUI::ShellState::AppTab::UVCutAndPack);
+
+    // Workspace mode transition & focus orchestration
+    if (m_shellState.activeTab != m_prevActiveTab) {
+        if (isUVMode) {
+            // Switched from Baking to UV Cut & Pack
+            m_viewportMode = ViewportMode::SplitBoth;
+            m_toolMode = ToolMode::CutSeam;
+            m_viewportRenderer.showHighPoly = false; // Hide high-poly sculpt to expose low-poly mesh
+            m_viewportRenderer.showCage = false;     // Hide cage
+            m_viewportRenderer.showLowPoly = true;
+            m_viewportRenderer.showLowPolyWireframe = true;
+            m_viewportRenderer.showSeams = true;
+            ImGui::SetWindowFocus("UV Tool###uvpanel");
+            ImGui::SetWindowFocus("UDIM Layout###udim");
+            m_logEntries.push_back("[Workspace] Switched to UV Cut & Pack View (Split 3D/2D).");
+        } else {
+            // Switched from UV Cut & Pack to Baking
+            m_viewportMode = ViewportMode::View3D;
+            m_toolMode = ToolMode::Navigate;
+            m_viewportRenderer.showHighPoly = true;
+            m_viewportRenderer.showCage = false;
+            m_viewportRenderer.showLowPoly = true;
+            ImGui::SetWindowFocus("Bake Parameters###params");
+            ImGui::SetWindowFocus("Output Log###log");
+            m_logEntries.push_back("[Workspace] Switched to Bake Project View.");
+        }
+        m_prevActiveTab = m_shellState.activeTab;
+    }
+
+    // 0. Scene Outliner (available in both workspaces)
     if (m_shellState.showOutliner) {
         RenderOutlinerPanel();
     }
@@ -523,23 +609,20 @@ void UIManager::RenderUI() {
     // 1. Center / Main Stage: Viewport (3D / 2D / Split)
     RenderViewportPanel();
 
-    // 2. Left Column: Mesh Ingestion & Transforms
-    RenderMeshPanel();
-
-    // 3. Right Column: Bake Settings & UV Tool
-    if (m_shellState.activeTab == BakerUI::ShellState::AppTab::Baking) {
+    // 2. Mode-specific panels (strictly segregated by active workspace)
+    if (!isUVMode) {
+        // Baking Workspace
+        RenderMeshPanel();
         RenderSettingsPanel();
-    }
-    if (m_shellState.showUVPanel) {
+    } else {
+        // UV Cut & Pack Workspace
         RenderUVCutAndPackPanel();
     }
 
-    // 4. Bottom Tab: UDIM Canvas
+    // 3. Bottom Panels
     if (m_shellState.showUdim) {
         RenderUDIMCanvasPanel();
     }
-
-    // 5. Bottom Tab: Output Log
     if (m_shellState.showLog) {
         RenderBakeProgressPanel();
     }
@@ -1590,84 +1673,102 @@ void UIManager::RenderViewportPanel() {
         }
     }
 
-    // Floating overlay (top-left) - 3D controls
+    bool isUVMode = (m_shellState.activeTab == BakerUI::ShellState::AppTab::UVCutAndPack);
+
+    // Floating overlay (top-left) - 3D controls (context-aware grouping by workspace mode)
     if (m_viewportMode != ViewportMode::View2D) {
         ImGui::SetCursorScreenPos(ImVec2(origin.x + 12, origin.y + 12));
         ImGui::BeginGroup();
-        BakerUI::ToggleChip("High", &m_viewportRenderer.showHighPoly); ImGui::SameLine();
-        BakerUI::ToggleChip("Low", &m_viewportRenderer.showLowPoly); ImGui::SameLine();
-        BakerUI::ToggleChip("Wire", &m_viewportRenderer.showLowPolyWireframe); ImGui::SameLine();
-        BakerUI::ToggleChip("Cage", &m_viewportRenderer.showCage); ImGui::SameLine();
 
-        ImGui::Dummy(ImVec2(6.0f, 0.0f)); ImGui::SameLine();
-        bool canUndo = m_history.CanUndo();
-        if (!canUndo) ImGui::BeginDisabled();
-        if (ImGui::SmallButton("Undo")) {
-            PerformUndo();
-        }
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-            std::string tip = canUndo ? ("Undo: " + m_history.GetUndoDescription() + " (Ctrl+Z)") : "Nothing to undo (Ctrl+Z)";
-            ImGui::SetTooltip("%s", tip.c_str());
-        }
-        if (!canUndo) ImGui::EndDisabled();
-
-        ImGui::SameLine();
-        bool canRedo = m_history.CanRedo();
-        if (!canRedo) ImGui::BeginDisabled();
-        if (ImGui::SmallButton("Redo")) {
-            PerformRedo();
-        }
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-            std::string tip = canRedo ? ("Redo: " + m_history.GetRedoDescription() + " (Ctrl+Shift+Z)") : "Nothing to redo (Ctrl+Shift+Z)";
-            ImGui::SetTooltip("%s", tip.c_str());
-        }
-        if (!canRedo) ImGui::EndDisabled();
-        ImGui::SameLine();
-        BakerUI::ToggleChip("Grid", &m_viewportRenderer.showGrid); ImGui::SameLine();
-        if (m_viewportRenderer.HasBakedNormalMap()) {
-            BakerUI::ToggleChip("Baked Normals", &m_viewportRenderer.showBakedNormals); ImGui::SameLine();
-        }
-
-        ImGui::Dummy(ImVec2(8, 0)); ImGui::SameLine();
-
-        bool isNav = (m_toolMode == ToolMode::Navigate);
-        if (BakerUI::ToggleChip("Navigate", &isNav)) {
-            m_toolMode = ToolMode::Navigate;
-        }
-        ImGui::SameLine();
-        bool isPaintCage = (m_toolMode == ToolMode::PaintCage);
-        if (BakerUI::ToggleChip("Paint Cage", &isPaintCage)) {
-            m_toolMode = isPaintCage ? ToolMode::PaintCage : ToolMode::Navigate;
-            if (m_toolMode == ToolMode::PaintCage) {
-                m_viewportRenderer.showCage = true;
-                EnsureCageInitialized();
+        if (!isUVMode) {
+            // === BAKING VIEW CONTROLS ===
+            BakerUI::ToggleChip("High", &m_viewportRenderer.showHighPoly); ImGui::SameLine();
+            BakerUI::ToggleChip("Low", &m_viewportRenderer.showLowPoly); ImGui::SameLine();
+            BakerUI::ToggleChip("Wire", &m_viewportRenderer.showLowPolyWireframe); ImGui::SameLine();
+            BakerUI::ToggleChip("Cage", &m_viewportRenderer.showCage); ImGui::SameLine();
+            BakerUI::ToggleChip("Grid", &m_viewportRenderer.showGrid); ImGui::SameLine();
+            if (m_viewportRenderer.HasBakedNormalMap()) {
+                BakerUI::ToggleChip("Baked Normals", &m_viewportRenderer.showBakedNormals); ImGui::SameLine();
             }
-        }
-        ImGui::SameLine();
-        bool isPaintSkew = (m_toolMode == ToolMode::PaintSkew);
-        if (BakerUI::ToggleChip("Paint Skew", &isPaintSkew)) {
-            m_toolMode = isPaintSkew ? ToolMode::PaintSkew : ToolMode::Navigate;
-            if (m_toolMode == ToolMode::PaintSkew) {
-                EnsureSkewInitialized();
-                m_viewportRenderer.showSkew = true;
-            } else {
-                m_viewportRenderer.showSkew = false;
+
+            ImGui::Dummy(ImVec2(8, 0)); ImGui::SameLine();
+
+            bool isNav = (m_toolMode == ToolMode::Navigate);
+            if (BakerUI::ToggleChip("Navigate", &isNav)) {
+                m_toolMode = ToolMode::Navigate;
             }
-        }
-        ImGui::SameLine();
-        bool isCutSeam = (m_toolMode == ToolMode::CutSeam);
-        if (BakerUI::ToggleChip("Cut Seam", &isCutSeam)) {
-            m_toolMode = isCutSeam ? ToolMode::CutSeam : ToolMode::Navigate;
-            if (m_toolMode == ToolMode::CutSeam) {
-                m_viewportRenderer.showSeams = true;
+            ImGui::SameLine();
+            bool isPaintCage = (m_toolMode == ToolMode::PaintCage);
+            if (BakerUI::ToggleChip("Paint Cage", &isPaintCage)) {
+                m_toolMode = isPaintCage ? ToolMode::PaintCage : ToolMode::Navigate;
+                if (m_toolMode == ToolMode::PaintCage) {
+                    m_viewportRenderer.showCage = true;
+                    EnsureCageInitialized();
+                }
             }
-        }
-        ImGui::SameLine();
-        bool isDrawCurve = (m_toolMode == ToolMode::DrawCurve);
-        if (BakerUI::ToggleChip("Curve Cut", &isDrawCurve)) {
-            m_toolMode = isDrawCurve ? ToolMode::DrawCurve : ToolMode::Navigate;
-            if (m_toolMode == ToolMode::DrawCurve) {
-                m_viewportRenderer.showSeams = true;
+            ImGui::SameLine();
+            bool isPaintSkew = (m_toolMode == ToolMode::PaintSkew);
+            if (BakerUI::ToggleChip("Paint Skew", &isPaintSkew)) {
+                m_toolMode = isPaintSkew ? ToolMode::PaintSkew : ToolMode::Navigate;
+                if (m_toolMode == ToolMode::PaintSkew) {
+                    EnsureSkewInitialized();
+                    m_viewportRenderer.showSkew = true;
+                } else {
+                    m_viewportRenderer.showSkew = false;
+                }
+            }
+        } else {
+            // === UV CUT & PACK VIEW CONTROLS ===
+            BakerUI::ToggleChip("Low", &m_viewportRenderer.showLowPoly); ImGui::SameLine();
+            BakerUI::ToggleChip("Wire", &m_viewportRenderer.showLowPolyWireframe); ImGui::SameLine();
+            BakerUI::ToggleChip("Seams", &m_viewportRenderer.showSeams); ImGui::SameLine();
+            BakerUI::ToggleChip("Grid", &m_viewportRenderer.showGrid); ImGui::SameLine();
+
+            ImGui::Dummy(ImVec2(6.0f, 0.0f)); ImGui::SameLine();
+            bool canUndo = m_history.CanUndo();
+            if (!canUndo) ImGui::BeginDisabled();
+            if (ImGui::SmallButton("Undo")) {
+                PerformUndo();
+            }
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                std::string tip = canUndo ? ("Undo: " + m_history.GetUndoDescription() + " (Ctrl+Z)") : "Nothing to undo (Ctrl+Z)";
+                ImGui::SetTooltip("%s", tip.c_str());
+            }
+            if (!canUndo) ImGui::EndDisabled();
+
+            ImGui::SameLine();
+            bool canRedo = m_history.CanRedo();
+            if (!canRedo) ImGui::BeginDisabled();
+            if (ImGui::SmallButton("Redo")) {
+                PerformRedo();
+            }
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                std::string tip = canRedo ? ("Redo: " + m_history.GetRedoDescription() + " (Ctrl+Shift+Z)") : "Nothing to redo (Ctrl+Shift+Z)";
+                ImGui::SetTooltip("%s", tip.c_str());
+            }
+            if (!canRedo) ImGui::EndDisabled();
+
+            ImGui::Dummy(ImVec2(8, 0)); ImGui::SameLine();
+
+            bool isNav = (m_toolMode == ToolMode::Navigate);
+            if (BakerUI::ToggleChip("Navigate", &isNav)) {
+                m_toolMode = ToolMode::Navigate;
+            }
+            ImGui::SameLine();
+            bool isCutSeam = (m_toolMode == ToolMode::CutSeam);
+            if (BakerUI::ToggleChip("Cut Seam", &isCutSeam)) {
+                m_toolMode = isCutSeam ? ToolMode::CutSeam : ToolMode::Navigate;
+                if (m_toolMode == ToolMode::CutSeam) {
+                    m_viewportRenderer.showSeams = true;
+                }
+            }
+            ImGui::SameLine();
+            bool isDrawCurve = (m_toolMode == ToolMode::DrawCurve);
+            if (BakerUI::ToggleChip("Curve Cut", &isDrawCurve)) {
+                m_toolMode = isDrawCurve ? ToolMode::DrawCurve : ToolMode::Navigate;
+                if (m_toolMode == ToolMode::DrawCurve) {
+                    m_viewportRenderer.showSeams = true;
+                }
             }
         }
 
@@ -1872,19 +1973,72 @@ void UIManager::RenderViewportPanel() {
         Render2DUVCanvas(splitPos, splitSize);
     }
 
-    // Floating Bake Button at the bottom of the 3D viewport canvas
-    int udimCount = m_lowPolyMesh.detectedUDIMs.empty() ? 1 : (int)m_lowPolyMesh.detectedUDIMs.size();
-    bool canBake = m_hasLowPoly && m_hasHighPoly && !m_isBaking && !m_isLoadingHighPoly;
-    if (BakerUI::FloatingBakeBar(origin, avail, canBake, m_isBaking, m_bakeProgress, m_bakeStatus.c_str(),
-                                 udimCount, m_settings.resolution, m_settings.resolution)) {
-        if (canBake) {
-            TriggerBake();
+    // Floating Workspace Action HUD (bottom center of viewport)
+    if (!isUVMode) {
+        // Baking View: Start Bake & Progress HUD
+        int udimCount = m_lowPolyMesh.detectedUDIMs.empty() ? 1 : (int)m_lowPolyMesh.detectedUDIMs.size();
+        bool canBake = m_hasLowPoly && m_hasHighPoly && !m_isBaking && !m_isLoadingHighPoly;
+        if (BakerUI::FloatingBakeBar(origin, avail, canBake, m_isBaking, m_bakeProgress, m_bakeStatus.c_str(),
+                                     udimCount, m_settings.resolution, m_settings.resolution)) {
+            if (canBake) {
+                TriggerBake();
+            }
         }
+    } else {
+        // UV Cut & Pack View: Quick Unwrap, Pack, and Export HUD
+        RenderFloatingUVBar(origin, avail);
     }
 
     RenderMarkingMenu();
 
     ImGui::End();
+}
+
+void UIManager::RenderFloatingUVBar(const ImVec2& origin, const ImVec2& avail) {
+    if (!m_hasLowPoly) return;
+
+    float barW = 460.0f;
+    float barH = 38.0f;
+    float posX = origin.x + (avail.x - barW) * 0.5f;
+    float posY = origin.y + avail.y - barH - 12.0f;
+
+    ImGui::SetCursorScreenPos(ImVec2(posX, posY));
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 5.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.0f, 6.0f));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(24.0f / 255.0f, 24.0f / 255.0f, 26.0f / 255.0f, 0.94f));
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(48.0f / 255.0f, 48.0f / 255.0f, 52.0f / 255.0f, 0.85f));
+
+    if (ImGui::BeginChild("##floating_uv_bar", ImVec2(barW, barH), true, ImGuiWindowFlags_NoScrollbar)) {
+        ImGui::AlignTextToFramePadding();
+
+        size_t seamCount = m_lowPolyMesh.cutSeams.size();
+        char seamStr[32];
+        snprintf(seamStr, sizeof(seamStr), "%zu Seams", seamCount);
+        BakerUI::StatusPill(seamStr, seamCount > 0 ? BakerUI::Hex(0x4CC3A6) : BakerUI::Hex(0x888888));
+        ImGui::SameLine(0, 8.0f);
+
+        char islStr[32];
+        snprintf(islStr, sizeof(islStr), "%zu Islands", m_currentIslands.size());
+        BakerUI::StatusPill(islStr, m_currentIslands.empty() ? BakerUI::Hex(0x888888) : BakerUI::Hex(0x4E92F9));
+        ImGui::SameLine(0, 12.0f);
+
+        if (BakerUI::PrimaryButton("Unwrap (Ctrl+U)", 115, 24)) {
+            UnwrapMesh();
+        }
+        ImGui::SameLine(0, 6.0f);
+
+        if (BakerUI::SecondaryButton("Pack (Ctrl+P)", 105, 24)) {
+            PackUVs();
+        }
+        ImGui::SameLine(0, 6.0f);
+
+        if (BakerUI::SecondaryButton("Export OBJ", 90, 24)) {
+            ExportUnwrappedOBJ();
+        }
+    }
+    ImGui::EndChild();
+    ImGui::PopStyleColor(2);
+    ImGui::PopStyleVar(2);
 }
 
 void UIManager::RenderMarkingMenu() {

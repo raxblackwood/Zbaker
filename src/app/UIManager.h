@@ -51,6 +51,7 @@ public:
 private:
     void RenderOutlinerPanel();
     void RenderViewportPanel();
+    void RenderFloatingUVBar(const ImVec2& origin, const ImVec2& avail);
     void Render2DUVCanvas(const ImVec2& origin, const ImVec2& size);
     void RenderMeshPanel();
     void RenderSettingsPanel();
@@ -130,6 +131,7 @@ private:
     std::string m_bakeStatus = "Ready";
     std::vector<std::string> m_logEntries;
     BakerUI::ShellState m_shellState;
+    BakerUI::ShellState::AppTab m_prevActiveTab = BakerUI::ShellState::AppTab::Baking;
 
     // UV Cutting & Packing State
     std::pair<uint32_t, uint32_t> m_lastSelectedEdge = { UINT32_MAX, UINT32_MAX };
