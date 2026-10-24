@@ -89,6 +89,23 @@ The UI transitions through 6 distinct operational states:
 5. **Results**: Maps saved to disk; viewport updates with normal map preview; green logs displayed.
 6. **Error**: Missing UVs or read errors; red status pills and warning tooltips displayed.
 
+### 2.5 Context-Aware Workspace Segregation
+The interface strictly partitions tools, menus, panels, and floating HUD elements between two primary operational workspaces.
+
+#### Bake Project Workspace
+- **Top Main Menus**: `File`, `Bake` (Start Bake, Clear Normal Preview), `View` (Outliner, Mesh Ingestion, Bake Parameters, Output Log, UDIM Layout), and `Help`.
+- **Viewport Overlay Toolbar**: Displays mesh visibility chips (`High`, `Low`, `Wire`, `Cage`, `Grid`, `Baked Normals`), interactive tools (`Navigate`, `Paint Cage`, `Paint Skew`), and studio shading mode combo.
+- **Right Panels**: Shows `Mesh Ingestion` and `Bake Parameters`.
+- **Bottom HUD**: Prominent `FloatingBakeBar` with tile count, resolution, and orange `[START BAKE]` button / animated progress bar.
+- **Focus**: Defaults viewport to `View3D` with focus on `Output Log`.
+
+#### UV Cut & Pack Workspace
+- **Top Main Menus**: `File`, `Edit` (Undo, Redo, Select Loop, Select Ring), `UV` (Auto Seams, Cut Seams, Sew Seams, Clear Seams, Conformal Unwrap, Pack UDIMs), `View`, and `Help`.
+- **Viewport Overlay Toolbar**: Displays geometry chips (`Low`, `Wire`, `Seams`, `Grid`), history buttons (`Undo`, `Redo`), interactive UV tools (`Navigate`, `Cut Seam`, `Curve Cut`), and studio shading mode combo.
+- **Right Panels**: Shows `UV Tool` with Maya gesture cutting, 3D surface curves, conformal unwrap, MaxRects packing, and mesh export.
+- **Bottom HUD**: Sleek `FloatingUVBar` displaying live seam count, island count, `[Unwrap (Ctrl+U)]`, `[Pack (Ctrl+P)]`, and `[Export OBJ]`.
+- **Focus**: Defaults viewport to `Split 3D | 2D` with focus on `UDIM Layout`.
+
 ---
 
 ## 3. Normal Map Seam Resolution & Marmoset Alignment
