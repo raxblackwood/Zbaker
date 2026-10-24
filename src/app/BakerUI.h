@@ -279,7 +279,14 @@ inline bool BeginSectionCard(const char* label, const char* id, bool defaultOpen
     ImGui::PushStyleColor(ImGuiCol_ChildBg, Hex(0x222222)); // Dark card body interior
     bool childOpen = ImGui::BeginChild(childId.c_str(), ImVec2(0, 0),
         ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding);
-    return childOpen;
+    if (!childOpen) {
+        ImGui::EndChild();
+        ImGui::PopStyleColor(2);
+        ImGui::PopStyleVar(2);
+        ImGui::Dummy(ImVec2(0, 4.0f));
+        return false;
+    }
+    return true;
 }
 
 inline void EndSectionCard() {

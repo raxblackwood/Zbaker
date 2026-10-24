@@ -133,7 +133,7 @@ private:
     BakerUI::ShellState m_shellState;
     BakerUI::ShellState::AppTab m_prevActiveTab = BakerUI::ShellState::AppTab::Baking;
 
-    // UV Cutting & Packing State
+    // UV Cutting & Packing State (ZenUV & UVPackmaster Facilities)
     std::pair<uint32_t, uint32_t> m_lastSelectedEdge = { UINT32_MAX, UINT32_MAX };
     bool m_hasLastSelectedEdge = false;
     float m_seamAngleThreshold = 60.0f;
@@ -144,6 +144,19 @@ private:
     std::string m_uvStatusMessage = "Ready";
     int m_relaxIterations = 40;
     bool m_focusUVTab = false;
+
+    // ZenUV & UVPM Pro Features
+    float m_targetTexelDensity = 10.24f; // px/cm (default for 2K map)
+    float m_calculatedTexelDensity = 0.0f;
+    bool m_lockOverlapping = true;
+    bool m_showDistortionHeatmap = false;
+    void CalculateTexelDensity();
+    void SetTargetTexelDensity(float targetTD);
+    void EqualizeTexelDensity();
+    void StackIdenticalIslands();
+    void SeparateOverlappingIslands();
+    void StraightenIslands();
+    void OrientIslandsToWorld();
 
     // UV Surface Curves State
     CurveManager m_curveManager;

@@ -92,6 +92,11 @@ The UI transitions through 6 distinct operational states:
 ### 2.5 Context-Aware Workspace Segregation
 The interface strictly partitions tools, menus, panels, and floating HUD elements between two primary operational workspaces.
 
+#### Shared Persistent Outliner
+- **Scene Outliner (`Scene Outliner###outliner`)**: Docked into `rightTop` and persistent across both workspaces.
+- In Bake Project mode, it displays the full scene hierarchy including Bake Groups, High-Poly sculpt, Low-Poly mesh, and Cage envelopes with visibility toggles and opacity controls.
+- In UV Cut & Pack mode, it displays the active Low-Poly target mesh, detected UDIM tiles checklist, marked seams count, selected edges count, and reference sculpt toggle.
+
 #### Bake Project Workspace
 - **Top Main Menus**: `File`, `Bake` (Start Bake, Clear Normal Preview), `View` (Outliner, Mesh Ingestion, Bake Parameters, Output Log, UDIM Layout), and `Help`.
 - **Viewport Overlay Toolbar**: Displays mesh visibility chips (`High`, `Low`, `Wire`, `Cage`, `Grid`, `Baked Normals`), interactive tools (`Navigate`, `Paint Cage`, `Paint Skew`), and studio shading mode combo.
@@ -102,9 +107,34 @@ The interface strictly partitions tools, menus, panels, and floating HUD element
 #### UV Cut & Pack Workspace
 - **Top Main Menus**: `File`, `Edit` (Undo, Redo, Select Loop, Select Ring), `UV` (Auto Seams, Cut Seams, Sew Seams, Clear Seams, Conformal Unwrap, Pack UDIMs), `View`, and `Help`.
 - **Viewport Overlay Toolbar**: Displays geometry chips (`Low`, `Wire`, `Seams`, `Grid`), history buttons (`Undo`, `Redo`), interactive UV tools (`Navigate`, `Cut Seam`, `Curve Cut`), and studio shading mode combo.
-- **Right Panels**: Shows `UV Tool` with Maya gesture cutting, 3D surface curves, conformal unwrap, MaxRects packing, and mesh export.
+- **Right Panels**: Shows `UV Tool` with Maya gesture cutting, 3D surface curves, conformal unwrap, ZenUV texel density system, island stacking/alignment, and UVPackmaster 4 packing.
 - **Bottom HUD**: Sleek `FloatingUVBar` displaying live seam count, island count, `[Unwrap (Ctrl+U)]`, `[Pack (Ctrl+P)]`, and `[Export OBJ]`.
 - **Focus**: Defaults viewport to `Split 3D | 2D` with focus on `UDIM Layout`.
+
+### 2.6 ImGui Window Stack Invariant & Section Card Lifecycle
+- **Problem**: When switching dock tabs to `Bake Parameters`, an inactive `Mesh Ingestion` child window caused Dear ImGui assertions (`Must call EndChild() and not End()!`, `Missing PopStyleColor()`, `Missing PopStyleVar()`) that followed the mouse cursor.
+- **Root Cause**: In Dear ImGui, `BeginChild` returns false if the child or parent window is clipped or inactive.
+- The previous implementation returned `false` on early clipping without calling `EndChild()`, causing the caller to skip `EndSectionCard()` while the child remained unclosed on ImGui's stack.
+- Additionally, panel rendering methods (`RenderMeshPanel`, `RenderSettingsPanel`, `RenderOutlinerPanel`, `RenderUVCutAndPackPanel`, `RenderUDIMCanvasPanel`, `RenderBakeProgressPanel`) did not guard against `!ImGui::Begin()`.
+- **Resolution**:
+  1. `BeginSectionCard` now guarantees immediate cleanup (`EndChild()`, `PopStyleColor(2)`, `PopStyleVar(2)`) if `BeginChild` returns false, ensuring zero unclosed child windows on stack.
+  2. All panel rendering functions now cleanly early-exit with `if (!ImGui::Begin(...)) { ImGui::End(); return; }`.
+
+### 2.7 ZenUV and UVPackmaster 4 DCC Feature Parity
+- **Texel Density Toolkit**:
+  - Live calculation of 3D world area versus 2D UV area.
+  - Target Texel Density in px/cm with one-click uniform scaling across all UV shells.
+  - Equalize Texel Density button to eliminate texture stretching across multi-UDIM assets.
+- **Island Stacking & Overlap Arbitration**:
+  - Topological isomorphism detection to stack identical UV shells at identical UV coordinates for shared texture budget.
+  - Overlap separation mode to offset duplicate shells by +1 along U axis into isolated bake tiles.
+  - Straighten Islands (ZenUV Quadrify/Reshape) via 2D covariance principal axis alignment.
+  - Orient Islands to 3D World Up (+Y) vector.
+- **Advanced Heuristic Packing**:
+  - Configurable rotation search (0°, 90°, 45°, Free 1°).
+  - Lock overlapping islands option to preserve stacked symmetry shells during repack.
+  - Fixed scale packing mode to strictly preserve author-specified Texel Density.
+  - Multi-UDIM packing across tiles 1001-1010 with MaxRects BSSF heuristic search.
 
 ---
 

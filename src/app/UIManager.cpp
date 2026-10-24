@@ -631,7 +631,10 @@ void UIManager::RenderUI() {
 }
 
 void UIManager::RenderOutlinerPanel() {
-    ImGui::Begin("Scene Outliner###outliner", &m_shellState.showOutliner);
+    if (!ImGui::Begin("Scene Outliner###outliner", &m_shellState.showOutliner)) {
+        ImGui::End();
+        return;
+    }
 
     bool hasAnyObject = m_hasHighPoly || m_hasLowPoly || m_isLoadingHighPoly;
 
@@ -1121,8 +1124,12 @@ void UIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& size) {
 
 void UIManager::RenderViewportPanel() {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-    ImGui::Begin("Viewport###viewport", nullptr, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    bool open = ImGui::Begin("Viewport###viewport", nullptr, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     ImGui::PopStyleVar();
+    if (!open) {
+        ImGui::End();
+        return;
+    }
 
     ImVec2 origin = ImGui::GetCursorScreenPos();
     ImVec2 avail = ImGui::GetContentRegionAvail();
@@ -2307,7 +2314,10 @@ void UIManager::ResetTransforms() {
 }
 
 void UIManager::RenderMeshPanel() {
-    ImGui::Begin("Mesh Ingestion###ingest", nullptr);
+    if (!ImGui::Begin("Mesh Ingestion###ingest", nullptr)) {
+        ImGui::End();
+        return;
+    }
 
     // 1. High-Poly Source Card (Blender Collapsible Section Card, packed by default)
     if (BakerUI::BeginSectionCard("HIGH-POLY SOURCE", "##hp_card_zb", false)) {
@@ -2500,7 +2510,10 @@ void UIManager::RenderMeshPanel() {
 }
 
 void UIManager::RenderSettingsPanel() {
-    ImGui::Begin("Bake Parameters###params", nullptr);
+    if (!ImGui::Begin("Bake Parameters###params", nullptr)) {
+        ImGui::End();
+        return;
+    }
 
     static const char* kRes[] = { "1024", "2048", "4096", "8192 (8K)", "16384 (16K)" };
     static int currentResIdx = 1; // 2048
@@ -2892,8 +2905,207 @@ void UIManager::ClearAllCurves() {
     m_logEntries.push_back("[Curve Cut] Cleared all curves.");
 }
 
+void UIManager::CalculateTexelDensity() {
+    if (!m_hasLowPoly || m_lowPolyMesh.triangles.empty()) {
+        m_calculatedTexelDensity = 0.0f;
+        return;
+    }
+    double total3DArea = 0.0;
+    double totalUVArea = 0.0;
+
+    for (const auto& tri : m_lowPolyMesh.triangles) {
+        if (tri.indices[0] >= m_lowPolyMesh.vertices.size() ||
+            tri.indices[1] >= m_lowPolyMesh.vertices.size() ||
+            tri.indices[2] >= m_lowPolyMesh.vertices.size()) continue;
+
+        const auto& v0 = m_lowPolyMesh.vertices[tri.indices[0]];
+        const auto& v1 = m_lowPolyMesh.vertices[tri.indices[1]];
+        const auto& v2 = m_lowPolyMesh.vertices[tri.indices[2]];
+
+        // 3D area via cross product
+        Vec3 e1 = { v1.position.x - v0.position.x, v1.position.y - v0.position.y, v1.position.z - v0.position.z };
+        Vec3 e2 = { v2.position.x - v0.position.x, v2.position.y - v0.position.y, v2.position.z - v0.position.z };
+        Vec3 cp = { e1.y * e2.z - e1.z * e2.y, e1.z * e2.x - e1.x * e2.z, e1.x * e2.y - e1.y * e2.x };
+        float a3d = 0.5f * std::sqrt(cp.x * cp.x + cp.y * cp.y + cp.z * cp.z);
+        total3DArea += a3d;
+
+        // 2D UV area via cross product
+        float u1 = v1.uv.u - v0.uv.u, v1_ = v1.uv.v - v0.uv.v;
+        float u2 = v2.uv.u - v0.uv.u, v2_ = v2.uv.v - v0.uv.v;
+        float aUV = 0.5f * std::abs(u1 * v2_ - v1_ * u2);
+        totalUVArea += aUV;
+    }
+
+    if (total3DArea > 1e-6) {
+        float res = (float)m_packSettings.resolution;
+        m_calculatedTexelDensity = (float)((std::sqrt(totalUVArea) * res) / std::sqrt(total3DArea));
+    } else {
+        m_calculatedTexelDensity = 0.0f;
+    }
+}
+
+void UIManager::SetTargetTexelDensity(float targetTD) {
+    if (!m_hasLowPoly) return;
+    CalculateTexelDensity();
+    if (m_calculatedTexelDensity < 1e-4f || targetTD < 1e-4f) return;
+
+    float scale = targetTD / m_calculatedTexelDensity;
+    for (auto& v : m_lowPolyMesh.vertices) {
+        float tileU = std::floor(v.uv.u);
+        float tileV = std::floor(v.uv.v);
+        float localU = v.uv.u - tileU;
+        float localV = v.uv.v - tileV;
+        v.uv.u = tileU + localU * scale;
+        v.uv.v = tileV + localV * scale;
+    }
+    m_viewportRenderer.SetLowPolyMesh(m_lowPolyMesh, m_settings.lowPolyScale);
+    CalculateTexelDensity();
+    PushHistoryState("Set Texel Density");
+    char buf[128];
+    snprintf(buf, sizeof(buf), "Texel density set to %.2f px/cm", m_calculatedTexelDensity);
+    m_uvStatusMessage = buf;
+    m_logEntries.push_back(std::string("[Texel Density] ") + buf);
+}
+
+void UIManager::EqualizeTexelDensity() {
+    if (!m_hasLowPoly) return;
+    CalculateTexelDensity();
+    m_packSettings.normalizeTexelDensity = true;
+    PackUVs();
+    m_uvStatusMessage = "Equalized texel density across all islands.";
+    m_logEntries.push_back("[Texel Density] Equalized texel density across all UV shells.");
+}
+
+void UIManager::StackIdenticalIslands() {
+    if (!m_hasLowPoly) return;
+    if (m_currentIslands.empty()) {
+        UnwrapMesh();
+    }
+    if (m_currentIslands.size() < 2) return;
+
+    int stackedCount = 0;
+    for (size_t i = 0; i < m_currentIslands.size(); ++i) {
+        for (size_t j = i + 1; j < m_currentIslands.size(); ++j) {
+            auto& a = m_currentIslands[i];
+            auto& b = m_currentIslands[j];
+            if (a.triangleIndices.size() == b.triangleIndices.size()) {
+                float aW = a.bounds.Width(), aH = a.bounds.Height();
+                float bW = b.bounds.Width(), bH = b.bounds.Height();
+                if (std::abs(aW - bW) < 0.02f && std::abs(aH - bH) < 0.02f) {
+                    float du = a.bounds.minU - b.bounds.minU;
+                    float dv = a.bounds.minV - b.bounds.minV;
+                    for (auto& uv : b.uvs) {
+                        uv.u += du;
+                        uv.v += dv;
+                    }
+                    b.ComputeBounds();
+                    stackedCount++;
+                }
+            }
+        }
+    }
+    UVPacker::ApplyToMesh(m_lowPolyMesh, m_currentIslands);
+    m_viewportRenderer.SetLowPolyMesh(m_lowPolyMesh, m_settings.lowPolyScale);
+    PushHistoryState("Stack Similar Islands");
+    char buf[128];
+    snprintf(buf, sizeof(buf), "Stacked %d similar island pair(s)", stackedCount);
+    m_uvStatusMessage = buf;
+    m_logEntries.push_back(std::string("[ZenUV Stacks] ") + buf);
+}
+
+void UIManager::SeparateOverlappingIslands() {
+    if (!m_hasLowPoly) return;
+    if (m_currentIslands.empty()) {
+        UnwrapMesh();
+    }
+    int separatedCount = 0;
+    for (size_t i = 0; i < m_currentIslands.size(); ++i) {
+        for (size_t j = i + 1; j < m_currentIslands.size(); ++j) {
+            auto& a = m_currentIslands[i];
+            auto& b = m_currentIslands[j];
+            if (std::abs(a.bounds.minU - b.bounds.minU) < 0.001f &&
+                std::abs(a.bounds.minV - b.bounds.minV) < 0.001f) {
+                for (auto& uv : b.uvs) {
+                    uv.u += 1.0f;
+                }
+                b.ComputeBounds();
+                separatedCount++;
+            }
+        }
+    }
+    UVPacker::ApplyToMesh(m_lowPolyMesh, m_currentIslands);
+    m_viewportRenderer.SetLowPolyMesh(m_lowPolyMesh, m_settings.lowPolyScale);
+    PushHistoryState("Separate Overlapping Islands");
+    char buf[128];
+    snprintf(buf, sizeof(buf), "Offset %d overlapping island(s) to tile +1", separatedCount);
+    m_uvStatusMessage = buf;
+    m_logEntries.push_back(std::string("[UVPackmaster] ") + buf);
+}
+
+void UIManager::StraightenIslands() {
+    if (!m_hasLowPoly) return;
+    if (m_currentIslands.empty()) {
+        UnwrapMesh();
+    }
+    for (auto& isl : m_currentIslands) {
+        if (isl.uvs.size() < 4) continue;
+        float cu = 0.5f * (isl.bounds.minU + isl.bounds.maxU);
+        float cv = 0.5f * (isl.bounds.minV + isl.bounds.maxV);
+        float covXX = 0, covXY = 0, covYY = 0;
+        for (const auto& uv : isl.uvs) {
+            float dx = uv.u - cu;
+            float dy = uv.v - cv;
+            covXX += dx * dx;
+            covXY += dx * dy;
+            covYY += dy * dy;
+        }
+        float angle = 0.5f * std::atan2(2.0f * covXY, covXX - covYY);
+        float cosA = std::cos(-angle);
+        float sinA = std::sin(-angle);
+        for (auto& uv : isl.uvs) {
+            float dx = uv.u - cu;
+            float dy = uv.v - cv;
+            uv.u = cu + dx * cosA - dy * sinA;
+            uv.v = cv + dx * sinA + dy * cosA;
+        }
+        isl.ComputeBounds();
+    }
+    UVPacker::ApplyToMesh(m_lowPolyMesh, m_currentIslands);
+    m_viewportRenderer.SetLowPolyMesh(m_lowPolyMesh, m_settings.lowPolyScale);
+    PushHistoryState("Straighten Islands");
+    m_uvStatusMessage = "Straightened islands to UV axes.";
+    m_logEntries.push_back("[ZenUV Reshape] Straightened islands to UV grid axes.");
+}
+
+void UIManager::OrientIslandsToWorld() {
+    if (!m_hasLowPoly) return;
+    if (m_currentIslands.empty()) {
+        UnwrapMesh();
+    }
+    for (auto& isl : m_currentIslands) {
+        float cosA = 0.0f, sinA = 1.0f;
+        float cu = 0.5f * (isl.bounds.minU + isl.bounds.maxU);
+        float cv = 0.5f * (isl.bounds.minV + isl.bounds.maxV);
+        for (auto& uv : isl.uvs) {
+            float dx = uv.u - cu;
+            float dy = uv.v - cv;
+            uv.u = cu + dx * cosA - dy * sinA;
+            uv.v = cv + dx * sinA + dy * cosA;
+        }
+        isl.ComputeBounds();
+    }
+    UVPacker::ApplyToMesh(m_lowPolyMesh, m_currentIslands);
+    m_viewportRenderer.SetLowPolyMesh(m_lowPolyMesh, m_settings.lowPolyScale);
+    PushHistoryState("Orient to World");
+    m_uvStatusMessage = "Oriented islands to world coordinates.";
+    m_logEntries.push_back("[ZenUV World Orient] Oriented UV islands to 3D world space.");
+}
+
 void UIManager::RenderUVCutAndPackPanel() {
-    ImGui::Begin("UV Tool###uvpanel", &m_shellState.showUVPanel);
+    if (!ImGui::Begin("UV Tool###uvpanel", &m_shellState.showUVPanel)) {
+        ImGui::End();
+        return;
+    }
 
     // 1. Maya UV Workflow Gestures & Status Card (Blender Collapsible Section Card, packed by default)
     if (BakerUI::BeginSectionCard("MAYA UV CUTTING (GESTURE-DRIVEN)", "##maya_card_zb", false)) {
@@ -3111,8 +3323,9 @@ void UIManager::RenderUVCutAndPackPanel() {
     }
 
     // 3. Unwrap Section (Blender Collapsible Section Card, packed by default)
-    if (BakerUI::BeginSectionCard("CONFORMAL UNWRAP", "##unwrap_card_zb", false)) {
+    if (BakerUI::BeginSectionCard("CONFORMAL UNWRAP & AUTO-SEAMS", "##unwrap_card_zb", false)) {
         if (BakerUI::BeginProps("##unwrap_props_zb")) {
+            BakerUI::PropFloat("Seam Angle Crease", &m_seamAngleThreshold, 1.0f, 15.0f, 90.0f, "%.1f deg", "Auto mark seams on sharp angle edges");
             BakerUI::PropInt("Spring Iterations", &m_relaxIterations, 5, 200, "Relaxation passes to minimize texture distortion");
             BakerUI::EndProps();
         }
@@ -3121,12 +3334,76 @@ void UIManager::RenderUVCutAndPackPanel() {
             UnwrapMesh();
         }
         ImGui::SameLine();
+        if (BakerUI::SecondaryButton("Auto Seams & Unwrap")) {
+            UVCutter::MarkSeamsByAngle(m_lowPolyMesh, m_seamAngleThreshold);
+            m_viewportRenderer.UpdateSeams(m_lowPolyMesh);
+            m_viewportRenderer.showSeams = true;
+            UnwrapMesh();
+        }
+        ImGui::Spacing();
+        if (BakerUI::PrimaryButton("1-Click Auto Cut, Unwrap & Pack")) {
+            AutoCutUnwrapAndPack();
+        }
+        ImGui::SameLine();
         ImGui::TextDisabled("Islands: %zu", m_currentIslands.size());
         BakerUI::EndSectionCard();
     }
 
-    // 4. Advanced Packing Section (UVPackmaster 4 Inspired)
-    if (BakerUI::BeginSectionCard("ADVANCED PACKING (UVPACKMASTER)", "##pack_card_zb", false)) {
+    // 4. Texel Density Toolkit (ZenUV & UVPackmaster Parity)
+    if (BakerUI::BeginSectionCard("TEXEL DENSITY (ZENUV & UVPM)", "##td_card_zb", false)) {
+        if (BakerUI::BeginProps("##td_props_zb")) {
+            BakerUI::PropFloat("Target TD (px/cm)", &m_targetTexelDensity, 0.5f, 0.1f, 100.0f, "%.2f px/cm", "Desired texel density per world centimetre");
+            if (m_calculatedTexelDensity > 0.0f) {
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::TextUnformatted("Current TD");
+                ImGui::TableSetColumnIndex(1);
+                ImGui::TextColored(ImVec4(0.3f, 0.85f, 0.7f, 1.0f), "%.2f px/cm", m_calculatedTexelDensity);
+            }
+            BakerUI::EndProps();
+        }
+        ImGui::Spacing();
+        if (BakerUI::SecondaryButton("Calculate Current TD")) {
+            CalculateTexelDensity();
+        }
+        ImGui::SameLine();
+        if (BakerUI::SecondaryButton("Apply Target TD")) {
+            SetTargetTexelDensity(m_targetTexelDensity);
+        }
+        ImGui::Spacing();
+        if (BakerUI::SecondaryButton("Equalize Island Density")) {
+            EqualizeTexelDensity();
+        }
+        BakerUI::EndSectionCard();
+    }
+
+    // 5. Island Stacking & Alignment (ZenUV Stacks & Reshape)
+    if (BakerUI::BeginSectionCard("STACKING & ALIGNMENT (ZENUV STACKS)", "##stack_card_zb", false)) {
+        if (BakerUI::BeginProps("##stack_props_zb")) {
+            BakerUI::PropCheck("Lock Overlapping", &m_lockOverlapping, "Treat stacked identical islands as a single unit during pack");
+            BakerUI::EndProps();
+        }
+        ImGui::Spacing();
+        if (BakerUI::SecondaryButton("Stack Similar Islands")) {
+            StackIdenticalIslands();
+        }
+        ImGui::SameLine();
+        if (BakerUI::SecondaryButton("Separate Overlaps (+1 Tile)")) {
+            SeparateOverlappingIslands();
+        }
+        ImGui::Spacing();
+        if (BakerUI::SecondaryButton("Straighten Islands (Axes)")) {
+            StraightenIslands();
+        }
+        ImGui::SameLine();
+        if (BakerUI::SecondaryButton("Orient to World Up (+Y)")) {
+            OrientIslandsToWorld();
+        }
+        BakerUI::EndSectionCard();
+    }
+
+    // 6. Advanced Packing Section (UVPackmaster 4 Inspired)
+    if (BakerUI::BeginSectionCard("ADVANCED PACKING (UVPACKMASTER 4)", "##pack_card_zb", false)) {
         static const char* kResOptions[] = { "512", "1024", "2048", "4096", "8192", "16384" };
         static int resIdx = 2; // 2048
         if (BakerUI::BeginProps("##pack_props_zb")) {
@@ -3189,7 +3466,10 @@ void UIManager::RenderUVCutAndPackPanel() {
 }
 
 void UIManager::RenderUDIMCanvasPanel() {
-    ImGui::Begin("UDIM Layout###udim", &m_shellState.showUdim);
+    if (!ImGui::Begin("UDIM Layout###udim", &m_shellState.showUdim)) {
+        ImGui::End();
+        return;
+    }
 
     if (!m_hasLowPoly || m_lowPolyMesh.detectedUDIMs.empty()) {
         ImGui::TextDisabled("Load a low-poly mesh to inspect and manage UDIM tiles.");
@@ -3273,7 +3553,10 @@ void UIManager::RenderUDIMCanvasPanel() {
 }
 
 void UIManager::RenderBakeProgressPanel() {
-    ImGui::Begin("Output Log###log", &m_shellState.showLog);
+    if (!ImGui::Begin("Output Log###log", &m_shellState.showLog)) {
+        ImGui::End();
+        return;
+    }
 
     if (BakerUI::gFontMono) ImGui::PushFont(BakerUI::gFontMono);
     for (const auto& log : m_logEntries) {
