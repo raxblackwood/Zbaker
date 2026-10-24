@@ -112,39 +112,41 @@ float4 PSMain(PS_INPUT input) : SV_TARGET {
         float lineDist = min(grid.x, grid.y);
         float gridLine = 1.0f - saturate(lineDist);
 
-        // Cell LOD fade: smoothly fade when a cell shrinks to less than 2.5 screen pixels to eliminate moire
+        // Smoothly fade line intensity when cells shrink to prevent moire
         float cellPixels = 1.0f / max(fw.x, fw.y);
-        float cellFade = smoothstep(1.5f, 4.0f, cellPixels);
-        gridLine *= cellFade;
+        float lodFade = smoothstep(1.0f, 3.0f, cellPixels);
+        gridLine *= lodFade;
 
         // Red X Axis (Z == 0) and Green Z Axis (X == 0)
         float2 dCoord = max(fwidth(coord), 0.000001f);
         float axisX = 1.0f - saturate(abs(input.WorldPos.z) / dCoord.y);
         float axisZ = 1.0f - saturate(abs(input.WorldPos.x) / dCoord.x);
 
-        // Single smooth continuous distance fade into the dark background (Blender horizon fade)
-        float fadeStart = max(GridScale * 14.0f, 30.0f);
-        float fadeEnd   = max(GridScale * 45.0f, 110.0f);
+        // Unified smooth continuous distance fade into the dark background (Blender horizon fade)
+        float fadeStart = max(GridScale * 1.5f, 45.0f);
+        float fadeEnd   = max(GridScale * 3.5f, 105.0f);
         float distFade  = 1.0f - smoothstep(fadeStart, fadeEnd, distToCam);
 
         if (distFade <= 0.001f) discard;
 
         // Blender grid lines: LIGHTER than the background (crisp light-grey over dark viewport)
-        float3 col = float3(0.42f, 0.42f, 0.45f);
-        float alpha = gridLine * 0.70f;
+        float3 col = float3(0.40f, 0.40f, 0.43f);
+        float lineAlpha = gridLine * 0.65f;
 
         // Red X Axis (along Z = 0 in DX coordinate space)
         if (axisX > 0.001f) {
             col = lerp(col, float3(0.85f, 0.28f, 0.28f), axisX);
-            alpha = max(alpha, axisX * 0.90f);
+            // Axis line matches grid LOD fade so it never outlasts the grid
+            lineAlpha = max(lineAlpha, axisX * 0.85f * lodFade);
         }
         // Green Z Axis (along X = 0 in DX coordinate space)
         if (axisZ > 0.001f) {
             col = lerp(col, float3(0.38f, 0.72f, 0.22f), axisZ);
-            alpha = max(alpha, axisZ * 0.90f);
+            lineAlpha = max(lineAlpha, axisZ * 0.85f * lodFade);
         }
 
-        alpha *= distFade;
+        // Apply identical horizon distance fade to BOTH the grid and the axis lines
+        float alpha = lineAlpha * distFade;
         if (alpha < 0.002f) discard;
 
         return float4(col, alpha);
@@ -894,7 +896,7 @@ void ViewportRenderer::UpdateConstantBuffer(const DirectX::XMMATRIX& world, cons
         cb->ShadingMode = mode;
         cb->Opacity = (mode == 4 ? 0.9f : (mode == 5 ? 0.35f : color.w));
         cb->HasNormalMap = hasNormalMap;
-        cb->GridScale = (m_sceneRadius > 1e-4f ? m_sceneRadius : 1.0f);
+        cb->GridScale = (std::max)(m_cameraDistance, 1.0f);
         m_context->Unmap(m_constantBuffer, 0);
     }
 }
