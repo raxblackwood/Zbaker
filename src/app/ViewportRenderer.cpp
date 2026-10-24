@@ -110,12 +110,12 @@ float4 PSMain(PS_INPUT input) : SV_TARGET {
         // Screen-space 1-pixel analytic line anti-aliasing (exact Blender line width)
         float2 grid = abs(frac(uv - 0.5f) - 0.5f) / fw;
         float lineDist = min(grid.x, grid.y);
-        float line = 1.0f - saturate(lineDist);
+        float gridLine = 1.0f - saturate(lineDist);
 
         // Cell LOD fade: smoothly fade when a cell shrinks to less than 2.5 screen pixels to eliminate moire
         float cellPixels = 1.0f / max(fw.x, fw.y);
         float cellFade = smoothstep(1.5f, 4.0f, cellPixels);
-        line *= cellFade;
+        gridLine *= cellFade;
 
         // Red X Axis (Z == 0) and Green Z Axis (X == 0)
         float2 dCoord = max(fwidth(coord), 0.000001f);
@@ -131,7 +131,7 @@ float4 PSMain(PS_INPUT input) : SV_TARGET {
 
         // Blender grid lines: LIGHTER than the background (crisp light-grey over dark viewport)
         float3 col = float3(0.42f, 0.42f, 0.45f);
-        float alpha = line * 0.70f;
+        float alpha = gridLine * 0.70f;
 
         // Red X Axis (along Z = 0 in DX coordinate space)
         if (axisX > 0.001f) {
@@ -302,12 +302,19 @@ bool ViewportRenderer::CreateShaders() {
     );
 
     if (FAILED(hr)) {
-        if (errorBlob) errorBlob->Release();
+        if (errorBlob) {
+            m_lastError = std::string((const char*)errorBlob->GetBufferPointer(), errorBlob->GetBufferSize());
+            OutputDebugStringA(m_lastError.c_str());
+            errorBlob->Release();
+        } else {
+            m_lastError = "D3DCompile VSMain failed without error blob.";
+        }
         return false;
     }
 
     hr = m_device->CreateVertexShader(vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(), nullptr, &m_vertexShader);
     if (FAILED(hr)) {
+        m_lastError = "CreateVertexShader failed (HRESULT: " + std::to_string(hr) + ")";
         vsBlob->Release();
         return false;
     }
@@ -323,7 +330,10 @@ bool ViewportRenderer::CreateShaders() {
 
     hr = m_device->CreateInputLayout(layout, 6, vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(), &m_inputLayout);
     vsBlob->Release();
-    if (FAILED(hr)) return false;
+    if (FAILED(hr)) {
+        m_lastError = "CreateInputLayout failed (HRESULT: " + std::to_string(hr) + ")";
+        return false;
+    }
 
     ID3DBlob* psBlob = nullptr;
     hr = D3DCompile(
@@ -333,13 +343,22 @@ bool ViewportRenderer::CreateShaders() {
     );
 
     if (FAILED(hr)) {
-        if (errorBlob) errorBlob->Release();
+        if (errorBlob) {
+            m_lastError = std::string((const char*)errorBlob->GetBufferPointer(), errorBlob->GetBufferSize());
+            OutputDebugStringA(m_lastError.c_str());
+            errorBlob->Release();
+        } else {
+            m_lastError = "D3DCompile PSMain failed without error blob.";
+        }
         return false;
     }
 
     hr = m_device->CreatePixelShader(psBlob->GetBufferPointer(), psBlob->GetBufferSize(), nullptr, &m_pixelShader);
     psBlob->Release();
-    if (FAILED(hr)) return false;
+    if (FAILED(hr)) {
+        m_lastError = "CreatePixelShader failed (HRESULT: " + std::to_string(hr) + ")";
+        return false;
+    }
 
     // Constant buffer
     D3D11_BUFFER_DESC cbDesc = {};
@@ -349,7 +368,11 @@ bool ViewportRenderer::CreateShaders() {
     cbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
 
     hr = m_device->CreateBuffer(&cbDesc, nullptr, &m_constantBuffer);
-    return SUCCEEDED(hr);
+    if (FAILED(hr)) {
+        m_lastError = "CreateBuffer ConstantBuffer failed (HRESULT: " + std::to_string(hr) + ")";
+        return false;
+    }
+    return true;
 }
 
 bool ViewportRenderer::CreateRasterizerAndBlendStates() {

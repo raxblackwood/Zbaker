@@ -49,6 +49,7 @@ public:
     ID3D11ShaderResourceView* GetViewportSRV() const { return m_colorSRV; }
     int GetWidth() const { return m_vpWidth; }
     int GetHeight() const { return m_vpHeight; }
+    const std::string& GetLastError() const { return m_lastError; }
 
     // Camera control
     void HandleMouseInput(float deltaX, float deltaY, int buttonState, float wheelDelta);
@@ -165,6 +166,8 @@ private:
     DirectX::XMFLOAT3 m_lowPolyMax = { 10.0f, 10.0f, 10.0f };
     DirectX::XMFLOAT3 m_highPolyMin = { -10.0f, -10.0f, -10.0f };
     DirectX::XMFLOAT3 m_highPolyMax = { 10.0f, 10.0f, 10.0f };
+
+    std::string m_lastError;
 
     void FrameBounds(const DirectX::XMFLOAT3& minB, const DirectX::XMFLOAT3& maxB);
     void RecalculateSceneBounds();

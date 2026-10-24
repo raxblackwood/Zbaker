@@ -130,7 +130,12 @@ void UIManager::Initialize(ID3D11Device* device, ID3D11DeviceContext* context) {
         if (m_viewportRenderer.Initialize(device, context)) {
             m_logEntries.push_back("[Viewport] Interactive 3D Viewport initialized (Direct3D 11).");
         } else {
-            m_logEntries.push_back("[Error] Failed to initialize 3D Viewport.");
+            std::string err = m_viewportRenderer.GetLastError();
+            if (!err.empty()) {
+                m_logEntries.push_back("[Error] Failed to initialize 3D Viewport: " + err);
+            } else {
+                m_logEntries.push_back("[Error] Failed to initialize 3D Viewport.");
+            }
         }
     }
 }

@@ -147,7 +147,12 @@ void StandaloneUIManager::Initialize(ID3D11Device* device, ID3D11DeviceContext* 
         if (m_viewportRenderer.Initialize(device, context)) {
             m_logEntries.push_back("[DirectX 11] Viewport hardware acceleration initialized.");
         } else {
-            m_logEntries.push_back("[Error] Failed to initialize ViewportRenderer.");
+            std::string err = m_viewportRenderer.GetLastError();
+            if (!err.empty()) {
+                m_logEntries.push_back("[Error] Failed to initialize ViewportRenderer: " + err);
+            } else {
+                m_logEntries.push_back("[Error] Failed to initialize ViewportRenderer.");
+            }
         }
     }
 }
