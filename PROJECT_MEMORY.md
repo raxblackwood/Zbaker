@@ -4,8 +4,8 @@
 **Root Repository**: `e:\CODES\zbrush plugins\baker`  
 **Standalone Directory**: `E:\CODES\standalone_baker`  
 **ZBrush Plugin Directory**: `C:\Program Files\Maxon ZBrush 2026\ZStartup\ZPlugs64\UDIMBakerData`  
-**Last Updated**: `2026-10-21T17:35:00+05:30`  
-**Status**: `Active | Production Ready | Marmoset Seam Parity Verified | UI Handoff Package Complete`
+**Last Updated**: `2026-10-24T19:30:00+05:30`  
+**Status**: `Active | ZBrush Plugin Priority Focus | Standalone Paused | Production Ready`
 
 ---
 
@@ -16,8 +16,14 @@ Exporting 50M-100M polygon OBJs to external baking tools (Substance Painter, Mar
 **ZBrush UDIM Baker** is an enterprise hardware-accelerated baking companion:
 1. **Host ZPlugin**: A one-click button in ZBrush (`ZPlugin:UDIM Baker -> Launch UDIM Baker`).
 2. **Native C-ABI Bridge**: `UDIMBakerBridge.dll` streams high-poly cache data non-blocking via `DETACHED_PROCESS`.
-3. **Companion Viewport**: `UDIMBakerApp.exe` (and desktop `StandaloneBaker.exe`) featuring a Direct3D 11 3D viewport, 2D UDIM canvas, and a Blender Dark docking interface.
+3. **Companion Viewport**: `UDIMBakerApp.exe` featuring a Direct3D 11 3D viewport, 2D UDIM canvas, and a Blender Dark docking interface.
 4. **Hardware Ray-Tracing Core**: Intel Embree 3.13.5 multithreaded ray tracer with MikkTSpace tangent basis, bidirectional ray casting, closest-distance depth arbitration, and Jump Flooding dilation (JFA).
+
+### 1.1 Development Focus Directive (MANDATORY)
+Standalone application development is temporarily paused per user directive.
+All ongoing engineering, debugging, and feature development is strictly focused on the ZBrush plugin.
+Do not work on the standalone application until the user explicitly requests to resume standalone work.
+Once the plugin workflow and architecture are completely finalized, necessary adaptations will be applied back to the standalone application.
 
 ---
 

@@ -125,13 +125,13 @@ float4 PSMain(PS_INPUT input) : SV_TARGET {
         // Single smooth continuous distance fade into the dark background (Blender horizon fade)
         float fadeStart = max(GridScale * 14.0f, 30.0f);
         float fadeEnd   = max(GridScale * 45.0f, 110.0f);
-        float distFade  = smoothstep(fadeEnd, fadeStart, distToCam);
+        float distFade  = 1.0f - smoothstep(fadeStart, fadeEnd, distToCam);
 
         if (distFade <= 0.001f) discard;
 
-        // Blender grid lines: LIGHTER than the background (crisp light-grey #4D4D50 over #161616)
-        float3 col = float3(0.30f, 0.30f, 0.32f);
-        float alpha = line * 0.38f;
+        // Blender grid lines: LIGHTER than the background (crisp light-grey over dark viewport)
+        float3 col = float3(0.42f, 0.42f, 0.45f);
+        float alpha = line * 0.70f;
 
         // Red X Axis (along Z = 0 in DX coordinate space)
         if (axisX > 0.001f) {
@@ -386,14 +386,14 @@ bool ViewportRenderer::CreateRasterizerAndBlendStates() {
     dsd.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO;
     m_device->CreateDepthStencilState(&dsd, &m_depthNoWriteState);
 
-    // Alpha Blend State (for semi-transparent cage)
+    // Alpha Blend State (for semi-transparent cage & grid, preserving render target alpha)
     D3D11_BLEND_DESC bd = {};
     bd.RenderTarget[0].BlendEnable = TRUE;
     bd.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC_ALPHA;
     bd.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
     bd.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
-    bd.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
-    bd.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ZERO;
+    bd.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ZERO;
+    bd.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ONE;
     bd.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
     bd.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
     m_device->CreateBlendState(&bd, &m_alphaBlendState);
@@ -508,6 +508,8 @@ void ViewportRenderer::Resize(int width, int height) {
 void ViewportRenderer::SetLowPolyMesh(const LowPolyMesh& mesh, float scaleMultiplier) {
     m_lowPolyGPU.Release();
     m_lowPolyWireGPU.Release();
+    m_seamLineGPU.Release();
+    m_selectedEdgeGPU.Release();
     if (mesh.vertices.empty() || mesh.triangles.empty()) return;
 
     // Ensure wireframe lines are deduplicated per geometric edge
@@ -923,8 +925,8 @@ void ViewportRenderer::Render() {
     vp.MaxDepth = 1.0f;
     m_context->RSSetViewports(1, &vp);
 
-    // Blender Dark 3D Viewport background: deep dark gray RGB(22, 22, 22) Hex(#161616)
-    const float clearColor[4] = { 22.0f / 255.0f, 22.0f / 255.0f, 22.0f / 255.0f, 1.0f };
+    // Blender Dark 3D Viewport background: deep dark gray RGB(24, 24, 26) Hex(#18181A)
+    const float clearColor[4] = { 24.0f / 255.0f, 24.0f / 255.0f, 26.0f / 255.0f, 1.0f };
     m_context->ClearRenderTargetView(m_colorRTV, clearColor);
     m_context->ClearDepthStencilView(m_depthDSV, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
 
@@ -1088,6 +1090,10 @@ void ViewportRenderer::Render() {
             m_context->DrawIndexed(m_cageGPU.indexCount, 0, 0);
         }
     }
+
+    // Unbind render targets to prevent D3D11 pipeline hazard when ImGui samples color SRV
+    ID3D11RenderTargetView* nullRTV = nullptr;
+    m_context->OMSetRenderTargets(1, &nullRTV, nullptr);
 }
 
 void ViewportRenderer::ClearBakedNormalMap() {
