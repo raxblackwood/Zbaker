@@ -31,8 +31,23 @@ PosKey MakePosKey(const Vec3& p) {
     };
 }
 
+// Edge structure connecting two geometric vertices
+struct GeomEdge {
+    uint32_t g0 = 0;
+    uint32_t g1 = 0;
+    uint32_t origV0 = 0;
+    uint32_t origV1 = 0;
+    std::vector<int> triIndices;
+};
+
+std::pair<uint32_t, uint32_t> MakeEdgeKey(uint32_t a, uint32_t b) {
+    return (a < b) ? std::make_pair(a, b) : std::make_pair(b, a);
+}
+
+} // namespace
+
 // Build map from vertex index to unique geometric vertex ID
-std::vector<uint32_t> BuildGeomVertexMap(const LowPolyMesh& mesh) {
+std::vector<uint32_t> UVCutter::BuildGeomVertexMap(const LowPolyMesh& mesh) {
     std::vector<uint32_t> geomMap(mesh.vertices.size());
     std::unordered_map<PosKey, uint32_t, PosKeyHash> posToGeom;
     posToGeom.reserve(mesh.vertices.size());
@@ -51,21 +66,6 @@ std::vector<uint32_t> BuildGeomVertexMap(const LowPolyMesh& mesh) {
     }
     return geomMap;
 }
-
-// Edge structure connecting two geometric vertices
-struct GeomEdge {
-    uint32_t g0 = 0;
-    uint32_t g1 = 0;
-    uint32_t origV0 = 0;
-    uint32_t origV1 = 0;
-    std::vector<int> triIndices;
-};
-
-std::pair<uint32_t, uint32_t> MakeEdgeKey(uint32_t a, uint32_t b) {
-    return (a < b) ? std::make_pair(a, b) : std::make_pair(b, a);
-}
-
-} // namespace
 
 void UVCutter::MarkSeamsByAngle(LowPolyMesh& mesh, float angleThresholdDeg) {
     if (mesh.vertices.empty() || mesh.triangles.empty()) return;

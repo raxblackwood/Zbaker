@@ -204,6 +204,17 @@ Addressed rendering artifacts and UI visual clarity:
 
 ---
 
+### 5.6 Maya UV Viewport Header, Marquee Box Selection, Seam Partitioning, Curve Snapping, and Camera Undo Lock (2026-10-26)
+Implemented Maya-style UV viewport workflows and interactive mesh editing features:
+- Maya UV Viewport Header Bar: Docked a 34px toolbar above the 2D canvas featuring selection mode buttons (VERT, EDGE, FACE, SHELL), operation triggers (CUT, SEW, UNWRAP, PACK, CAMERA PROJ, FRAME, CHECKER, CLEAR), and live component counters.
+- 2D Canvas Marquee Box Selection: Added drag-to-box marquee selection for UV vertices, edges, faces, and shells with Shift/Ctrl modifier key support.
+- Component Visual Highlighting: Implemented responsive component highlighting with gold vertex dots, gold wireframe edges, and translucent amber fills for selected faces and islands.
+- Seam-Partitioned Camera Projection: Enhanced camera projection to partition geometry along existing cut seams into distinct UV islands and pack them across UDIM tiles using UVPacker instead of collapsing into a single overlapping shell.
+- Preserved 3D Camera on Undo/Redo: Removed FrameAll() from ViewportRenderer::SetLowPolyMesh() so undo/redo history operations retain camera pitch, yaw, and distance without resetting the view.
+- 3D Curve Endpoint Magnetic Snapping: Added screen-space proximity detection (18px tolerance) to curve endpoints with a visual cyan [SNAP TO END] badge for seamless, watertight curve joining.
+
+---
+
 ## 6. Marmoset Paint Cage & Paint Skew Architecture (Phase 2 Roadmap)
 To achieve full parity with Marmoset Toolbag's interactive 3D brush toolset:
 1. **Interactive 3D Ray-Mesh Picking**:

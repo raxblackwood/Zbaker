@@ -608,8 +608,6 @@ void ViewportRenderer::SetLowPolyMesh(const LowPolyMesh& mesh, float scaleMultip
         m_device->CreateBuffer(&wibd, &wiInit, &m_lowPolyWireGPU.indexBuffer);
         m_lowPolyWireGPU.indexCount = (uint32_t)mesh.wireframeLineIndices.size();
     }
-
-    FrameAll();
 }
 
 void ViewportRenderer::SetHighPolyMesh(const HighPolyMesh& mesh) {

@@ -12,6 +12,8 @@
 #include "HistoryManager.h"
 #include <string>
 #include <vector>
+#include <map>
+#include <set>
 #include <mutex>
 #include <atomic>
 
@@ -134,6 +136,24 @@ private:
     BakerUI::ShellState::AppTab m_prevActiveTab = BakerUI::ShellState::AppTab::Baking;
 
     // UV Cutting & Packing State (ZenUV & UVPackmaster Facilities)
+    enum class UVSelectionMode {
+        Vertex,
+        Edge,
+        Face,
+        Shell
+    };
+    UVSelectionMode m_uvSelectionMode = UVSelectionMode::Edge;
+    std::set<uint32_t> m_selectedUVVertices;
+    std::set<uint32_t> m_selectedUVFaces;
+    std::set<uint32_t> m_selectedUVShells;
+
+    // 2D Marquee Box Selection State
+    bool m_isMarqueeSelecting = false;
+    ImVec2 m_marqueeStart = ImVec2(0, 0);
+    ImVec2 m_marqueeEnd = ImVec2(0, 0);
+
+    bool m_showUVChecker = false;
+
     std::pair<uint32_t, uint32_t> m_lastSelectedEdge = { UINT32_MAX, UINT32_MAX };
     bool m_hasLastSelectedEdge = false;
     float m_seamAngleThreshold = 60.0f;
@@ -157,6 +177,12 @@ private:
     void SeparateOverlappingIslands();
     void StraightenIslands();
     void OrientIslandsToWorld();
+
+    // Maya UV Viewport Actions
+    void CutCurrentUVSelection();
+    void SewCurrentUVSelection();
+    void ClearUVSelection();
+    void ApplyCameraProjection();
 
     // UV Surface Curves State
     CurveManager m_curveManager;

@@ -23,6 +23,9 @@ public:
     // Clear all marked seams
     static void ClearSeams(LowPolyMesh& mesh);
 
+    // Build map from vertex index to unique geometric vertex ID (welding identical 3D positions across UV seams)
+    static std::vector<uint32_t> BuildGeomVertexMap(const LowPolyMesh& mesh);
+
     // Interactively toggle a seam on an edge between vertex v0 and v1
     static void ToggleEdgeSeam(LowPolyMesh& mesh, uint32_t v0, uint32_t v1);
 
