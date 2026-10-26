@@ -187,6 +187,9 @@ inline void ApplyTheme(float dpi = 1.f) {
     c[ImGuiCol_TableBorderLight]     = Col::Border();
     c[ImGuiCol_TextSelectedBg]       = Hex(0x4CC3A6, 0.35f);
     c[ImGuiCol_PlotHistogram]        = Col::Accent();
+    c[ImGuiCol_NavHighlight]         = Col::Accent();
+    c[ImGuiCol_NavWindowingHighlight]= Col::Accent();
+    c[ImGuiCol_NavWindowingDimBg]    = Hex(0x000000, 0.50f);
 }
 
 // ---------------------------------------------------------------- widgets

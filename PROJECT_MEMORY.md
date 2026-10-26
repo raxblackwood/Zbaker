@@ -188,6 +188,14 @@ The baking engine now supports both `8192 (8K)` and `16384 (16K)` texture resolu
 
 ---
 
+### 5.4 Design System Spec Polish & Tactile Affordances (2026-10-26)
+Following a comprehensive 5-axis design reference interpretation audit against Design System Spec and Dark Pro Tool principles:
+- Keyboard Navigation Focus Ring: Explicitly mapped ImGuiCol_NavHighlight and ImGuiCol_NavWindowingHighlight to Col::Accent() (#4CC3A6) with dimmed background (#000000, 50% opacity) for high-contrast accessibility across all interactive widgets.
+- Radial Marking Menu Readability: Added a 1px dark drop shadow (IM_COL32(0, 0, 0, 220)) beneath radial wedge text labels and the central hub MAYA brand text, ensuring clear legibility even over bright, high-key clay sculpt surfaces.
+- Splitter Hover and Drag Affordance: Enhanced the 3D/2D vertical sliding divider with smooth hover color transitions (#4CC3A6), active dragging feedback, and a tactile rounded center pill grab handle.
+
+---
+
 ## 6. Marmoset Paint Cage & Paint Skew Architecture (Phase 2 Roadmap)
 To achieve full parity with Marmoset Toolbag's interactive 3D brush toolset:
 1. **Interactive 3D Ray-Mesh Picking**:

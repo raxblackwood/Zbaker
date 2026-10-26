@@ -1966,14 +1966,26 @@ void UIManager::RenderViewportPanel() {
         }
 
         ImDrawList* dl = ImGui::GetWindowDrawList();
-        ImU32 splitBg = isSplitActive ? ImGui::GetColorU32(BakerUI::Col::Accent()) :
-                        (isSplitHovered ? ImGui::GetColorU32(BakerUI::Col::AccentHi()) :
+        ImU32 splitBg = isSplitActive ? ImGui::GetColorU32(BakerUI::Hex(0x4CC3A6, 0.35f)) :
+                        (isSplitHovered ? ImGui::GetColorU32(BakerUI::Hex(0x4CC3A6, 0.15f)) :
                                            ImGui::GetColorU32(BakerUI::Hex(0x181818)));
         dl->AddRectFilled(ImVec2(origin.x + leftW, origin.y),
                           ImVec2(origin.x + leftW + splitterW, origin.y + avail.y), splitBg);
+
+        ImU32 splitLineCol = isSplitActive ? ImGui::GetColorU32(BakerUI::Col::Accent()) :
+                             (isSplitHovered ? ImGui::GetColorU32(BakerUI::Col::AccentHi()) :
+                                                ImGui::GetColorU32(BakerUI::Hex(0x282828)));
         dl->AddLine(ImVec2(origin.x + leftW + 3.0f, origin.y),
                     ImVec2(origin.x + leftW + 3.0f, origin.y + avail.y),
-                    ImGui::GetColorU32(BakerUI::Hex(0x323232)));
+                    splitLineCol);
+
+        // Tactile central grip pill
+        float midY = origin.y + avail.y * 0.5f;
+        ImU32 gripCol = (isSplitHovered || isSplitActive) ? ImGui::GetColorU32(BakerUI::Col::Accent()) :
+                                                             ImGui::GetColorU32(BakerUI::Hex(0x505050));
+        dl->AddRectFilled(ImVec2(origin.x + leftW + 1.5f, midY - 14.0f),
+                          ImVec2(origin.x + leftW + splitterW - 1.5f, midY + 14.0f),
+                          gripCol, 1.5f);
 
         ImVec2 splitPos = ImVec2(origin.x + leftW + splitterW, origin.y);
         ImVec2 splitSize = ImVec2(rightW, avail.y);
@@ -2087,6 +2099,7 @@ void UIManager::RenderMarkingMenu() {
     // Draw dark radial hub at center
     drawList->AddCircleFilled(c, 24.0f, IM_COL32(18, 20, 24, 235));
     drawList->AddCircle(c, 24.0f, IM_COL32(80, 85, 95, 210), 32, 2.0f);
+    drawList->AddText(ImVec2(c.x - 13.0f, c.y - 6.0f), IM_COL32(0, 0, 0, 220), "MAYA");
     drawList->AddText(ImVec2(c.x - 14.0f, c.y - 7.0f), IM_COL32(0, 230, 255, 240), "MAYA");
 
     // Radial spokes
@@ -2142,11 +2155,15 @@ void UIManager::RenderMarkingMenu() {
 
         float textX = bp.x - textSize.x * 0.5f;
         float textY = bp.y - (sub ? 11.0f : 7.0f);
+        drawList->AddText(ImVec2(textX + 1.0f, textY + 1.0f), IM_COL32(0, 0, 0, 220), label);
         drawList->AddText(ImVec2(textX, textY), textCol, label);
 
         if (sub) {
             ImVec2 subSize = ImGui::CalcTextSize(sub);
-            drawList->AddText(ImVec2(bp.x - subSize.x * 0.5f, bp.y + 2.0f), IM_COL32(150, 155, 170, 200), sub);
+            float subX = bp.x - subSize.x * 0.5f;
+            float subY = bp.y + 2.0f;
+            drawList->AddText(ImVec2(subX + 1.0f, subY + 1.0f), IM_COL32(0, 0, 0, 180), sub);
+            drawList->AddText(ImVec2(subX, subY), IM_COL32(150, 155, 170, 200), sub);
         }
     };
 
