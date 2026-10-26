@@ -415,6 +415,35 @@ void UIManager::RenderUI() {
                    (io.KeyCtrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Y, false))) {
             PerformRedo();
         }
+
+        // Blender Component Selection Modes: 1 = Vertex, 2 = Edge, 3 = Face, 4 = UV Shell
+        if (!io.KeyCtrl && !io.KeyShift && !io.KeyAlt) {
+            if (ImGui::IsKeyPressed(ImGuiKey_1, false) || ImGui::IsKeyPressed(ImGuiKey_Keypad1, false)) {
+                m_uvSelectionMode = UVSelectionMode::Vertex;
+                if (m_shellState.activeTab == BakerUI::ShellState::AppTab::UVCutAndPack) {
+                    m_toolMode = ToolMode::CutSeam;
+                }
+                m_uvStatusMessage = "Vertex Selection Mode [Hotkey: 1]";
+            } else if (ImGui::IsKeyPressed(ImGuiKey_2, false) || ImGui::IsKeyPressed(ImGuiKey_Keypad2, false)) {
+                m_uvSelectionMode = UVSelectionMode::Edge;
+                if (m_shellState.activeTab == BakerUI::ShellState::AppTab::UVCutAndPack) {
+                    m_toolMode = ToolMode::CutSeam;
+                }
+                m_uvStatusMessage = "Edge Selection Mode [Hotkey: 2]";
+            } else if (ImGui::IsKeyPressed(ImGuiKey_3, false) || ImGui::IsKeyPressed(ImGuiKey_Keypad3, false)) {
+                m_uvSelectionMode = UVSelectionMode::Face;
+                if (m_shellState.activeTab == BakerUI::ShellState::AppTab::UVCutAndPack) {
+                    m_toolMode = ToolMode::CutSeam;
+                }
+                m_uvStatusMessage = "Face Selection Mode [Hotkey: 3]";
+            } else if (ImGui::IsKeyPressed(ImGuiKey_4, false) || ImGui::IsKeyPressed(ImGuiKey_Keypad4, false)) {
+                m_uvSelectionMode = UVSelectionMode::Shell;
+                if (m_shellState.activeTab == BakerUI::ShellState::AppTab::UVCutAndPack) {
+                    m_toolMode = ToolMode::CutSeam;
+                }
+                m_uvStatusMessage = "UV Shell Selection Mode [Hotkey: 4]";
+            }
+        }
     }
 
     // 0. Check pending GPU mesh upload from background loader
@@ -1408,10 +1437,10 @@ void UIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& size) {
         ImGui::SameLine();
     };
 
-    ModeButton("VERT", UVSelectionMode::Vertex, "Vertex Selection Mode (Click or Box Drag to select vertices)");
-    ModeButton("EDGE", UVSelectionMode::Edge, "Edge Selection Mode (Click, Double-click loop, or Box Drag)");
-    ModeButton("FACE", UVSelectionMode::Face, "Face Selection Mode (Click or Box Drag to select UV faces)");
-    ModeButton("SHELL", UVSelectionMode::Shell, "Shell Selection Mode (Click or Box Drag to select whole UV islands)");
+    ModeButton("VERT (1)", UVSelectionMode::Vertex, "Vertex Selection Mode [Hotkey: 1] (Click or Box Drag to select vertices)");
+    ModeButton("EDGE (2)", UVSelectionMode::Edge, "Edge Selection Mode [Hotkey: 2] (Click, Double-click loop, or Box Drag to select edges)");
+    ModeButton("FACE (3)", UVSelectionMode::Face, "Face Selection Mode [Hotkey: 3] (Click or Box Drag to select UV faces)");
+    ModeButton("SHELL (4)", UVSelectionMode::Shell, "Shell Selection Mode [Hotkey: 4] (Click or Box Drag to select whole UV islands)");
 
     ImGui::TextDisabled("|");
     ImGui::SameLine();
@@ -1709,98 +1738,269 @@ void UIManager::RenderViewportPanel() {
                 int hitTriIdx = -1;
                 bool hasHit = m_lowPolyMesh.Raycast(localOrg, localDir, hitT, hitPos, hitNormal, hitTriIdx);
 
-                if (hasHit && hitTriIdx >= 0) {
-                    const auto& tri = m_lowPolyMesh.triangles[hitTriIdx];
-                    TestEdge(tri.indices[0], tri.indices[1]);
-                    TestEdge(tri.indices[1], tri.indices[2]);
-                    TestEdge(tri.indices[2], tri.indices[0]);
-                }
+                if (m_uvSelectionMode == UVSelectionMode::Vertex) {
+                    int bestV = -1;
+                    float bestScreenDist = 1e9f;
+                    ImVec2 bestScreenPos(0, 0);
 
-                // If ray did not hit a face directly or cursor is closer to another wireframe edge, search wireframe edges within 18px
-                if (bestV0 < 0 || bestScreenDist > 18.0f) {
-                    for (size_t i = 0; i + 1 < m_lowPolyMesh.wireframeLineIndices.size(); i += 2) {
-                        uint32_t ea = m_lowPolyMesh.wireframeLineIndices[i];
-                        uint32_t eb = m_lowPolyMesh.wireframeLineIndices[i + 1];
-                        TestEdge(ea, eb);
-                    }
-                }
-
-                // If an edge is found within picking radius (28 pixels on screen)
-                if (bestV0 >= 0 && bestScreenDist <= 28.0f) {
-                    ImDrawList* drawList = ImGui::GetWindowDrawList();
-                    // Neon cyan glowing hover line indicator (clean standard cursor)
-                    drawList->AddLine(bestScreenA, bestScreenB, IM_COL32(0, 255, 255, 255), 3.5f);
-
-                    // Maya Double-Click: Select Edge Loop
-                    if (io.MouseDoubleClicked[0]) {
-                        UVCutter::SelectEdgeLoop(m_lowPolyMesh, static_cast<uint32_t>(bestV0), static_cast<uint32_t>(bestV1), io.KeyShift);
-                        m_lastSelectedEdge = MakeEdgeKey(static_cast<uint32_t>(bestV0), static_cast<uint32_t>(bestV1));
-                        m_hasLastSelectedEdge = true;
-                        m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
-                        PushHistoryState("Select Edge Loop");
-                        char msg[128];
-                        snprintf(msg, sizeof(msg), "Selected edge loop: %zu edges selected", m_lowPolyMesh.selectedEdges.size());
-                        m_uvStatusMessage = msg;
-                    }
-                    // Maya Single-Click: Select Edge or Shortest Path with Shift
-                    else if (ImGui::IsMouseClicked(0)) {
-                        auto edgeKey = MakeEdgeKey(static_cast<uint32_t>(bestV0), static_cast<uint32_t>(bestV1));
-                        if (io.KeyShift && m_hasLastSelectedEdge && !m_lowPolyMesh.selectedEdges.empty() && m_lastSelectedEdge != edgeKey) {
-                            // Maya Shift-Click Shortest Path between previously clicked edge and this edge!
-                            UVCutter::SelectShortestPath(m_lowPolyMesh, m_lastSelectedEdge.first, m_lastSelectedEdge.second,
-                                                         edgeKey.first, edgeKey.second, true);
-                            m_lastSelectedEdge = edgeKey;
-                            m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
-                            PushHistoryState("Select Shortest Path");
-                            char msg[128];
-                            snprintf(msg, sizeof(msg), "Selected path between edges: %zu edges total", m_lowPolyMesh.selectedEdges.size());
-                            m_uvStatusMessage = msg;
-                        } else if (io.KeyShift) {
-                            if (m_lowPolyMesh.selectedEdges.count(edgeKey)) {
-                                m_lowPolyMesh.selectedEdges.erase(edgeKey);
-                            } else {
-                                m_lowPolyMesh.selectedEdges.insert(edgeKey);
+                    auto TestVert = [&](uint32_t vIdx) {
+                        if (vIdx >= m_lowPolyMesh.vertices.size()) return;
+                        Vec3 p = m_lowPolyMesh.vertices[vIdx].position;
+                        DirectX::XMVECTOR v = DirectX::XMVector3TransformCoord(DirectX::XMVectorSet(p.x, p.y, p.z, 1.0f), worldLP);
+                        DirectX::XMFLOAT3 w;
+                        DirectX::XMStoreFloat3(&w, v);
+                        float sX, sY;
+                        if (m_viewportRenderer.ProjectToScreen(w, sX, sY)) {
+                            ImVec2 scr(origin.x + sX, origin.y + sY);
+                            float d = std::hypot(io.MousePos.x - scr.x, io.MousePos.y - scr.y);
+                            if (d < bestScreenDist) {
+                                bestScreenDist = d;
+                                bestV = static_cast<int>(vIdx);
+                                bestScreenPos = scr;
                             }
-                            m_lastSelectedEdge = edgeKey;
-                            m_hasLastSelectedEdge = true;
-                            m_lowPolyMesh.GenerateSelectedEdgeLines();
-                            m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
-                            PushHistoryState("Toggle Edge Selection");
-                        } else {
-                            m_lowPolyMesh.selectedEdges.clear();
-                            m_lowPolyMesh.selectedEdges.insert(edgeKey);
-                            m_lastSelectedEdge = edgeKey;
-                            m_hasLastSelectedEdge = true;
-                            m_lowPolyMesh.GenerateSelectedEdgeLines();
-                            m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
-                            PushHistoryState("Select Edge");
+                        }
+                    };
+
+                    if (hasHit && hitTriIdx >= 0 && hitTriIdx < static_cast<int>(m_lowPolyMesh.triangles.size())) {
+                        const auto& tri = m_lowPolyMesh.triangles[hitTriIdx];
+                        TestVert(tri.indices[0]);
+                        TestVert(tri.indices[1]);
+                        TestVert(tri.indices[2]);
+                    }
+                    if (bestV < 0 || bestScreenDist > 18.0f) {
+                        for (size_t i = 0; i < m_lowPolyMesh.vertices.size(); ++i) {
+                            TestVert(static_cast<uint32_t>(i));
                         }
                     }
 
-                    // Maya Shift + Right-Click: Open Marking Menu
-                    if (io.KeyShift && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
-                        if (m_lowPolyMesh.selectedEdges.empty()) {
-                            auto edgeKey = MakeEdgeKey(static_cast<uint32_t>(bestV0), static_cast<uint32_t>(bestV1));
-                            m_lowPolyMesh.selectedEdges.insert(edgeKey);
-                            m_lastSelectedEdge = edgeKey;
-                            m_hasLastSelectedEdge = true;
-                            m_lowPolyMesh.GenerateSelectedEdgeLines();
-                            m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
-                            PushHistoryState("Select Edge");
+                    if (bestV >= 0 && bestScreenDist <= 28.0f) {
+                        ImDrawList* drawList = ImGui::GetWindowDrawList();
+                        drawList->AddCircle(bestScreenPos, 6.0f, IM_COL32(0, 255, 255, 255), 12, 2.0f);
+                        drawList->AddCircleFilled(bestScreenPos, 3.5f, IM_COL32(0, 255, 255, 200));
+
+                        if (ImGui::IsMouseClicked(0)) {
+                            uint32_t uV = static_cast<uint32_t>(bestV);
+                            if (io.KeyShift) {
+                                if (m_selectedUVVertices.count(uV)) m_selectedUVVertices.erase(uV);
+                                else m_selectedUVVertices.insert(uV);
+                            } else {
+                                m_selectedUVVertices.clear();
+                                m_selectedUVVertices.insert(uV);
+                            }
+                            PushHistoryState("Select Vertex");
+                            char msg[128];
+                            snprintf(msg, sizeof(msg), "Selected vertex %u (%zu total selected)", uV, m_selectedUVVertices.size());
+                            m_uvStatusMessage = msg;
                         }
-                        m_markingMenu.active = true;
-                        m_markingMenu.centerPos = io.MousePos;
-                        m_markingMenu.armedWedge = -1;
+                    } else if (ImGui::IsMouseClicked(0) && !io.KeyShift && !io.KeyAlt) {
+                        if (!m_selectedUVVertices.empty()) {
+                            m_selectedUVVertices.clear();
+                            PushHistoryState("Clear Selected Vertices");
+                        }
+                    }
+                } else if (m_uvSelectionMode == UVSelectionMode::Face || m_uvSelectionMode == UVSelectionMode::Shell) {
+                    if (hasHit && hitTriIdx >= 0 && hitTriIdx < static_cast<int>(m_lowPolyMesh.triangles.size())) {
+                        const auto& tri = m_lowPolyMesh.triangles[hitTriIdx];
+                        Vec3 p0 = m_lowPolyMesh.vertices[tri.indices[0]].position;
+                        Vec3 p1 = m_lowPolyMesh.vertices[tri.indices[1]].position;
+                        Vec3 p2 = m_lowPolyMesh.vertices[tri.indices[2]].position;
+
+                        DirectX::XMVECTOR v0 = DirectX::XMVector3TransformCoord(DirectX::XMVectorSet(p0.x, p0.y, p0.z, 1.0f), worldLP);
+                        DirectX::XMVECTOR v1 = DirectX::XMVector3TransformCoord(DirectX::XMVectorSet(p1.x, p1.y, p1.z, 1.0f), worldLP);
+                        DirectX::XMVECTOR v2 = DirectX::XMVector3TransformCoord(DirectX::XMVectorSet(p2.x, p2.y, p2.z, 1.0f), worldLP);
+                        DirectX::XMFLOAT3 w0, w1, w2;
+                        DirectX::XMStoreFloat3(&w0, v0);
+                        DirectX::XMStoreFloat3(&w1, v1);
+                        DirectX::XMStoreFloat3(&w2, v2);
+
+                        float s0X, s0Y, s1X, s1Y, s2X, s2Y;
+                        if (m_viewportRenderer.ProjectToScreen(w0, s0X, s0Y) &&
+                            m_viewportRenderer.ProjectToScreen(w1, s1X, s1Y) &&
+                            m_viewportRenderer.ProjectToScreen(w2, s2X, s2Y)) {
+                            ImVec2 s0(origin.x + s0X, origin.y + s0Y);
+                            ImVec2 s1(origin.x + s1X, origin.y + s1Y);
+                            ImVec2 s2(origin.x + s2X, origin.y + s2Y);
+
+                            ImDrawList* drawList = ImGui::GetWindowDrawList();
+                            drawList->AddTriangleFilled(s0, s1, s2, IM_COL32(0, 255, 255, 45));
+                            drawList->AddTriangle(s0, s1, s2, IM_COL32(0, 255, 255, 240), 2.0f);
+
+                            if (ImGui::IsMouseClicked(0)) {
+                                uint32_t fIdx = static_cast<uint32_t>(hitTriIdx);
+                                if (m_uvSelectionMode == UVSelectionMode::Face) {
+                                    if (io.KeyShift) {
+                                        if (m_selectedUVFaces.count(fIdx)) m_selectedUVFaces.erase(fIdx);
+                                        else m_selectedUVFaces.insert(fIdx);
+                                    } else {
+                                        m_selectedUVFaces.clear();
+                                        m_selectedUVFaces.insert(fIdx);
+                                    }
+                                    PushHistoryState("Select Face");
+                                    char msg[128];
+                                    snprintf(msg, sizeof(msg), "Selected face %u (%zu total selected)", fIdx, m_selectedUVFaces.size());
+                                    m_uvStatusMessage = msg;
+                                } else {
+                                    auto islands = UVCutter::SegmentIslands(m_lowPolyMesh);
+                                    for (const auto& islTris : islands) {
+                                        bool contains = false;
+                                        for (int t : islTris) {
+                                            if (t == hitTriIdx) { contains = true; break; }
+                                        }
+                                        if (contains) {
+                                            if (!io.KeyShift) m_selectedUVFaces.clear();
+                                            for (int t : islTris) {
+                                                m_selectedUVFaces.insert(static_cast<uint32_t>(t));
+                                            }
+                                            break;
+                                        }
+                                    }
+                                    PushHistoryState("Select Shell");
+                                    char msg[128];
+                                    snprintf(msg, sizeof(msg), "Selected shell with %zu faces", m_selectedUVFaces.size());
+                                    m_uvStatusMessage = msg;
+                                }
+                            }
+                        }
+                    } else if (ImGui::IsMouseClicked(0) && !io.KeyShift && !io.KeyAlt) {
+                        if (!m_selectedUVFaces.empty()) {
+                            m_selectedUVFaces.clear();
+                            PushHistoryState("Clear Selected Faces");
+                        }
                     }
                 } else {
-                    // Clicked in empty space without Shift: clear selection
-                    if (ImGui::IsMouseClicked(0) && !io.KeyShift && !io.KeyAlt) {
-                        if (!m_lowPolyMesh.selectedEdges.empty()) {
-                            m_lowPolyMesh.selectedEdges.clear();
-                            m_hasLastSelectedEdge = false;
-                            m_lowPolyMesh.GenerateSelectedEdgeLines();
+                    // UVSelectionMode::Edge
+                    if (hasHit && hitTriIdx >= 0) {
+                        const auto& tri = m_lowPolyMesh.triangles[hitTriIdx];
+                        TestEdge(tri.indices[0], tri.indices[1]);
+                        TestEdge(tri.indices[1], tri.indices[2]);
+                        TestEdge(tri.indices[2], tri.indices[0]);
+                    }
+
+                    if (bestV0 < 0 || bestScreenDist > 18.0f) {
+                        for (size_t i = 0; i + 1 < m_lowPolyMesh.wireframeLineIndices.size(); i += 2) {
+                            uint32_t ea = m_lowPolyMesh.wireframeLineIndices[i];
+                            uint32_t eb = m_lowPolyMesh.wireframeLineIndices[i + 1];
+                            TestEdge(ea, eb);
+                        }
+                    }
+
+                    if (bestV0 >= 0 && bestScreenDist <= 28.0f) {
+                        ImDrawList* drawList = ImGui::GetWindowDrawList();
+                        drawList->AddLine(bestScreenA, bestScreenB, IM_COL32(0, 255, 255, 255), 3.5f);
+
+                        if (io.MouseDoubleClicked[0]) {
+                            UVCutter::SelectEdgeLoop(m_lowPolyMesh, static_cast<uint32_t>(bestV0), static_cast<uint32_t>(bestV1), io.KeyShift);
+                            m_lastSelectedEdge = MakeEdgeKey(static_cast<uint32_t>(bestV0), static_cast<uint32_t>(bestV1));
+                            m_hasLastSelectedEdge = true;
                             m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
-                            PushHistoryState("Clear Selection");
+                            PushHistoryState("Select Edge Loop");
+                            char msg[128];
+                            snprintf(msg, sizeof(msg), "Selected edge loop: %zu edges selected", m_lowPolyMesh.selectedEdges.size());
+                            m_uvStatusMessage = msg;
+                        } else if (ImGui::IsMouseClicked(0)) {
+                            auto edgeKey = MakeEdgeKey(static_cast<uint32_t>(bestV0), static_cast<uint32_t>(bestV1));
+                            if (io.KeyShift && m_hasLastSelectedEdge && !m_lowPolyMesh.selectedEdges.empty() && m_lastSelectedEdge != edgeKey) {
+                                UVCutter::SelectShortestPath(m_lowPolyMesh, m_lastSelectedEdge.first, m_lastSelectedEdge.second,
+                                                             edgeKey.first, edgeKey.second, true);
+                                m_lastSelectedEdge = edgeKey;
+                                m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
+                                PushHistoryState("Select Shortest Path");
+                                char msg[128];
+                                snprintf(msg, sizeof(msg), "Selected path between edges: %zu edges total", m_lowPolyMesh.selectedEdges.size());
+                                m_uvStatusMessage = msg;
+                            } else if (io.KeyShift) {
+                                if (m_lowPolyMesh.selectedEdges.count(edgeKey)) {
+                                    m_lowPolyMesh.selectedEdges.erase(edgeKey);
+                                } else {
+                                    m_lowPolyMesh.selectedEdges.insert(edgeKey);
+                                }
+                                m_lastSelectedEdge = edgeKey;
+                                m_hasLastSelectedEdge = true;
+                                m_lowPolyMesh.GenerateSelectedEdgeLines();
+                                m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
+                                PushHistoryState("Toggle Edge Selection");
+                            } else {
+                                m_lowPolyMesh.selectedEdges.clear();
+                                m_lowPolyMesh.selectedEdges.insert(edgeKey);
+                                m_lastSelectedEdge = edgeKey;
+                                m_hasLastSelectedEdge = true;
+                                m_lowPolyMesh.GenerateSelectedEdgeLines();
+                                m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
+                                PushHistoryState("Select Edge");
+                            }
+                        }
+
+                        if (io.KeyShift && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+                            if (m_lowPolyMesh.selectedEdges.empty()) {
+                                auto edgeKey = MakeEdgeKey(static_cast<uint32_t>(bestV0), static_cast<uint32_t>(bestV1));
+                                m_lowPolyMesh.selectedEdges.insert(edgeKey);
+                                m_lastSelectedEdge = edgeKey;
+                                m_hasLastSelectedEdge = true;
+                                m_lowPolyMesh.GenerateSelectedEdgeLines();
+                                m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
+                                PushHistoryState("Select Edge");
+                            }
+                            m_markingMenu.active = true;
+                            m_markingMenu.centerPos = io.MousePos;
+                            m_markingMenu.armedWedge = -1;
+                        }
+                    } else {
+                        if (ImGui::IsMouseClicked(0) && !io.KeyShift && !io.KeyAlt) {
+                            if (!m_lowPolyMesh.selectedEdges.empty()) {
+                                m_lowPolyMesh.selectedEdges.clear();
+                                m_hasLastSelectedEdge = false;
+                                m_lowPolyMesh.GenerateSelectedEdgeLines();
+                                m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
+                                PushHistoryState("Clear Selection");
+                            }
+                        }
+                    }
+                }
+
+                // Render selected 3D vertices
+                if (!m_selectedUVVertices.empty()) {
+                    ImDrawList* drawList = ImGui::GetWindowDrawList();
+                    for (uint32_t vIdx : m_selectedUVVertices) {
+                        if (vIdx < m_lowPolyMesh.vertices.size()) {
+                            Vec3 p = m_lowPolyMesh.vertices[vIdx].position;
+                            DirectX::XMVECTOR v = DirectX::XMVector3TransformCoord(DirectX::XMVectorSet(p.x, p.y, p.z, 1.0f), worldLP);
+                            DirectX::XMFLOAT3 w;
+                            DirectX::XMStoreFloat3(&w, v);
+                            float sX, sY;
+                            if (m_viewportRenderer.ProjectToScreen(w, sX, sY)) {
+                                ImVec2 scr(origin.x + sX, origin.y + sY);
+                                drawList->AddCircleFilled(scr, 4.0f, IM_COL32(255, 204, 0, 255));
+                                drawList->AddCircle(scr, 6.0f, IM_COL32(255, 230, 100, 255), 12, 1.5f);
+                            }
+                        }
+                    }
+                }
+                // Render selected 3D faces
+                if (!m_selectedUVFaces.empty()) {
+                    ImDrawList* drawList = ImGui::GetWindowDrawList();
+                    for (uint32_t fIdx : m_selectedUVFaces) {
+                        if (fIdx < m_lowPolyMesh.triangles.size()) {
+                            const auto& tri = m_lowPolyMesh.triangles[fIdx];
+                            Vec3 p0 = m_lowPolyMesh.vertices[tri.indices[0]].position;
+                            Vec3 p1 = m_lowPolyMesh.vertices[tri.indices[1]].position;
+                            Vec3 p2 = m_lowPolyMesh.vertices[tri.indices[2]].position;
+                            DirectX::XMVECTOR v0 = DirectX::XMVector3TransformCoord(DirectX::XMVectorSet(p0.x, p0.y, p0.z, 1.0f), worldLP);
+                            DirectX::XMVECTOR v1 = DirectX::XMVector3TransformCoord(DirectX::XMVectorSet(p1.x, p1.y, p1.z, 1.0f), worldLP);
+                            DirectX::XMVECTOR v2 = DirectX::XMVector3TransformCoord(DirectX::XMVectorSet(p2.x, p2.y, p2.z, 1.0f), worldLP);
+                            DirectX::XMFLOAT3 w0, w1, w2;
+                            DirectX::XMStoreFloat3(&w0, v0);
+                            DirectX::XMStoreFloat3(&w1, v1);
+                            DirectX::XMStoreFloat3(&w2, v2);
+                            float s0X, s0Y, s1X, s1Y, s2X, s2Y;
+                            if (m_viewportRenderer.ProjectToScreen(w0, s0X, s0Y) &&
+                                m_viewportRenderer.ProjectToScreen(w1, s1X, s1Y) &&
+                                m_viewportRenderer.ProjectToScreen(w2, s2X, s2Y)) {
+                                ImVec2 s0(origin.x + s0X, origin.y + s0Y);
+                                ImVec2 s1(origin.x + s1X, origin.y + s1Y);
+                                ImVec2 s2(origin.x + s2X, origin.y + s2Y);
+                                drawList->AddTriangleFilled(s0, s1, s2, IM_COL32(255, 204, 0, 75));
+                                drawList->AddTriangle(s0, s1, s2, IM_COL32(255, 204, 0, 220), 1.5f);
+                            }
                         }
                     }
                 }
@@ -2295,11 +2495,20 @@ void UIManager::RenderViewportPanel() {
                     }
                 } else if (m_toolMode == ToolMode::CutSeam) {
                     ImGui::AlignTextToFramePadding();
-                    ImGui::TextColored(ImVec4(0.0f, 0.95f, 1.0f, 1.0f), "MAYA UV CUTTING");
+                    const char* modeLabel = (m_uvSelectionMode == UVSelectionMode::Vertex) ? "VERT (1)" :
+                                           (m_uvSelectionMode == UVSelectionMode::Face)   ? "FACE (3)" :
+                                           (m_uvSelectionMode == UVSelectionMode::Shell)  ? "SHELL (4)" : "EDGE (2)";
+                    ImGui::TextColored(BakerUI::Hex(0x4CC3A6), "[%s]", modeLabel);
                     ImGui::SameLine();
-                    ImGui::TextDisabled("| Shift+RMB: Marking Menu | 2xClick: Loop | Shift+Click: Path Between");
+                    ImGui::TextDisabled("| 1: Vert | 2: Edge | 3: Face | 4: Shell | Shift+RMB: Menu");
                     ImGui::SameLine();
-                    ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.12f, 1.0f), "| Selected: %zu", m_lowPolyMesh.selectedEdges.size());
+                    if (m_uvSelectionMode == UVSelectionMode::Vertex) {
+                        ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.12f, 1.0f), "| Verts: %zu", m_selectedUVVertices.size());
+                    } else if (m_uvSelectionMode == UVSelectionMode::Face || m_uvSelectionMode == UVSelectionMode::Shell) {
+                        ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.12f, 1.0f), "| Faces: %zu", m_selectedUVFaces.size());
+                    } else {
+                        ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.12f, 1.0f), "| Edges: %zu", m_lowPolyMesh.selectedEdges.size());
+                    }
                     ImGui::SameLine();
                     ImGui::TextColored(ImVec4(0.2f, 0.9f, 1.0f, 1.0f), "| Seams: %zu", m_lowPolyMesh.cutSeams.size());
                 } else {

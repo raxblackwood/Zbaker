@@ -215,6 +215,14 @@ Implemented Maya-style UV viewport workflows and interactive mesh editing featur
 
 ---
 
+### 5.7 Blender 1/2/3 Component Selection Keys Across 2D UV & 3D Viewport (2026-10-26)
+Implemented Blender standard 1, 2, 3 component selection hotkeys and synchronized 3D component picking:
+- Blender Hotkey Integration: Configured top-row and numeric keypad keys 1, 2, 3 (and 4 for UV Shells) to switch between Vertex (1), Edge (2), Face (3), and Shell (4) selection modes whenever text input fields are not active.
+- 3D Viewport Component Selection: Extended 3D raycast picking to support Vertex picking (with glowing cyan hover dots and gold selected vertices) and Face/Shell picking (with glowing cyan face outlines and translucent gold selected face fills) alongside edge picking.
+- Synchronized Viewport Feedback: Updated Maya UV header buttons to display shortcut indicators VERT (1), EDGE (2), FACE (3), and SHELL (4), and integrated active mode badges into the 3D viewport bottom toolbar.
+
+---
+
 ## 6. Marmoset Paint Cage & Paint Skew Architecture (Phase 2 Roadmap)
 To achieve full parity with Marmoset Toolbag's interactive 3D brush toolset:
 1. **Interactive 3D Ray-Mesh Picking**:
