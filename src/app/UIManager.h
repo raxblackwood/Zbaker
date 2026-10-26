@@ -152,6 +152,31 @@ private:
     ImVec2 m_marqueeStart = ImVec2(0, 0);
     ImVec2 m_marqueeEnd = ImVec2(0, 0);
 
+    // 2D UV Transform Gizmo State
+    enum class UVGizmoMode {
+        Translate,
+        Rotate,
+        Scale
+    };
+    enum class UVGizmoDragPart {
+        None,
+        CenterFree,
+        AxisU,
+        AxisV,
+        RotateRing,
+        ScaleUniform,
+        ScaleU,
+        ScaleV
+    };
+    UVGizmoMode m_uvGizmoMode = UVGizmoMode::Translate;
+    UVGizmoDragPart m_activeGizmoPart = UVGizmoDragPart::None;
+    ImVec2 m_gizmoDragMouseStart = ImVec2(0, 0);
+    UVPoint m_gizmoCenterStart = UVPoint(0, 0);
+    std::vector<UVPoint> m_gizmoInitialUVs;
+    std::vector<uint32_t> m_gizmoSelectedVerts;
+    float m_gizmoInitialAngle = 0.0f;
+    float m_gizmoInitialDist = 1.0f;
+
     bool m_showUVChecker = false;
 
     std::pair<uint32_t, uint32_t> m_lastSelectedEdge = { UINT32_MAX, UINT32_MAX };

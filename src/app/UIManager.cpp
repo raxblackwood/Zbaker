@@ -1239,8 +1239,210 @@ void UIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& size) {
             }
         }
 
-        // Marquee Box Drag State Handling
-        if (!io.KeyAlt && ImGui::IsMouseClicked(0)) {
+        // -------------------------------------------------------------
+        // 2D UV Transform Gizmo Interaction & Rendering
+        // -------------------------------------------------------------
+        m_gizmoSelectedVerts.clear();
+        if (m_uvSelectionMode == UVSelectionMode::Vertex) {
+            m_gizmoSelectedVerts.assign(m_selectedUVVertices.begin(), m_selectedUVVertices.end());
+        } else if (m_uvSelectionMode == UVSelectionMode::Edge) {
+            for (const auto& edge : m_lowPolyMesh.selectedEdges) {
+                m_gizmoSelectedVerts.push_back(edge.first);
+                m_gizmoSelectedVerts.push_back(edge.second);
+            }
+        } else if (m_uvSelectionMode == UVSelectionMode::Face || m_uvSelectionMode == UVSelectionMode::Shell) {
+            for (uint32_t fIdx : m_selectedUVFaces) {
+                if (fIdx < m_lowPolyMesh.triangles.size()) {
+                    const auto& tri = m_lowPolyMesh.triangles[fIdx];
+                    m_gizmoSelectedVerts.push_back(tri.indices[0]);
+                    m_gizmoSelectedVerts.push_back(tri.indices[1]);
+                    m_gizmoSelectedVerts.push_back(tri.indices[2]);
+                }
+            }
+        }
+        std::sort(m_gizmoSelectedVerts.begin(), m_gizmoSelectedVerts.end());
+        m_gizmoSelectedVerts.erase(std::unique(m_gizmoSelectedVerts.begin(), m_gizmoSelectedVerts.end()), m_gizmoSelectedVerts.end());
+
+        bool gizmoHovered = false;
+
+        if (!m_gizmoSelectedVerts.empty()) {
+            float minU = 1e9f, minV = 1e9f, maxU = -1e9f, maxV = -1e9f;
+            for (uint32_t v : m_gizmoSelectedVerts) {
+                if (v < m_lowPolyMesh.vertices.size()) {
+                    minU = (std::min)(minU, m_lowPolyMesh.vertices[v].uv.u);
+                    maxU = (std::max)(maxU, m_lowPolyMesh.vertices[v].uv.u);
+                    minV = (std::min)(minV, m_lowPolyMesh.vertices[v].uv.v);
+                    maxV = (std::max)(maxV, m_lowPolyMesh.vertices[v].uv.v);
+                }
+            }
+            UVPoint centerUV((minU + maxU) * 0.5f, (minV + maxV) * 0.5f);
+            ImVec2 centerScr = UVToScreen(centerUV.u, centerUV.v);
+
+            float dCenter = std::hypot(io.MousePos.x - centerScr.x, io.MousePos.y - centerScr.y);
+            float dRing = std::abs(dCenter - 44.0f);
+            float dU = DistToSegment2D(io.MousePos, centerScr, ImVec2(centerScr.x + 65.0f, centerScr.y));
+            float dV = DistToSegment2D(io.MousePos, centerScr, ImVec2(centerScr.x, centerScr.y - 65.0f));
+            bool inScaleBox = (io.MousePos.x >= centerScr.x + 38.0f && io.MousePos.x <= centerScr.x + 54.0f &&
+                               io.MousePos.y >= centerScr.y - 54.0f && io.MousePos.y <= centerScr.y - 38.0f);
+
+            bool canHitCenter = (dCenter <= 12.0f);
+            bool canHitU = (dU <= 9.0f && io.MousePos.x >= centerScr.x - 2.0f && io.MousePos.x <= centerScr.x + 75.0f);
+            bool canHitV = (dV <= 9.0f && io.MousePos.y <= centerScr.y + 2.0f && io.MousePos.y >= centerScr.y - 75.0f);
+            bool canHitRing = (dRing <= 7.0f);
+
+            if (canHitCenter || canHitU || canHitV || canHitRing || inScaleBox) {
+                gizmoHovered = true;
+            }
+
+            // Transform shortcuts: G/W = Move, E/R = Rotate, S = Scale
+            if (!io.WantTextInput && !io.KeyCtrl && !io.KeyAlt) {
+                if (ImGui::IsKeyPressed(ImGuiKey_G) || ImGui::IsKeyPressed(ImGuiKey_W)) {
+                    m_activeGizmoPart = UVGizmoDragPart::CenterFree;
+                    m_gizmoDragMouseStart = io.MousePos;
+                    m_gizmoCenterStart = centerUV;
+                    m_gizmoInitialUVs.clear();
+                    for (uint32_t v : m_gizmoSelectedVerts) {
+                        m_gizmoInitialUVs.push_back(UVPoint(m_lowPolyMesh.vertices[v].uv.u, m_lowPolyMesh.vertices[v].uv.v));
+                    }
+                    m_gizmoInitialAngle = std::atan2(io.MousePos.y - centerScr.y, io.MousePos.x - centerScr.x);
+                    m_gizmoInitialDist = (std::max)(12.0f, dCenter);
+                } else if (ImGui::IsKeyPressed(ImGuiKey_R) || ImGui::IsKeyPressed(ImGuiKey_E)) {
+                    m_activeGizmoPart = UVGizmoDragPart::RotateRing;
+                    m_gizmoDragMouseStart = io.MousePos;
+                    m_gizmoCenterStart = centerUV;
+                    m_gizmoInitialUVs.clear();
+                    for (uint32_t v : m_gizmoSelectedVerts) {
+                        m_gizmoInitialUVs.push_back(UVPoint(m_lowPolyMesh.vertices[v].uv.u, m_lowPolyMesh.vertices[v].uv.v));
+                    }
+                    m_gizmoInitialAngle = std::atan2(io.MousePos.y - centerScr.y, io.MousePos.x - centerScr.x);
+                    m_gizmoInitialDist = (std::max)(12.0f, dCenter);
+                } else if (ImGui::IsKeyPressed(ImGuiKey_S)) {
+                    m_activeGizmoPart = UVGizmoDragPart::ScaleUniform;
+                    m_gizmoDragMouseStart = io.MousePos;
+                    m_gizmoCenterStart = centerUV;
+                    m_gizmoInitialUVs.clear();
+                    for (uint32_t v : m_gizmoSelectedVerts) {
+                        m_gizmoInitialUVs.push_back(UVPoint(m_lowPolyMesh.vertices[v].uv.u, m_lowPolyMesh.vertices[v].uv.v));
+                    }
+                    m_gizmoInitialAngle = std::atan2(io.MousePos.y - centerScr.y, io.MousePos.x - centerScr.x);
+                    m_gizmoInitialDist = (std::max)(12.0f, dCenter);
+                }
+            }
+
+            // Gizmo mouse press
+            if (!io.KeyAlt && ImGui::IsMouseClicked(0)) {
+                if (inScaleBox) {
+                    m_activeGizmoPart = UVGizmoDragPart::ScaleUniform;
+                } else if (canHitCenter) {
+                    m_activeGizmoPart = UVGizmoDragPart::CenterFree;
+                } else if (canHitU) {
+                    m_activeGizmoPart = UVGizmoDragPart::AxisU;
+                } else if (canHitV) {
+                    m_activeGizmoPart = UVGizmoDragPart::AxisV;
+                } else if (canHitRing) {
+                    m_activeGizmoPart = UVGizmoDragPart::RotateRing;
+                }
+
+                if (m_activeGizmoPart != UVGizmoDragPart::None) {
+                    m_gizmoDragMouseStart = io.MousePos;
+                    m_gizmoCenterStart = centerUV;
+                    m_gizmoInitialUVs.clear();
+                    m_gizmoInitialUVs.reserve(m_gizmoSelectedVerts.size());
+                    for (uint32_t v : m_gizmoSelectedVerts) {
+                        m_gizmoInitialUVs.push_back(UVPoint(m_lowPolyMesh.vertices[v].uv.u, m_lowPolyMesh.vertices[v].uv.v));
+                    }
+                    m_gizmoInitialAngle = std::atan2(io.MousePos.y - centerScr.y, io.MousePos.x - centerScr.x);
+                    m_gizmoInitialDist = (std::max)(12.0f, dCenter);
+                }
+            }
+
+            // Gizmo dragging
+            if (m_activeGizmoPart != UVGizmoDragPart::None && io.MouseDown[0]) {
+                if (m_activeGizmoPart == UVGizmoDragPart::CenterFree) {
+                    float du = (io.MousePos.x - m_gizmoDragMouseStart.x) / currentTileSize;
+                    float dv = -(io.MousePos.y - m_gizmoDragMouseStart.y) / currentTileSize;
+                    for (size_t i = 0; i < m_gizmoSelectedVerts.size(); ++i) {
+                        m_lowPolyMesh.vertices[m_gizmoSelectedVerts[i]].uv.u = m_gizmoInitialUVs[i].u + du;
+                        m_lowPolyMesh.vertices[m_gizmoSelectedVerts[i]].uv.v = m_gizmoInitialUVs[i].v + dv;
+                    }
+                } else if (m_activeGizmoPart == UVGizmoDragPart::AxisU) {
+                    float du = (io.MousePos.x - m_gizmoDragMouseStart.x) / currentTileSize;
+                    for (size_t i = 0; i < m_gizmoSelectedVerts.size(); ++i) {
+                        m_lowPolyMesh.vertices[m_gizmoSelectedVerts[i]].uv.u = m_gizmoInitialUVs[i].u + du;
+                    }
+                } else if (m_activeGizmoPart == UVGizmoDragPart::AxisV) {
+                    float dv = -(io.MousePos.y - m_gizmoDragMouseStart.y) / currentTileSize;
+                    for (size_t i = 0; i < m_gizmoSelectedVerts.size(); ++i) {
+                        m_lowPolyMesh.vertices[m_gizmoSelectedVerts[i]].uv.v = m_gizmoInitialUVs[i].v + dv;
+                    }
+                } else if (m_activeGizmoPart == UVGizmoDragPart::RotateRing) {
+                    float curAngle = std::atan2(io.MousePos.y - centerScr.y, io.MousePos.x - centerScr.x);
+                    float deltaAngle = curAngle - m_gizmoInitialAngle;
+                    float cosA = std::cos(-deltaAngle);
+                    float sinA = std::sin(-deltaAngle);
+                    for (size_t i = 0; i < m_gizmoSelectedVerts.size(); ++i) {
+                        float du = m_gizmoInitialUVs[i].u - m_gizmoCenterStart.u;
+                        float dv = m_gizmoInitialUVs[i].v - m_gizmoCenterStart.v;
+                        m_lowPolyMesh.vertices[m_gizmoSelectedVerts[i]].uv.u = m_gizmoCenterStart.u + (du * cosA - dv * sinA);
+                        m_lowPolyMesh.vertices[m_gizmoSelectedVerts[i]].uv.v = m_gizmoCenterStart.v + (du * sinA + dv * cosA);
+                    }
+                } else if (m_activeGizmoPart == UVGizmoDragPart::ScaleUniform) {
+                    float curDist = std::hypot(io.MousePos.x - centerScr.x, io.MousePos.y - centerScr.y);
+                    float s = (std::max)(0.001f, curDist / m_gizmoInitialDist);
+                    for (size_t i = 0; i < m_gizmoSelectedVerts.size(); ++i) {
+                        float du = m_gizmoInitialUVs[i].u - m_gizmoCenterStart.u;
+                        float dv = m_gizmoInitialUVs[i].v - m_gizmoCenterStart.v;
+                        m_lowPolyMesh.vertices[m_gizmoSelectedVerts[i]].uv.u = m_gizmoCenterStart.u + du * s;
+                        m_lowPolyMesh.vertices[m_gizmoSelectedVerts[i]].uv.v = m_gizmoCenterStart.v + dv * s;
+                    }
+                }
+            }
+
+            if (m_activeGizmoPart != UVGizmoDragPart::None && io.MouseReleased[0]) {
+                m_activeGizmoPart = UVGizmoDragPart::None;
+                m_viewportRenderer.SetLowPolyMesh(m_lowPolyMesh, m_settings.lowPolyScale);
+                PushHistoryState("Transform UVs");
+                m_uvStatusMessage = "Transformed selected UVs";
+            }
+
+            // Render Gizmo Visuals
+            ImVec2 bMin = UVToScreen(minU, maxV);
+            ImVec2 bMax = UVToScreen(maxU, minV);
+            drawList->AddRect(bMin, bMax, IM_COL32(255, 204, 0, 100), 0.0f, 0, 1.0f);
+
+            // Rotate Ring
+            ImU32 ringCol = (m_activeGizmoPart == UVGizmoDragPart::RotateRing || canHitRing) ? IM_COL32(0, 255, 255, 255) : IM_COL32(0, 160, 255, 180);
+            drawList->AddCircle(centerScr, 44.0f, ringCol, 36, (m_activeGizmoPart == UVGizmoDragPart::RotateRing || canHitRing) ? 3.0f : 2.0f);
+
+            // Axis U Arrow (Coral Red)
+            ImU32 uCol = (m_activeGizmoPart == UVGizmoDragPart::AxisU || canHitU) ? IM_COL32(255, 240, 100, 255) : IM_COL32(255, 65, 65, 240);
+            ImVec2 tipU(centerScr.x + 65.0f, centerScr.y);
+            drawList->AddLine(centerScr, tipU, uCol, (m_activeGizmoPart == UVGizmoDragPart::AxisU || canHitU) ? 4.0f : 2.5f);
+            drawList->AddTriangleFilled(ImVec2(tipU.x + 9.0f, tipU.y), ImVec2(tipU.x, tipU.y - 5.0f), ImVec2(tipU.x, tipU.y + 5.0f), uCol);
+            drawList->AddText(ImVec2(tipU.x + 12.0f, tipU.y - 8.0f), uCol, "U");
+
+            // Axis V Arrow (Emerald Green)
+            ImU32 vCol = (m_activeGizmoPart == UVGizmoDragPart::AxisV || canHitV) ? IM_COL32(255, 240, 100, 255) : IM_COL32(50, 220, 90, 240);
+            ImVec2 tipV(centerScr.x, centerScr.y - 65.0f);
+            drawList->AddLine(centerScr, tipV, vCol, (m_activeGizmoPart == UVGizmoDragPart::AxisV || canHitV) ? 4.0f : 2.5f);
+            drawList->AddTriangleFilled(ImVec2(tipV.x, tipV.y - 9.0f), ImVec2(tipV.x - 5.0f, tipV.y), ImVec2(tipV.x + 5.0f, tipV.y), vCol);
+            drawList->AddText(ImVec2(tipV.x - 4.0f, tipV.y - 22.0f), vCol, "V");
+
+            // Uniform Scale Box (Gold)
+            ImU32 sCol = (m_activeGizmoPart == UVGizmoDragPart::ScaleUniform || inScaleBox) ? IM_COL32(0, 255, 255, 255) : IM_COL32(255, 204, 0, 240);
+            ImVec2 sBoxMin(centerScr.x + 38.0f, centerScr.y - 54.0f);
+            ImVec2 sBoxMax(centerScr.x + 54.0f, centerScr.y - 38.0f);
+            drawList->AddRectFilled(sBoxMin, sBoxMax, sCol);
+            drawList->AddRect(sBoxMin, sBoxMax, IM_COL32(0, 0, 0, 220), 0.0f, 0, 1.0f);
+
+            // Center Free Move Handle (Square)
+            ImU32 cCol = (m_activeGizmoPart == UVGizmoDragPart::CenterFree || canHitCenter) ? IM_COL32(0, 255, 255, 255) : IM_COL32(255, 255, 255, 220);
+            drawList->AddRectFilled(ImVec2(centerScr.x - 7.0f, centerScr.y - 7.0f), ImVec2(centerScr.x + 7.0f, centerScr.y + 7.0f), cCol, 2.0f);
+            drawList->AddRect(ImVec2(centerScr.x - 7.0f, centerScr.y - 7.0f), ImVec2(centerScr.x + 7.0f, centerScr.y + 7.0f), IM_COL32(0, 0, 0, 220), 2.0f, 0, 1.0f);
+        }
+
+        // Marquee Box Drag State Handling (only when gizmo not hovered/dragged)
+        if (!io.KeyAlt && !gizmoHovered && m_activeGizmoPart == UVGizmoDragPart::None && ImGui::IsMouseClicked(0)) {
             m_isMarqueeSelecting = true;
             m_marqueeStart = io.MousePos;
             m_marqueeEnd = io.MousePos;
@@ -1322,82 +1524,136 @@ void UIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& size) {
                 }
                 PushHistoryState("Box Select UV Components");
             } else {
-                // Single Click Selection
-                if (m_uvSelectionMode == UVSelectionMode::Vertex) {
-                    if (hoverVert >= 0) {
-                        if (io.KeyShift) {
-                            if (m_selectedUVVertices.count(hoverVert)) m_selectedUVVertices.erase(hoverVert);
-                            else m_selectedUVVertices.insert(hoverVert);
-                        } else {
-                            m_selectedUVVertices.clear();
-                            m_selectedUVVertices.insert(hoverVert);
-                        }
-                    } else if (!io.KeyShift) {
-                        m_selectedUVVertices.clear();
-                    }
-                } else if (m_uvSelectionMode == UVSelectionMode::Edge) {
-                    if (hoverEdgeV0 >= 0) {
-                        auto edgeKey = MakeEdgeKey(static_cast<uint32_t>(hoverEdgeV0), static_cast<uint32_t>(hoverEdgeV1));
-                        if (io.MouseDoubleClicked[0]) {
-                            UVCutter::SelectEdgeLoop(m_lowPolyMesh, static_cast<uint32_t>(hoverEdgeV0), static_cast<uint32_t>(hoverEdgeV1), io.KeyShift);
-                            m_lastSelectedEdge = edgeKey;
-                            m_hasLastSelectedEdge = true;
-                            m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
-                            PushHistoryState("Select Edge Loop in 2D");
-                        } else if (io.KeyShift && m_hasLastSelectedEdge && !m_lowPolyMesh.selectedEdges.empty() && m_lastSelectedEdge != edgeKey) {
-                            UVCutter::SelectShortestPath(m_lowPolyMesh, m_lastSelectedEdge.first, m_lastSelectedEdge.second,
-                                                         edgeKey.first, edgeKey.second, true);
-                            m_lastSelectedEdge = edgeKey;
-                            m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
-                            PushHistoryState("Select Shortest Path in 2D");
-                        } else if (io.KeyShift) {
-                            if (m_lowPolyMesh.selectedEdges.count(edgeKey)) m_lowPolyMesh.selectedEdges.erase(edgeKey);
-                            else m_lowPolyMesh.selectedEdges.insert(edgeKey);
-                            m_lastSelectedEdge = edgeKey;
-                            m_hasLastSelectedEdge = true;
-                            m_lowPolyMesh.GenerateSelectedEdgeLines();
-                            m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
-                        } else {
-                            m_lowPolyMesh.selectedEdges.clear();
-                            m_lowPolyMesh.selectedEdges.insert(edgeKey);
-                            m_lastSelectedEdge = edgeKey;
-                            m_hasLastSelectedEdge = true;
-                            m_lowPolyMesh.GenerateSelectedEdgeLines();
-                            m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
-                        }
-                    } else if (!io.KeyShift) {
-                        m_lowPolyMesh.selectedEdges.clear();
-                        m_hasLastSelectedEdge = false;
-                        m_lowPolyMesh.GenerateSelectedEdgeLines();
-                        m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
-                    }
-                } else if (m_uvSelectionMode == UVSelectionMode::Face) {
-                    if (hoverFace >= 0) {
-                        if (io.KeyShift) {
-                            if (m_selectedUVFaces.count(hoverFace)) m_selectedUVFaces.erase(hoverFace);
-                            else m_selectedUVFaces.insert(hoverFace);
-                        } else {
-                            m_selectedUVFaces.clear();
-                            m_selectedUVFaces.insert(hoverFace);
-                        }
-                    } else if (!io.KeyShift) {
-                        m_selectedUVFaces.clear();
-                    }
-                } else if (m_uvSelectionMode == UVSelectionMode::Shell) {
-                    if (!hoverShellFaces.empty()) {
-                        if (io.KeyShift) {
-                            bool allIn = true;
-                            for (uint32_t f : hoverShellFaces) if (!m_selectedUVFaces.count(f)) { allIn = false; break; }
-                            if (allIn) {
-                                for (uint32_t f : hoverShellFaces) m_selectedUVFaces.erase(f);
-                            } else {
-                                m_selectedUVFaces.insert(hoverShellFaces.begin(), hoverShellFaces.end());
+                // Double-Click or 'L' Key: Select Connected Shell / Island
+                if (io.MouseDoubleClicked[0] || ImGui::IsKeyPressed(ImGuiKey_L)) {
+                    int targetTri = -1;
+                    if (hoverFace >= 0) targetTri = hoverFace;
+                    else if (hoverVert >= 0) {
+                        for (size_t t = 0; t < m_lowPolyMesh.triangles.size(); ++t) {
+                            const auto& tri = m_lowPolyMesh.triangles[t];
+                            if (tri.indices[0] == static_cast<uint32_t>(hoverVert) ||
+                                tri.indices[1] == static_cast<uint32_t>(hoverVert) ||
+                                tri.indices[2] == static_cast<uint32_t>(hoverVert)) {
+                                targetTri = static_cast<int>(t);
+                                break;
                             }
-                        } else {
-                            m_selectedUVFaces = hoverShellFaces;
                         }
-                    } else if (!io.KeyShift) {
-                        m_selectedUVFaces.clear();
+                    } else if (hoverEdgeV0 >= 0) {
+                        for (size_t t = 0; t < m_lowPolyMesh.triangles.size(); ++t) {
+                            const auto& tri = m_lowPolyMesh.triangles[t];
+                            for (int e = 0; e < 3; ++e) {
+                                if (MakeEdgeKey(tri.indices[e], tri.indices[(e + 1) % 3]) == MakeEdgeKey(hoverEdgeV0, hoverEdgeV1)) {
+                                    targetTri = static_cast<int>(t);
+                                    break;
+                                }
+                            }
+                            if (targetTri >= 0) break;
+                        }
+                    }
+
+                    if (targetTri >= 0) {
+                        auto sh = GetShellFaces(static_cast<uint32_t>(targetTri));
+                        if (!io.KeyShift) {
+                            m_selectedUVFaces.clear();
+                            m_selectedUVVertices.clear();
+                            m_lowPolyMesh.selectedEdges.clear();
+                        }
+                        if (m_uvSelectionMode == UVSelectionMode::Vertex) {
+                            for (uint32_t f : sh) {
+                                const auto& tri = m_lowPolyMesh.triangles[f];
+                                m_selectedUVVertices.insert(tri.indices[0]);
+                                m_selectedUVVertices.insert(tri.indices[1]);
+                                m_selectedUVVertices.insert(tri.indices[2]);
+                            }
+                        } else if (m_uvSelectionMode == UVSelectionMode::Edge) {
+                            for (uint32_t f : sh) {
+                                const auto& tri = m_lowPolyMesh.triangles[f];
+                                for (int e = 0; e < 3; ++e) {
+                                    m_lowPolyMesh.selectedEdges.insert(MakeEdgeKey(tri.indices[e], tri.indices[(e + 1) % 3]));
+                                }
+                            }
+                            m_lowPolyMesh.GenerateSelectedEdgeLines();
+                            m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
+                        } else {
+                            m_selectedUVFaces.insert(sh.begin(), sh.end());
+                        }
+                        PushHistoryState("Select Connected UV Shell");
+                        char msg[128];
+                        snprintf(msg, sizeof(msg), "Selected entire connected UV shell (%zu faces)", sh.size());
+                        m_uvStatusMessage = msg;
+                    }
+                } else {
+                    // Single Click Selection
+                    if (m_uvSelectionMode == UVSelectionMode::Vertex) {
+                        if (hoverVert >= 0) {
+                            if (io.KeyShift) {
+                                if (m_selectedUVVertices.count(hoverVert)) m_selectedUVVertices.erase(hoverVert);
+                                else m_selectedUVVertices.insert(hoverVert);
+                            } else {
+                                m_selectedUVVertices.clear();
+                                m_selectedUVVertices.insert(hoverVert);
+                            }
+                        } else if (!io.KeyShift) {
+                            m_selectedUVVertices.clear();
+                        }
+                    } else if (m_uvSelectionMode == UVSelectionMode::Edge) {
+                        if (hoverEdgeV0 >= 0) {
+                            auto edgeKey = MakeEdgeKey(static_cast<uint32_t>(hoverEdgeV0), static_cast<uint32_t>(hoverEdgeV1));
+                            if (io.KeyShift && m_hasLastSelectedEdge && !m_lowPolyMesh.selectedEdges.empty() && m_lastSelectedEdge != edgeKey) {
+                                UVCutter::SelectShortestPath(m_lowPolyMesh, m_lastSelectedEdge.first, m_lastSelectedEdge.second,
+                                                             edgeKey.first, edgeKey.second, true);
+                                m_lastSelectedEdge = edgeKey;
+                                m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
+                                PushHistoryState("Select Shortest Path in 2D");
+                            } else if (io.KeyShift) {
+                                if (m_lowPolyMesh.selectedEdges.count(edgeKey)) m_lowPolyMesh.selectedEdges.erase(edgeKey);
+                                else m_lowPolyMesh.selectedEdges.insert(edgeKey);
+                                m_lastSelectedEdge = edgeKey;
+                                m_hasLastSelectedEdge = true;
+                                m_lowPolyMesh.GenerateSelectedEdgeLines();
+                                m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
+                            } else {
+                                m_lowPolyMesh.selectedEdges.clear();
+                                m_lowPolyMesh.selectedEdges.insert(edgeKey);
+                                m_lastSelectedEdge = edgeKey;
+                                m_hasLastSelectedEdge = true;
+                                m_lowPolyMesh.GenerateSelectedEdgeLines();
+                                m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
+                            }
+                        } else if (!io.KeyShift) {
+                            m_lowPolyMesh.selectedEdges.clear();
+                            m_hasLastSelectedEdge = false;
+                            m_lowPolyMesh.GenerateSelectedEdgeLines();
+                            m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
+                        }
+                    } else if (m_uvSelectionMode == UVSelectionMode::Face) {
+                        if (hoverFace >= 0) {
+                            if (io.KeyShift) {
+                                if (m_selectedUVFaces.count(hoverFace)) m_selectedUVFaces.erase(hoverFace);
+                                else m_selectedUVFaces.insert(hoverFace);
+                            } else {
+                                m_selectedUVFaces.clear();
+                                m_selectedUVFaces.insert(hoverFace);
+                            }
+                        } else if (!io.KeyShift) {
+                            m_selectedUVFaces.clear();
+                        }
+                    } else if (m_uvSelectionMode == UVSelectionMode::Shell) {
+                        if (!hoverShellFaces.empty()) {
+                            if (io.KeyShift) {
+                                bool allIn = true;
+                                for (uint32_t f : hoverShellFaces) if (!m_selectedUVFaces.count(f)) { allIn = false; break; }
+                                if (allIn) {
+                                    for (uint32_t f : hoverShellFaces) m_selectedUVFaces.erase(f);
+                                } else {
+                                    m_selectedUVFaces.insert(hoverShellFaces.begin(), hoverShellFaces.end());
+                                }
+                            } else {
+                                m_selectedUVFaces = hoverShellFaces;
+                            }
+                        } else if (!io.KeyShift) {
+                            m_selectedUVFaces.clear();
+                        }
                     }
                 }
             }
@@ -1441,6 +1697,30 @@ void UIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& size) {
     ModeButton("EDGE (2)", UVSelectionMode::Edge, "Edge Selection Mode [Hotkey: 2] (Click, Double-click loop, or Box Drag to select edges)");
     ModeButton("FACE (3)", UVSelectionMode::Face, "Face Selection Mode [Hotkey: 3] (Click or Box Drag to select UV faces)");
     ModeButton("SHELL (4)", UVSelectionMode::Shell, "Shell Selection Mode [Hotkey: 4] (Click or Box Drag to select whole UV islands)");
+
+    ImGui::TextDisabled("|");
+    ImGui::SameLine();
+
+    auto GizmoButton = [&](const char* label, UVGizmoMode mode, const char* tooltip) {
+        bool active = (m_uvGizmoMode == mode);
+        if (active) {
+            ImGui::PushStyleColor(ImGuiCol_Button, BakerUI::Hex(0x4CC3A6));
+            ImGui::PushStyleColor(ImGuiCol_Text, BakerUI::Hex(0x0C1412));
+        } else {
+            ImGui::PushStyleColor(ImGuiCol_Button, BakerUI::Hex(0x282828));
+            ImGui::PushStyleColor(ImGuiCol_Text, BakerUI::Hex(0xCCCCCC));
+        }
+        if (ImGui::Button(label)) {
+            m_uvGizmoMode = mode;
+        }
+        ImGui::PopStyleColor(2);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tooltip);
+        ImGui::SameLine();
+    };
+
+    GizmoButton("MOVE (W)", UVGizmoMode::Translate, "Move Gizmo Tool (Shortcut: W or G)");
+    GizmoButton("ROTATE (E)", UVGizmoMode::Rotate, "Rotate Gizmo Tool (Shortcut: E or R)");
+    GizmoButton("SCALE (R)", UVGizmoMode::Scale, "Scale Gizmo Tool (Shortcut: R or S)");
 
     ImGui::TextDisabled("|");
     ImGui::SameLine();
@@ -1825,7 +2105,48 @@ void UIManager::RenderViewportPanel() {
                             drawList->AddTriangleFilled(s0, s1, s2, IM_COL32(0, 255, 255, 45));
                             drawList->AddTriangle(s0, s1, s2, IM_COL32(0, 255, 255, 240), 2.0f);
 
-                            if (ImGui::IsMouseClicked(0)) {
+                            if (io.MouseDoubleClicked[0] || ImGui::IsKeyPressed(ImGuiKey_L)) {
+                                auto islands = UVCutter::SegmentIslands(m_lowPolyMesh);
+                                for (const auto& islTris : islands) {
+                                    bool contains = false;
+                                    for (int t : islTris) {
+                                        if (t == hitTriIdx) { contains = true; break; }
+                                    }
+                                    if (contains) {
+                                        if (!io.KeyShift) {
+                                            m_selectedUVFaces.clear();
+                                            m_selectedUVVertices.clear();
+                                            m_lowPolyMesh.selectedEdges.clear();
+                                        }
+                                        if (m_uvSelectionMode == UVSelectionMode::Vertex) {
+                                            for (int t : islTris) {
+                                                const auto& tRef = m_lowPolyMesh.triangles[t];
+                                                m_selectedUVVertices.insert(tRef.indices[0]);
+                                                m_selectedUVVertices.insert(tRef.indices[1]);
+                                                m_selectedUVVertices.insert(tRef.indices[2]);
+                                            }
+                                        } else if (m_uvSelectionMode == UVSelectionMode::Edge) {
+                                            for (int t : islTris) {
+                                                const auto& tRef = m_lowPolyMesh.triangles[t];
+                                                for (int e = 0; e < 3; ++e) {
+                                                    m_lowPolyMesh.selectedEdges.insert(MakeEdgeKey(tRef.indices[e], tRef.indices[(e+1)%3]));
+                                                }
+                                            }
+                                            m_lowPolyMesh.GenerateSelectedEdgeLines();
+                                            m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
+                                        } else {
+                                            for (int t : islTris) {
+                                                m_selectedUVFaces.insert(static_cast<uint32_t>(t));
+                                            }
+                                        }
+                                        break;
+                                    }
+                                }
+                                PushHistoryState("Select Connected UV Shell");
+                                char msg[128];
+                                snprintf(msg, sizeof(msg), "Selected entire connected UV shell");
+                                m_uvStatusMessage = msg;
+                            } else if (ImGui::IsMouseClicked(0)) {
                                 uint32_t fIdx = static_cast<uint32_t>(hitTriIdx);
                                 if (m_uvSelectionMode == UVSelectionMode::Face) {
                                     if (io.KeyShift) {
@@ -3378,11 +3699,20 @@ void UIManager::UnwrapMesh() {
         m_uvStatusMessage = "No islands segmented. Mark seams first or unwrap whole mesh.";
         return;
     }
+
+    // Split vertices along seams so islands have independent vertex buffers
+    UVCutter::SplitMeshAlongSeams(m_lowPolyMesh, islandsTris);
+
     m_currentIslands = UVUnwrapper::UnwrapMesh(m_lowPolyMesh, islandsTris);
     m_hasUnwrappedIslands = true;
+    m_packStats = UVPacker::PackIslands(m_currentIslands, m_packSettings);
+    UVPacker::ApplyToMesh(m_lowPolyMesh, m_currentIslands);
+    m_viewportRenderer.SetLowPolyMesh(m_lowPolyMesh, m_settings.lowPolyScale);
+    m_viewportRenderer.UpdateSeams(m_lowPolyMesh);
+
     PushHistoryState("Unwrap Mesh");
     char msg[128];
-    snprintf(msg, sizeof(msg), "Unwrapped %zu islands successfully", m_currentIslands.size());
+    snprintf(msg, sizeof(msg), "Unwrapped and packed %zu islands successfully", m_currentIslands.size());
     m_uvStatusMessage = msg;
     m_logEntries.push_back(std::string("[UV Unwrap] ") + msg);
 }
@@ -3419,8 +3749,8 @@ void UIManager::AutoCutUnwrapAndPack() {
         m_uvStatusMessage = "Please load a low-poly mesh first.";
         return;
     }
-    // 1. Mark seams by angle
-    UVCutter::MarkSeamsByAngle(m_lowPolyMesh, m_seamAngleThreshold);
+    // 1. Generate clean closed seams using normal clustering charts (Smart UV Charts)
+    UVCutter::GenerateSmartSeams(m_lowPolyMesh, m_seamAngleThreshold);
     if (m_packSettings.packByPolygroup) {
         UVCutter::MarkSeamsByPolygroup(m_lowPolyMesh);
     }
@@ -3430,11 +3760,14 @@ void UIManager::AutoCutUnwrapAndPack() {
     // 2. Segment islands
     auto islandsTris = UVCutter::SegmentIslands(m_lowPolyMesh);
 
-    // 3. Conformal unwrap
+    // 3. Split vertices along seams so islands have independent vertex buffers
+    UVCutter::SplitMeshAlongSeams(m_lowPolyMesh, islandsTris);
+
+    // 4. Conformal unwrap
     m_currentIslands = UVUnwrapper::UnwrapMesh(m_lowPolyMesh, islandsTris);
     m_hasUnwrappedIslands = true;
 
-    // 4. MaxRects BSSF multi-rotation packing
+    // 5. MaxRects BSSF multi-rotation packing
     m_packStats = UVPacker::PackIslands(m_currentIslands, m_packSettings);
     UVPacker::ApplyToMesh(m_lowPolyMesh, m_currentIslands);
     m_viewportRenderer.SetLowPolyMesh(m_lowPolyMesh, m_settings.lowPolyScale);

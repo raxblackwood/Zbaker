@@ -223,6 +223,15 @@ Implemented Blender standard 1, 2, 3 component selection hotkeys and synchronize
 
 ---
 
+### 5.8 2D UV Transform Gizmo, Double-Click/L Shell Selection, and Smart UV Seams (2026-10-26)
+Resolved UV unwrapping artifacts and added full 2D UV manipulation tools:
+- 2D UV Transform Gizmo: Implemented an interactive 2D transform gizmo in the UV canvas with a free-move center square, coral U axis arrow, emerald V axis arrow, blue rotate ring, uniform scale box, and Blender G (Grab), R (Rotate), and S (Scale) shortcuts.
+- Double-Click & 'L' Key Connected Shell Selection: Added double-click and 'L' hotkey support in both the 2D canvas and 3D viewport to instantly select all connected components in a UV island/shell.
+- Smart UV Chart Seams: Replaced noisy dihedral angle seam cutting with normal-clustering chart generation, ensuring all seams form continuous closed loops without dead-end cuts.
+- Seam Vertex Splitting: Implemented UVCutter::SplitMeshAlongSeams to duplicate vertices along cut seams, guaranteeing each UV island has independent vertex coordinates and completely eliminating cross-canvas stretching and origin spikes.
+
+---
+
 ## 6. Marmoset Paint Cage & Paint Skew Architecture (Phase 2 Roadmap)
 To achieve full parity with Marmoset Toolbag's interactive 3D brush toolset:
 1. **Interactive 3D Ray-Mesh Picking**:

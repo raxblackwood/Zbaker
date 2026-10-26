@@ -826,6 +826,151 @@ std::vector<std::vector<int>> UVCutter::SegmentIslands(const LowPolyMesh& mesh) 
     return islands;
 }
 
+void UVCutter::GenerateSmartSeams(LowPolyMesh& mesh, float angleThresholdDeg) {
+    if (mesh.vertices.empty() || mesh.triangles.empty()) return;
+
+    auto geomMap = BuildGeomVertexMap(mesh);
+    size_t numTris = mesh.triangles.size();
+
+    // 1. Compute geometric face normals for each triangle
+    std::vector<Vec3> faceNormals(numTris);
+    for (size_t i = 0; i < numTris; ++i) {
+        const auto& tri = mesh.triangles[i];
+        const Vec3& p0 = mesh.vertices[tri.indices[0]].position;
+        const Vec3& p1 = mesh.vertices[tri.indices[1]].position;
+        const Vec3& p2 = mesh.vertices[tri.indices[2]].position;
+        Vec3 n = (p1 - p0).Cross(p2 - p0);
+        float len = n.Length();
+        faceNormals[i] = (len > 1e-8f) ? (n * (1.0f / len)) : Vec3(0, 1, 0);
+    }
+
+    // 2. Build geometric edge to triangles adjacency
+    std::map<std::pair<uint32_t, uint32_t>, std::vector<int>> edgeToTris;
+    for (int tIdx = 0; tIdx < static_cast<int>(numTris); ++tIdx) {
+        const auto& tri = mesh.triangles[tIdx];
+        for (int e = 0; e < 3; ++e) {
+            uint32_t gA = geomMap[tri.indices[e]];
+            uint32_t gB = geomMap[tri.indices[(e + 1) % 3]];
+            edgeToTris[MakeEdgeKey(gA, gB)].push_back(tIdx);
+        }
+    }
+
+    // 3. Build triangle adjacency graph
+    std::vector<std::vector<int>> triNeighbors(numTris);
+    for (const auto& kv : edgeToTris) {
+        if (kv.second.size() == 2) {
+            triNeighbors[kv.second[0]].push_back(kv.second[1]);
+            triNeighbors[kv.second[1]].push_back(kv.second[0]);
+        }
+    }
+
+    // 4. Cluster triangles into developable charts using normal similarity (Smart UV Charts)
+    float minCos = std::cos(angleThresholdDeg * 3.14159265f / 180.0f);
+    std::vector<int> chartId(numTris, -1);
+    int nextChart = 0;
+
+    for (size_t i = 0; i < numTris; ++i) {
+        if (chartId[i] >= 0) continue;
+
+        int cId = nextChart++;
+        chartId[i] = cId;
+        Vec3 refNormal = faceNormals[i];
+
+        std::queue<int> q;
+        q.push(static_cast<int>(i));
+
+        while (!q.empty()) {
+            int cur = q.front();
+            q.pop();
+
+            for (int neighbor : triNeighbors[cur]) {
+                if (chartId[neighbor] >= 0) continue;
+
+                float dotRef = faceNormals[neighbor].Dot(refNormal);
+                float dotAdj = faceNormals[neighbor].Dot(faceNormals[cur]);
+                if (dotRef >= minCos && dotAdj >= minCos) {
+                    chartId[neighbor] = cId;
+                    q.push(neighbor);
+                }
+            }
+        }
+    }
+
+    // 5. Mark seams strictly along chart boundaries and open mesh borders
+    mesh.cutSeams.clear();
+    for (int tIdx = 0; tIdx < static_cast<int>(numTris); ++tIdx) {
+        const auto& tri = mesh.triangles[tIdx];
+        for (int e = 0; e < 3; ++e) {
+            uint32_t vA = tri.indices[e];
+            uint32_t vB = tri.indices[(e + 1) % 3];
+            uint32_t gA = geomMap[vA];
+            uint32_t gB = geomMap[vB];
+            auto key = MakeEdgeKey(gA, gB);
+            const auto& adjTris = edgeToTris[key];
+            if (adjTris.size() == 1) {
+                mesh.cutSeams.insert(MakeEdgeKey(vA, vB));
+            } else if (adjTris.size() == 2) {
+                int t0 = adjTris[0];
+                int t1 = adjTris[1];
+                if (chartId[t0] != chartId[t1]) {
+                    mesh.cutSeams.insert(MakeEdgeKey(vA, vB));
+                }
+            }
+        }
+    }
+
+    GenerateSeamLineIndices(mesh);
+}
+
+void UVCutter::SplitMeshAlongSeams(LowPolyMesh& mesh, const std::vector<std::vector<int>>& islandsTris) {
+    if (mesh.vertices.empty() || islandsTris.size() <= 1) return;
+
+    size_t origVertCount = mesh.vertices.size();
+    std::vector<int> vertexOwnerIsland(origVertCount, -1);
+    std::map<std::pair<int, uint32_t>, uint32_t> dupMap;
+
+    for (size_t islIdx = 0; islIdx < islandsTris.size(); ++islIdx) {
+        for (int tIdx : islandsTris[islIdx]) {
+            if (tIdx < 0 || tIdx >= static_cast<int>(mesh.triangles.size())) continue;
+            auto& tri = mesh.triangles[tIdx];
+            for (int k = 0; k < 3; ++k) {
+                uint32_t v = tri.indices[k];
+                if (v >= origVertCount) continue;
+
+                if (vertexOwnerIsland[v] == -1) {
+                    vertexOwnerIsland[v] = static_cast<int>(islIdx);
+                } else if (vertexOwnerIsland[v] != static_cast<int>(islIdx)) {
+                    auto key = std::make_pair(static_cast<int>(islIdx), v);
+                    auto it = dupMap.find(key);
+                    if (it != dupMap.end()) {
+                        tri.indices[k] = it->second;
+                    } else {
+                        uint32_t newVIdx = static_cast<uint32_t>(mesh.vertices.size());
+                        mesh.vertices.push_back(mesh.vertices[v]);
+                        if (!mesh.cagePositions.empty() && v < mesh.cagePositions.size()) {
+                            mesh.cagePositions.push_back(mesh.cagePositions[v]);
+                        }
+                        if (!mesh.cageNormals.empty() && v < mesh.cageNormals.size()) {
+                            mesh.cageNormals.push_back(mesh.cageNormals[v]);
+                        }
+                        if (!mesh.cageOffsets.empty() && v < mesh.cageOffsets.size()) {
+                            mesh.cageOffsets.push_back(mesh.cageOffsets[v]);
+                        }
+                        if (!mesh.vertexSkew.empty() && v < mesh.vertexSkew.size()) {
+                            mesh.vertexSkew.push_back(mesh.vertexSkew[v]);
+                        }
+                        dupMap[key] = newVIdx;
+                        tri.indices[k] = newVIdx;
+                    }
+                }
+            }
+        }
+    }
+
+    GenerateSeamLineIndices(mesh);
+    mesh.GenerateSelectedEdgeLines();
+}
+
 void UVCutter::GenerateSeamLineIndices(LowPolyMesh& mesh) {
     mesh.seamLineIndices.clear();
     mesh.seamLineIndices.reserve(mesh.cutSeams.size() * 2);

@@ -71,6 +71,12 @@ public:
     // Segment mesh triangles into connected islands bounded by seams
     static std::vector<std::vector<int>> SegmentIslands(const LowPolyMesh& mesh);
 
+    // Generate clean closed UV seams based on normal clustering charts (Smart UV Charts)
+    static void GenerateSmartSeams(LowPolyMesh& mesh, float angleThresholdDeg);
+
+    // Splits and duplicates mesh vertices along UV cut seams so each island has independent UV coordinates
+    static void SplitMeshAlongSeams(LowPolyMesh& mesh, const std::vector<std::vector<int>>& islandsTris);
+
     // Regenerate seamLineIndices in LowPolyMesh for 3D/2D viewport GPU line rendering
     static void GenerateSeamLineIndices(LowPolyMesh& mesh);
 };
