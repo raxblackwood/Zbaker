@@ -1013,8 +1013,9 @@ void ViewportRenderer::Render() {
     // 3. Render Low-Poly Mesh
     if (showLowPoly && m_lowPolyGPU.vertexBuffer) {
         // Shaded surface
-        m_context->OMSetBlendState(showHighPoly ? m_alphaBlendState : m_opaqueBlendState, nullptr, 0xFFFFFFFF);
-        m_context->RSSetState(m_solidNoCullRS);
+        bool isTransparent = (lowPolyOpacity < 0.999f) || (showHighPoly && m_highPolyGPU.vertexBuffer != nullptr && lowPolyOpacity < 0.999f);
+        m_context->OMSetBlendState(isTransparent ? m_alphaBlendState : m_opaqueBlendState, nullptr, 0xFFFFFFFF);
+        m_context->RSSetState(m_solidRS);
 
         bool useNormalMap = (showBakedNormals && m_bakedNormalSRV != nullptr);
         if (useNormalMap) {

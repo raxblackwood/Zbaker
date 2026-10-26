@@ -196,6 +196,14 @@ Following a comprehensive 5-axis design reference interpretation audit against D
 
 ---
 
+### 5.5 Solid Opaque Low-Poly Shading, Quad UVs, and Cursor Polish (2026-10-26)
+Addressed rendering artifacts and UI visual clarity:
+- Low-Poly Solid Opaque Shading: Fixed low-poly mesh transparency and missing face holes by setting default lowPolyOpacity to 1.0f (100% opaque), enforcing m_solidRS (D3D11_CULL_BACK), and utilizing m_opaqueBlendState when opacity is 1.0f. This completely eliminates depth-buffer write conflicts and backface penetration.
+- Pure Quad UV Wireframe: Updated 2D UV canvas to render perimeter outlines directly from polygonFaces (and wireframeLineIndices) rather than triangle edges, eliminating internal diagonal splits. Removed distracting vertex dot circles for clean Blender-identical UV shells.
+- Circular Reticle Removal: Completely removed the screen-space circular cursor reticle from the 3D viewport, restoring standard OS mouse navigation across all modes.
+
+---
+
 ## 6. Marmoset Paint Cage & Paint Skew Architecture (Phase 2 Roadmap)
 To achieve full parity with Marmoset Toolbag's interactive 3D brush toolset:
 1. **Interactive 3D Ray-Mesh Picking**:

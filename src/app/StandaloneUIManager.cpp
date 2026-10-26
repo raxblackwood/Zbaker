@@ -754,8 +754,8 @@ void StandaloneUIManager::RenderViewportPanel() {
         }
     }
 
-    // Marmoset-style 3D interactive brush ray-casting & reticle
-    if (m_toolMode != ToolMode::Navigate && !io.KeyAlt && m_hasLowPoly && (m_viewportMode == ViewportMode::View3D || m_viewportMode == ViewportMode::SplitBoth)) {
+    // Marmoset-style 3D interactive brush ray-casting
+    if ((m_toolMode == ToolMode::PaintCage || m_toolMode == ToolMode::PaintSkew) && !io.KeyAlt && m_hasLowPoly && (m_viewportMode == ViewportMode::View3D || m_viewportMode == ViewportMode::SplitBoth)) {
         float maxActiveW = (m_viewportMode == ViewportMode::SplitBoth) ? leftW : avail.x;
         float relX = io.MousePos.x - screenPos.x;
         float relY = io.MousePos.y - screenPos.y;
@@ -773,23 +773,6 @@ void StandaloneUIManager::RenderViewportPanel() {
                 Vec3 hitPos, hitNormal;
                 int hitTriIdx = -1;
                 if (m_lowPolyMesh.Raycast(localOrg, localDir, hitT, hitPos, hitNormal, hitTriIdx)) {
-                    // Visual screen-space reticle ring
-                    DirectX::XMFLOAT3 p1(hitPos.x, hitPos.y, hitPos.z);
-                    DirectX::XMFLOAT3 p2(hitPos.x + m_brushRadius, hitPos.y, hitPos.z);
-                    float s1X, s1Y, s2X, s2Y;
-                    m_viewportRenderer.ProjectToScreen(p1, s1X, s1Y);
-                    m_viewportRenderer.ProjectToScreen(p2, s2X, s2Y);
-                    float screenBrushR = std::hypot(s2X - s1X, s2Y - s1Y);
-                    if (screenBrushR < 6.0f) screenBrushR = 6.0f;
-                    if (screenBrushR > 400.0f) screenBrushR = 400.0f;
-
-                    ImDrawList* drawList = ImGui::GetWindowDrawList();
-                    ImU32 reticleCol = (m_toolMode == ToolMode::PaintCage)
-                        ? IM_COL32(40, 190, 255, 230)
-                        : IM_COL32(255, 175, 40, 230);
-                    drawList->AddCircle(io.MousePos, screenBrushR, reticleCol, 36, 2.0f);
-                    drawList->AddCircleFilled(io.MousePos, 3.5f, IM_COL32(255, 255, 255, 255));
-
                     // Interactive dragging stroke
                     if (io.MouseDown[0]) {
                         bool invert = io.KeyCtrl || m_brushInvert;
@@ -1651,25 +1634,48 @@ void StandaloneUIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& s
             drawList->AddTriangleFilled(p0, p1, p2, faceFillCol);
         }
 
-        // 2. Wireframe edges
-        for (const auto& tri : m_lowPolyMesh.triangles) {
-            const auto& v0 = m_lowPolyMesh.vertices[tri.indices[0]];
-            const auto& v1 = m_lowPolyMesh.vertices[tri.indices[1]];
-            const auto& v2 = m_lowPolyMesh.vertices[tri.indices[2]];
+        // 2. Wireframe edges (Pure polygon outlines matching Blender UV Editor: NO triangulated diagonals!)
+        if (!m_lowPolyMesh.polygonFaces.empty()) {
+            for (const auto& face : m_lowPolyMesh.polygonFaces) {
+                size_t fv = face.size();
+                for (size_t v = 0; v < fv; ++v) {
+                    uint32_t i0 = face[v];
+                    uint32_t i1 = face[(v + 1) % fv];
+                    if (i0 < m_lowPolyMesh.vertices.size() && i1 < m_lowPolyMesh.vertices.size()) {
+                        const auto& v0 = m_lowPolyMesh.vertices[i0];
+                        const auto& v1 = m_lowPolyMesh.vertices[i1];
+                        ImVec2 p0(origin.x + m_uvPan.x + v0.uv.u * currentTileSize, origin.y + m_uvPan.y + (1.0f - v0.uv.v) * currentTileSize);
+                        ImVec2 p1(origin.x + m_uvPan.x + v1.uv.u * currentTileSize, origin.y + m_uvPan.y + (1.0f - v1.uv.v) * currentTileSize);
+                        drawList->AddLine(p0, p1, edgeCol, 1.0f);
+                    }
+                }
+            }
+        } else if (!m_lowPolyMesh.wireframeLineIndices.empty()) {
+            for (size_t i = 0; i + 1 < m_lowPolyMesh.wireframeLineIndices.size(); i += 2) {
+                uint32_t i0 = m_lowPolyMesh.wireframeLineIndices[i];
+                uint32_t i1 = m_lowPolyMesh.wireframeLineIndices[i + 1];
+                if (i0 < m_lowPolyMesh.vertices.size() && i1 < m_lowPolyMesh.vertices.size()) {
+                    const auto& v0 = m_lowPolyMesh.vertices[i0];
+                    const auto& v1 = m_lowPolyMesh.vertices[i1];
+                    ImVec2 p0(origin.x + m_uvPan.x + v0.uv.u * currentTileSize, origin.y + m_uvPan.y + (1.0f - v0.uv.v) * currentTileSize);
+                    ImVec2 p1(origin.x + m_uvPan.x + v1.uv.u * currentTileSize, origin.y + m_uvPan.y + (1.0f - v1.uv.v) * currentTileSize);
+                    drawList->AddLine(p0, p1, edgeCol, 1.0f);
+                }
+            }
+        } else {
+            for (const auto& tri : m_lowPolyMesh.triangles) {
+                const auto& v0 = m_lowPolyMesh.vertices[tri.indices[0]];
+                const auto& v1 = m_lowPolyMesh.vertices[tri.indices[1]];
+                const auto& v2 = m_lowPolyMesh.vertices[tri.indices[2]];
 
-            ImVec2 p0(origin.x + m_uvPan.x + v0.uv.u * currentTileSize, origin.y + m_uvPan.y + (1.0f - v0.uv.v) * currentTileSize);
-            ImVec2 p1(origin.x + m_uvPan.x + v1.uv.u * currentTileSize, origin.y + m_uvPan.y + (1.0f - v1.uv.v) * currentTileSize);
-            ImVec2 p2(origin.x + m_uvPan.x + v2.uv.u * currentTileSize, origin.y + m_uvPan.y + (1.0f - v2.uv.v) * currentTileSize);
+                ImVec2 p0(origin.x + m_uvPan.x + v0.uv.u * currentTileSize, origin.y + m_uvPan.y + (1.0f - v0.uv.v) * currentTileSize);
+                ImVec2 p1(origin.x + m_uvPan.x + v1.uv.u * currentTileSize, origin.y + m_uvPan.y + (1.0f - v1.uv.v) * currentTileSize);
+                ImVec2 p2(origin.x + m_uvPan.x + v2.uv.u * currentTileSize, origin.y + m_uvPan.y + (1.0f - v2.uv.v) * currentTileSize);
 
-            drawList->AddLine(p0, p1, edgeCol, 1.0f);
-            drawList->AddLine(p1, p2, edgeCol, 1.0f);
-            drawList->AddLine(p2, p0, edgeCol, 1.0f);
-        }
-
-        // 3. Vertex dots like Blender
-        for (const auto& vert : m_lowPolyMesh.vertices) {
-            ImVec2 p(origin.x + m_uvPan.x + vert.uv.u * currentTileSize, origin.y + m_uvPan.y + (1.0f - vert.uv.v) * currentTileSize);
-            drawList->AddCircleFilled(p, 2.0f, vertDotCol);
+                drawList->AddLine(p0, p1, edgeCol, 1.0f);
+                drawList->AddLine(p1, p2, edgeCol, 1.0f);
+                drawList->AddLine(p2, p0, edgeCol, 1.0f);
+            }
         }
     }
 

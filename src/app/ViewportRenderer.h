@@ -79,7 +79,7 @@ public:
     bool showBakedNormals = true;
     ShadingMode highPolyShading = ShadingMode::StudioWhite;
     float highPolyOpacity = 1.0f;
-    float lowPolyOpacity = 0.85f;
+    float lowPolyOpacity = 1.0f;
     float cageOpacity = 0.4f;
 
     DirectX::XMFLOAT3 m_lpTranslation = { 0.0f, 0.0f, 0.0f };
