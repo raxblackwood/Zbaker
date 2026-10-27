@@ -844,6 +844,20 @@ void UIManager::RenderOutlinerPanel() {
 }
 
 void UIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& size) {
+    if (size.x < 50.0f || size.y < 50.0f) return;
+
+    ImGui::SetCursorScreenPos(origin);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(22, 22, 24, 255));
+    bool childOpen = ImGui::BeginChild("##uv_canvas_viewport", size, false,
+        ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoMove);
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar();
+    if (!childOpen) {
+        ImGui::EndChild();
+        return;
+    }
+
     ImDrawList* drawList = ImGui::GetWindowDrawList();
 
     // Deep dark background matching Blender UV Editor
@@ -861,7 +875,7 @@ void UIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& size) {
     if (baseTileSize < 120.0f) baseTileSize = 300.0f;
     float currentTileSize = baseTileSize * m_uvZoom;
 
-    float headerH = 34.0f;
+    float headerH = 58.0f;
     bool inCanvas = isHovered && (io.MousePos.y > origin.y + headerH);
 
     // Helper functions for true UV <-> Screen mapping
@@ -1650,26 +1664,31 @@ void UIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& size) {
         }
     }
 
-    // Draw Maya UV Editor Header Toolbar (pinned cleanly across top of 2D UV Viewport)
-    drawList->AddRectFilled(origin, ImVec2(origin.x + size.x, origin.y + headerH), IM_COL32(24, 25, 28, 255));
-    drawList->AddLine(ImVec2(origin.x, origin.y + headerH), ImVec2(origin.x + size.x, origin.y + headerH), IM_COL32(40, 42, 48, 255), 1.0f);
+    // Draw Maya UV Editor Header Toolbar (2-Tier Pinned Header across top of 2D UV Viewport)
+    drawList->AddRectFilled(origin, ImVec2(origin.x + size.x, origin.y + headerH), IM_COL32(20, 21, 25, 255));
+    drawList->AddLine(ImVec2(origin.x, origin.y + 28.0f), ImVec2(origin.x + size.x, origin.y + 28.0f), IM_COL32(34, 36, 42, 255), 1.0f);
+    drawList->AddLine(ImVec2(origin.x, origin.y + headerH), ImVec2(origin.x + size.x, origin.y + headerH), IM_COL32(40, 43, 50, 255), 1.0f);
 
-    ImGui::SetCursorScreenPos(ImVec2(origin.x + 8.0f, origin.y + 4.0f));
+    bool compact = (size.x < 620.0f);
+
+    // ==========================================
+    // TIER 1: Selection Modes, Gizmos, Display Toggles & Viewport Switcher
+    // ==========================================
+    ImGui::SetCursorScreenPos(ImVec2(origin.x + 6.0f, origin.y + 3.0f));
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(3, 0));
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6, 3));
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(compact ? 4.0f : 5.0f, 2.0f));
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 3.0f);
 
-    // 1. Maya Component Selection Modes
-    auto ModeButton = [&](const char* label, UVSelectionMode mode, const char* tooltip) {
+    auto ModeButton = [&](const char* labelFull, const char* labelCompact, UVSelectionMode mode, const char* tooltip) {
         bool active = (m_uvSelectionMode == mode);
         if (active) {
             ImGui::PushStyleColor(ImGuiCol_Button, BakerUI::Hex(0x4CC3A6));
             ImGui::PushStyleColor(ImGuiCol_Text, BakerUI::Hex(0x0C1412));
         } else {
-            ImGui::PushStyleColor(ImGuiCol_Button, BakerUI::Hex(0x222224));
+            ImGui::PushStyleColor(ImGuiCol_Button, BakerUI::Hex(0x242528));
             ImGui::PushStyleColor(ImGuiCol_Text, BakerUI::Hex(0xCCCCCC));
         }
-        if (ImGui::Button(label)) {
+        if (ImGui::Button(compact ? labelCompact : labelFull)) {
             m_uvSelectionMode = mode;
         }
         ImGui::PopStyleColor(2);
@@ -1677,25 +1696,24 @@ void UIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& size) {
         ImGui::SameLine();
     };
 
-    ModeButton("Vert (1)", UVSelectionMode::Vertex, "Vertex Selection Mode [Hotkey: 1]");
-    ModeButton("Edge (2)", UVSelectionMode::Edge, "Edge Selection Mode [Hotkey: 2]");
-    ModeButton("Face (3)", UVSelectionMode::Face, "Face Selection Mode [Hotkey: 3]");
-    ModeButton("Shell (4)", UVSelectionMode::Shell, "UV Shell Selection Mode [Hotkey: 4]");
+    ModeButton("Vert (1)", "V 1", UVSelectionMode::Vertex, "Vertex Selection Mode [Hotkey: 1]");
+    ModeButton("Edge (2)", "E 2", UVSelectionMode::Edge, "Edge Selection Mode [Hotkey: 2]");
+    ModeButton("Face (3)", "F 3", UVSelectionMode::Face, "Face Selection Mode [Hotkey: 3]");
+    ModeButton("Shell (4)", "S 4", UVSelectionMode::Shell, "UV Shell Selection Mode [Hotkey: 4]");
 
     ImGui::TextDisabled("|");
     ImGui::SameLine();
 
-    // 2. Transform Gizmo Tools
-    auto GizmoButton = [&](const char* label, UVGizmoMode mode, const char* tooltip) {
+    auto GizmoButton = [&](const char* labelFull, const char* labelCompact, UVGizmoMode mode, const char* tooltip) {
         bool active = (m_uvGizmoMode == mode);
         if (active) {
             ImGui::PushStyleColor(ImGuiCol_Button, BakerUI::Hex(0x4CC3A6));
             ImGui::PushStyleColor(ImGuiCol_Text, BakerUI::Hex(0x0C1412));
         } else {
-            ImGui::PushStyleColor(ImGuiCol_Button, BakerUI::Hex(0x222224));
+            ImGui::PushStyleColor(ImGuiCol_Button, BakerUI::Hex(0x242528));
             ImGui::PushStyleColor(ImGuiCol_Text, BakerUI::Hex(0xCCCCCC));
         }
-        if (ImGui::Button(label)) {
+        if (ImGui::Button(compact ? labelCompact : labelFull)) {
             m_uvGizmoMode = mode;
         }
         ImGui::PopStyleColor(2);
@@ -1703,150 +1721,151 @@ void UIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& size) {
         ImGui::SameLine();
     };
 
-    GizmoButton("Move (W)", UVGizmoMode::Translate, "Move Tool (Shortcut: W or G)");
-    GizmoButton("Rot (E)", UVGizmoMode::Rotate, "Rotate Tool (Shortcut: E or R)");
-    GizmoButton("Scale (R)", UVGizmoMode::Scale, "Scale Tool (Shortcut: R or S)");
+    GizmoButton("Move (W)", "W", UVGizmoMode::Translate, "Move Tool (Shortcut: W or G)");
+    GizmoButton("Rot (E)", "E", UVGizmoMode::Rotate, "Rotate Tool (Shortcut: E or R)");
+    GizmoButton("Scale (R)", "R", UVGizmoMode::Scale, "Scale Tool (Shortcut: R or S)");
 
     ImGui::TextDisabled("|");
     ImGui::SameLine();
 
-    // 3. Maya Display Toggles
-    auto DisplayToggle = [&](const char* label, bool* var, const char* tip) {
+    auto DisplayToggle = [&](const char* labelFull, const char* labelCompact, bool* var, const char* tip) {
         if (*var) {
             ImGui::PushStyleColor(ImGuiCol_Button, BakerUI::Hex(0x3B82F6));
             ImGui::PushStyleColor(ImGuiCol_Text, BakerUI::Hex(0xFFFFFF));
         } else {
-            ImGui::PushStyleColor(ImGuiCol_Button, BakerUI::Hex(0x222224));
-            ImGui::PushStyleColor(ImGuiCol_Text, BakerUI::Hex(0x888888));
+            ImGui::PushStyleColor(ImGuiCol_Button, BakerUI::Hex(0x242528));
+            ImGui::PushStyleColor(ImGuiCol_Text, BakerUI::Hex(0x888890));
         }
-        if (ImGui::Button(label)) *var = !*var;
+        if (ImGui::Button(compact ? labelCompact : labelFull)) *var = !*var;
         ImGui::PopStyleColor(2);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
         ImGui::SameLine();
     };
 
-    DisplayToggle("Borders", &m_showTextureBorders, "Toggle UV texture border / seam highlighting (Maya Texture Borders)");
-    DisplayToggle("Shell Colors", &m_showShellShading, "Toggle Maya UV Shell Shading (Color-code each island uniquely)");
-    DisplayToggle("Checker", &m_showUVChecker, "Toggle 16x16 UV checker background grid");
-    DisplayToggle("Distortion", &m_showDistortionHeatmap, "Toggle UV area stretch/compression distortion feedback");
-    DisplayToggle("Wire", &m_showUVWireframe, "Toggle UV polygon wireframe display");
+    DisplayToggle("Borders", "Brd", &m_showTextureBorders, "Toggle UV texture border / seam highlighting (Maya Texture Borders)");
+    DisplayToggle("Shells", "Col", &m_showShellShading, "Toggle Maya UV Shell Shading (Color-code each island uniquely)");
+    DisplayToggle("Checker", "Grid", &m_showUVChecker, "Toggle 16x16 UV checker background grid");
+    DisplayToggle("Distort", "Dist", &m_showDistortionHeatmap, "Toggle UV area stretch/compression distortion feedback");
+    DisplayToggle("Wire", "Wire", &m_showUVWireframe, "Toggle UV polygon wireframe display");
 
-    ImGui::TextDisabled("|");
-    ImGui::SameLine();
-
-    // 4. Maya Quick Transforms
-    if (ImGui::Button("Flip U")) {
-        FlipSelectedUVs(true);
-    }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Flip selected UV components horizontally along U-axis");
-    ImGui::SameLine();
-
-    if (ImGui::Button("Flip V")) {
-        FlipSelectedUVs(false);
-    }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Flip selected UV components vertically along V-axis");
-    ImGui::SameLine();
-
-    if (ImGui::Button("Rot -90")) {
-        RotateSelectedUVs(-90.0f);
-    }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rotate selected UVs 90 degrees CCW");
-    ImGui::SameLine();
-
-    if (ImGui::Button("Rot +90")) {
-        RotateSelectedUVs(90.0f);
-    }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rotate selected UVs 90 degrees CW");
-    ImGui::SameLine();
-
-    if (ImGui::Button("Straighten")) {
-        StraightenIslands();
-    }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Straighten and align UV islands to grid axes");
-    ImGui::SameLine();
-
-    ImGui::TextDisabled("|");
-    ImGui::SameLine();
-
-    // 5. Operations
-    if (ImGui::Button("Cut")) {
-        CutCurrentUVSelection();
-    }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cut UV seams along selected components (Shift+X)");
-    ImGui::SameLine();
-
-    if (ImGui::Button("Sew")) {
-        SewCurrentUVSelection();
-    }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sew/stitch selected seam edges together (Shift+V)");
-    ImGui::SameLine();
-
-    if (ImGui::Button("Unwrap")) {
-        AutoCutUnwrapAndPack();
-    }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Unwrap all islands partitioned by cut seams and pack neatly into UDIM tiles (Ctrl+U)");
-    ImGui::SameLine();
-
-    if (ImGui::Button("Pack")) {
-        PackUVs();
-    }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pack existing UV islands across UDIM tiles (Ctrl+P)");
-    ImGui::SameLine();
-
-    if (ImGui::Button("Frame")) {
-        FrameAllUVs();
-    }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fit & Frame all UV coordinates in 2D canvas (Shortcut: F)");
-    ImGui::SameLine();
-
-    if (ImGui::Button("Clear")) {
-        ClearUVSelection();
-    }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Clear active component selection");
-    ImGui::SameLine();
-
-    // Selection Stats summary on right of header
-    char selStat[96];
+    // Selection Stats summary on right of Tier 1
+    char selStat[64];
     if (m_uvSelectionMode == UVSelectionMode::Vertex) {
-        snprintf(selStat, sizeof(selStat), "Verts: %zu", m_selectedUVVertices.size());
+        snprintf(selStat, sizeof(selStat), "V: %zu", m_selectedUVVertices.size());
     } else if (m_uvSelectionMode == UVSelectionMode::Edge) {
-        snprintf(selStat, sizeof(selStat), "Edges: %zu", m_lowPolyMesh.selectedEdges.size());
+        snprintf(selStat, sizeof(selStat), "E: %zu", m_lowPolyMesh.selectedEdges.size());
     } else if (m_uvSelectionMode == UVSelectionMode::Face) {
-        snprintf(selStat, sizeof(selStat), "Faces: %zu", m_selectedUVFaces.size());
+        snprintf(selStat, sizeof(selStat), "F: %zu", m_selectedUVFaces.size());
     } else {
-        snprintf(selStat, sizeof(selStat), "Shell Faces: %zu", m_selectedUVFaces.size());
+        snprintf(selStat, sizeof(selStat), "Shell: %zu", m_selectedUVFaces.size());
     }
+
     float statW = ImGui::CalcTextSize(selStat).x;
-    float rightPad = (size.x - (ImGui::GetCursorScreenPos().x - origin.x) - statW - 12.0f);
-    if (rightPad > 0.0f) {
-        ImGui::Dummy(ImVec2(rightPad, 0));
+    float modeChipsW = (m_viewportMode == ViewportMode::View2D) ? (compact ? 135.0f : 190.0f) : 0.0f;
+    float rightGroupW = statW + modeChipsW + 16.0f;
+    float availRight = (origin.x + size.x) - ImGui::GetCursorScreenPos().x;
+
+    if (availRight > rightGroupW + 8.0f) {
+        ImGui::Dummy(ImVec2(availRight - rightGroupW - 4.0f, 0));
         ImGui::SameLine();
         ImGui::TextDisabled("%s", selStat);
+        if (m_viewportMode == ViewportMode::View2D) {
+            ImGui::SameLine();
+            bool is3D = false;
+            bool is2D = true;
+            bool isSplit = false;
+            if (BakerUI::ToggleChip(compact ? "3D" : "3D View", &is3D) && is3D) {
+                m_viewportMode = ViewportMode::View3D;
+            }
+            ImGui::SameLine();
+            if (BakerUI::ToggleChip(compact ? "2D" : "2D UV", &is2D) && is2D) {
+                m_viewportMode = ViewportMode::View2D;
+            }
+            ImGui::SameLine();
+            if (BakerUI::ToggleChip(compact ? "Split" : "Split", &isSplit) && isSplit) {
+                m_viewportMode = ViewportMode::SplitBoth;
+            }
+        }
+    }
+
+    // ==========================================
+    // TIER 2: Quick Transforms, Cut/Sew, Unwrap/Pack & Navigation
+    // ==========================================
+    ImGui::SetCursorScreenPos(ImVec2(origin.x + 6.0f, origin.y + 31.0f));
+
+    auto ActionBtn = [&](const char* labelFull, const char* labelCompact, const char* tip) -> bool {
+        ImGui::PushStyleColor(ImGuiCol_Button, BakerUI::Hex(0x282A2E));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, BakerUI::Hex(0x383C44));
+        ImGui::PushStyleColor(ImGuiCol_Text, BakerUI::Hex(0xD4D8E0));
+        bool clicked = ImGui::Button(compact ? labelCompact : labelFull);
+        ImGui::PopStyleColor(3);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
+        ImGui::SameLine();
+        return clicked;
+    };
+
+    if (ActionBtn("Flip U", "Flip U", "Flip selected UV components horizontally along U-axis")) {
+        FlipSelectedUVs(true);
+    }
+    if (ActionBtn("Flip V", "Flip V", "Flip selected UV components vertically along V-axis")) {
+        FlipSelectedUVs(false);
+    }
+    if (ActionBtn("Rot -90", "-90", "Rotate selected UVs 90 degrees CCW")) {
+        RotateSelectedUVs(-90.0f);
+    }
+    if (ActionBtn("Rot +90", "+90", "Rotate selected UVs 90 degrees CW")) {
+        RotateSelectedUVs(90.0f);
+    }
+    if (ActionBtn("Straighten", "Align", "Straighten and align UV islands to grid axes")) {
+        StraightenIslands();
+    }
+
+    ImGui::TextDisabled("|");
+    ImGui::SameLine();
+
+    if (ActionBtn("Cut", "Cut", "Cut UV seams along selected components (Shift+X)")) {
+        CutCurrentUVSelection();
+    }
+    if (ActionBtn("Sew", "Sew", "Sew/stitch selected seam edges together (Shift+V)")) {
+        SewCurrentUVSelection();
+    }
+
+    ImGui::TextDisabled("|");
+    ImGui::SameLine();
+
+    if (ActionBtn("Unwrap", "Unwrap", "Unwrap all islands partitioned by cut seams and pack neatly (Ctrl+U)")) {
+        AutoCutUnwrapAndPack();
+    }
+    if (ActionBtn("Pack", "Pack", "Pack existing UV islands across UDIM tiles (Ctrl+P)")) {
+        PackUVs();
+    }
+
+    ImGui::TextDisabled("|");
+    ImGui::SameLine();
+
+    if (ActionBtn("Frame (F)", "Frame", "Fit & Frame all UV coordinates in 2D canvas (Shortcut: F)")) {
+        FrameAllUVs();
+    }
+    if (ActionBtn("Reset View", "Reset", "Reset UV Canvas zoom to 1.0x and pan to center")) {
+        m_uvZoom = 1.0f;
+        m_uvPan = ImVec2(0.0f, 0.0f);
+    }
+    if (ActionBtn("Clear Sel", "Clear", "Clear active component selection")) {
+        ClearUVSelection();
     }
 
     ImGui::PopStyleVar(3);
 
     // 2D UV Canvas bottom status hint text matching reference design
-    char hintUV[128];
-    snprintf(hintUV, sizeof(hintUV), "Texel density %.2f px/cm  *  padding %d px",
+    char hintUV[140];
+    snprintf(hintUV, sizeof(hintUV), "Texel density %.2f px/cm  *  padding %d px  *  Zoom: %.1fx  *  MMB/RMB: Pan  *  Scroll: Zoom",
              m_packStats.averageTexelDensity > 0.01f ? m_packStats.averageTexelDensity : 10.24f,
-             m_packSettings.paddingPixels);
+             m_packSettings.paddingPixels,
+             m_uvZoom);
     drawList->AddText(ImVec2(origin.x + 14.0f, origin.y + size.y - 20.0f), ImGui::GetColorU32(BakerUI::Hex(0x5A6878)), hintUV);
 
     drawList->PopClipRect();
-
-    // Bottom HUD info
-    ImGui::SetCursorScreenPos(ImVec2(origin.x + 12, origin.y + size.y - 32));
-    ImGui::BeginGroup();
-    char hudBuf[64];
-    snprintf(hudBuf, sizeof(hudBuf), "Zoom: %.1fx | MMB/RMB: Pan | Scroll: Zoom", m_uvZoom);
-    ImGui::TextDisabled("%s", hudBuf);
-    ImGui::SameLine();
-    if (ImGui::SmallButton("Reset UV View")) {
-        m_uvZoom = 1.0f;
-        m_uvPan = ImVec2(0.0f, 0.0f);
-    }
-    ImGui::EndGroup();
+    ImGui::EndChild();
 }
 
 void UIManager::RenderViewportPanel() {
@@ -2888,36 +2907,40 @@ void UIManager::RenderViewportPanel() {
         dl->AddText(ImVec2(origin.x + 14.0f, origin.y + avail.y - 20.0f), ImGui::GetColorU32(BakerUI::Hex(0x5A6878)), hint3D);
     }
 
-    // Floating mode toggles (top-right)
-    float rightBtnGroupW = 380.0f;
-    if (avail.x > rightBtnGroupW + 40.0f) {
-        ImGui::SetCursorScreenPos(ImVec2(origin.x + avail.x - rightBtnGroupW - 12, origin.y + 12));
-        ImGui::BeginGroup();
+    // Floating mode toggles (strictly anchored within 3D viewport region)
+    if (m_viewportMode == ViewportMode::View3D || m_viewportMode == ViewportMode::SplitBoth) {
+        float viewport3DW = (m_viewportMode == ViewportMode::SplitBoth) ? leftW : avail.x;
+        float rightBtnGroupW = 340.0f;
+        if (viewport3DW > 100.0f) {
+            float anchorX = (viewport3DW >= rightBtnGroupW + 24.0f)
+                ? (origin.x + viewport3DW - rightBtnGroupW - 12.0f)
+                : (origin.x + 12.0f);
+            ImGui::SetCursorScreenPos(ImVec2(anchorX, origin.y + 12.0f));
+            ImGui::BeginGroup();
 
-        bool is3D = (m_viewportMode == ViewportMode::View3D);
-        bool is2D = (m_viewportMode == ViewportMode::View2D);
-        bool isSplit = (m_viewportMode == ViewportMode::SplitBoth);
+            bool is3D = (m_viewportMode == ViewportMode::View3D);
+            bool is2D = (m_viewportMode == ViewportMode::View2D);
+            bool isSplit = (m_viewportMode == ViewportMode::SplitBoth);
 
-        if (BakerUI::ToggleChip("3D View", &is3D) && is3D) {
-            m_viewportMode = ViewportMode::View3D;
-        }
-        ImGui::SameLine();
-        if (BakerUI::ToggleChip("2D UV", &is2D) && is2D) {
-            m_viewportMode = ViewportMode::View2D;
-        }
-        ImGui::SameLine();
-        if (BakerUI::ToggleChip("Split 3D | 2D", &isSplit) && isSplit) {
-            m_viewportMode = ViewportMode::SplitBoth;
-        }
-        ImGui::SameLine();
+            if (BakerUI::ToggleChip("3D View", &is3D) && is3D) {
+                m_viewportMode = ViewportMode::View3D;
+            }
+            ImGui::SameLine();
+            if (BakerUI::ToggleChip("2D UV", &is2D) && is2D) {
+                m_viewportMode = ViewportMode::View2D;
+            }
+            ImGui::SameLine();
+            if (BakerUI::ToggleChip("Split 3D | 2D", &isSplit) && isSplit) {
+                m_viewportMode = ViewportMode::SplitBoth;
+            }
+            ImGui::SameLine();
 
-        if (BakerUI::PrimaryButton("Focus (F)", 78, 26)) {
-            m_viewportRenderer.FrameAll();
-            m_uvZoom = 1.0f;
-            m_uvPan = ImVec2(0.0f, 0.0f);
-        }
+            if (BakerUI::PrimaryButton("Focus (F)", 78, 26)) {
+                m_viewportRenderer.FrameAll();
+            }
 
-        ImGui::EndGroup();
+            ImGui::EndGroup();
+        }
     }
 
     // 2D UV Canvas overlay & sliding splitter if 2D or Split mode is active

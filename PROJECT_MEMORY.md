@@ -243,6 +243,11 @@ Resolved ground grid subdivision popping, implemented genuine UV-space shell sel
 - Maya Display Toggles: Added toggles for Maya Texture Borders (cyan seam lines), UV Shell Shading (multi-colored pastel islands), UV Checker grid, Stretch/Compression Heatmap, and Wireframe.
 - Maya Quick Transforms: Built Flip U, Flip V, Rot -90, Rot +90, and Straighten actions operating directly on selected UV components.
 - Workspace De-cluttering: Removed the redundant floating bottom UV bar, leaving the 2D UV workspace clean and spacious.
+- Responsive 2-Tier Maya UV Toolbar: Restructured the 25+ tool single-line chain into a compact two-tier header layout.
+- Tier 1 contains component modes (Vert 1, Edge 2, Face 3, Shell 4), gizmos (W, E, R), display toggles (Borders, Shells, Checker, Distort, Wire), stats, and mode switcher chips.
+- Tier 2 provides quick transforms (Flip U, Flip V, Rot -90, Rot +90, Straighten), cut and sew operations (Cut, Sew), layout tools (Unwrap, Pack), and canvas navigation (Frame, Reset, Clear).
+- Zero Collision Architecture: Anchored floating 3D mode toggles strictly inside the 3D viewport region, eliminating collisions with the 2D UV canvas.
+- Isolated Child Clipping: Wrapped the 2D UV Canvas in an isolated ImGui child window, preventing buttons and geometry from leaking or rendering behind the docked right panels.
 
 ---
 
