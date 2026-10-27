@@ -974,12 +974,14 @@ void UIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& size) {
             );
         }
 
-        // 8x8 subgrid lines
-        if (currentTileSize > 80.0f) {
-            ImU32 subLineCol = IM_COL32(38, 38, 42, 255);
-            for (int g = 1; g < 8; ++g) {
-                float fx = x0 + (g / 8.0f) * currentTileSize;
-                float fy = y0 + (g / 8.0f) * currentTileSize;
+        // Subgrid lines (10x10 decimal UV subgrid with continuous zoom fade)
+        if (currentTileSize > 35.0f) {
+            float fade = std::clamp((currentTileSize - 35.0f) / 45.0f, 0.0f, 1.0f);
+            int subAlpha = static_cast<int>(fade * 65.0f);
+            ImU32 subLineCol = IM_COL32(50, 52, 58, subAlpha);
+            for (int g = 1; g < 10; ++g) {
+                float fx = x0 + (g / 10.0f) * currentTileSize;
+                float fy = y0 + (g / 10.0f) * currentTileSize;
                 drawList->AddLine(ImVec2(fx, y0), ImVec2(fx, y1), subLineCol, 1.0f);
                 drawList->AddLine(ImVec2(x0, fy), ImVec2(x1, fy), subLineCol, 1.0f);
             }
@@ -1005,73 +1007,48 @@ void UIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& size) {
         return !(hasNeg && hasPos);
     };
 
-    // Connected UV Island Finder from triangle index
-    auto GetShellFaces = [&](uint32_t seedTri) -> std::set<uint32_t> {
-        std::set<uint32_t> shell;
-        if (seedTri >= m_lowPolyMesh.triangles.size()) return shell;
-
-        auto geomMap = UVCutter::BuildGeomVertexMap(m_lowPolyMesh);
-        std::unordered_map<uint64_t, std::vector<uint32_t>> edgeToTris;
-        for (size_t t = 0; t < m_lowPolyMesh.triangles.size(); ++t) {
-            const auto& tri = m_lowPolyMesh.triangles[t];
-            for (int e = 0; e < 3; ++e) {
-                uint32_t ea = tri.indices[e];
-                uint32_t eb = tri.indices[(e + 1) % 3];
-                if (ea < geomMap.size() && eb < geomMap.size()) {
-                    uint32_t ga = geomMap[ea];
-                    uint32_t gb = geomMap[eb];
-                    uint64_t ek = (static_cast<uint64_t>((std::min)(ga, gb)) << 32) | (std::max)(ga, gb);
-                    edgeToTris[ek].push_back(static_cast<uint32_t>(t));
-                }
-            }
-        }
-
-        std::vector<uint32_t> queue = { seedTri };
-        shell.insert(seedTri);
-
-        while (!queue.empty()) {
-            uint32_t cur = queue.back();
-            queue.pop_back();
-
-            const auto& tri = m_lowPolyMesh.triangles[cur];
-            for (int e = 0; e < 3; ++e) {
-                uint32_t ea = tri.indices[e];
-                uint32_t eb = tri.indices[(e + 1) % 3];
-                auto edgeKey = MakeEdgeKey(ea, eb);
-                if (m_lowPolyMesh.cutSeams.count(edgeKey)) continue;
-
-                if (ea < geomMap.size() && eb < geomMap.size()) {
-                    uint32_t ga = geomMap[ea];
-                    uint32_t gb = geomMap[eb];
-                    uint64_t ek = (static_cast<uint64_t>((std::min)(ga, gb)) << 32) | (std::max)(ga, gb);
-                    auto it = edgeToTris.find(ek);
-                    if (it != edgeToTris.end()) {
-                        for (uint32_t neighbor : it->second) {
-                            if (shell.insert(neighbor).second) {
-                                queue.push_back(neighbor);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        return shell;
-    };
-
-    // Draw Low-Poly UV Faces and Wireframe (Clean Blender UV Shells: Pure Quad/Polygon Outlines)
+    // Draw Low-Poly UV Faces and Wireframe (Maya Shell Shading, Distortion Heatmap & Clean Wireframe)
     if (m_hasLowPoly && !m_lowPolyMesh.triangles.empty()) {
-        ImU32 faceFillCol = IM_COL32(220, 225, 235, 18);   // Subtle ~7% translucent face fill
+        ImU32 faceFillCol = IM_COL32(220, 225, 235, 18);   // Subtle translucent face fill
         ImU32 edgeCol = IM_COL32(100, 105, 115, 200);      // Clean 1px wireframe edge
 
-        // 1. Base Face fill
-        for (const auto& tri : m_lowPolyMesh.triangles) {
+        // Palette of vibrant translucent colors matching Maya UV Editor Shell Shading (Hotkey 5)
+        static const ImU32 kMayaShellColors[] = {
+            IM_COL32(64, 180, 210, 80),   // Maya Cyan
+            IM_COL32(230, 115, 80, 80),   // Coral
+            IM_COL32(110, 205, 120, 80),  // Emerald
+            IM_COL32(185, 110, 230, 80),  // Lavender Purple
+            IM_COL32(240, 175, 55, 80),   // Golden Amber
+            IM_COL32(235, 95, 150, 80),   // Rose Pink
+            IM_COL32(65, 210, 175, 80),   // Mint Green
+            IM_COL32(115, 140, 245, 80),  // Royal Blue
+            IM_COL32(215, 140, 60, 80),   // Terracotta
+            IM_COL32(160, 220, 70, 80)    // Lime
+        };
+
+        // 1. Base Face fill / Maya UV Shell Shading / Distortion Heatmap
+        for (size_t t = 0; t < m_lowPolyMesh.triangles.size(); ++t) {
+            const auto& tri = m_lowPolyMesh.triangles[t];
             const auto& v0 = m_lowPolyMesh.vertices[tri.indices[0]];
             const auto& v1 = m_lowPolyMesh.vertices[tri.indices[1]];
             const auto& v2 = m_lowPolyMesh.vertices[tri.indices[2]];
             ImVec2 p0 = UVToScreen(v0.uv.u, v0.uv.v);
             ImVec2 p1 = UVToScreen(v1.uv.u, v1.uv.v);
             ImVec2 p2 = UVToScreen(v2.uv.u, v2.uv.v);
-            drawList->AddTriangleFilled(p0, p1, p2, faceFillCol);
+
+            ImU32 fillCol = faceFillCol;
+            if (m_showDistortionHeatmap) {
+                Vec3 d01(v1.position.x - v0.position.x, v1.position.y - v0.position.y, v1.position.z - v0.position.z);
+                Vec3 d02(v2.position.x - v0.position.x, v2.position.y - v0.position.y, v2.position.z - v0.position.z);
+                Vec3 crossP(d01.y * d02.z - d01.z * d02.y, d01.z * d02.x - d01.x * d02.z, d01.x * d02.y - d01.y * d02.x);
+                float a3D = 0.5f * std::sqrt(crossP.x * crossP.x + crossP.y * crossP.y + crossP.z * crossP.z);
+                float aUV = 0.5f * std::abs((v1.uv.u - v0.uv.u) * (v2.uv.v - v0.uv.v) - (v2.uv.u - v0.uv.u) * (v1.uv.v - v0.uv.v));
+                float ratio = (a3D > 1e-6f) ? (aUV / a3D) : 1.0f;
+                fillCol = (ratio > 1.35f) ? IM_COL32(245, 60, 60, 95) : ((ratio < 0.70f) ? IM_COL32(50, 110, 255, 95) : IM_COL32(60, 220, 110, 75));
+            } else if (m_showShellShading) {
+                fillCol = kMayaShellColors[tri.meshIndex % 10];
+            }
+            drawList->AddTriangleFilled(p0, p1, p2, fillCol);
         }
 
         // 2. Selected Faces / Shells Highlight (Translucent Amber / Gold Fill)
@@ -1090,38 +1067,40 @@ void UIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& size) {
             }
         }
 
-        // 3. Wireframe edges (Pure polygon outlines matching Blender UV Editor: NO triangulated diagonals!)
-        if (!m_lowPolyMesh.polygonFaces.empty()) {
-            for (const auto& face : m_lowPolyMesh.polygonFaces) {
-                size_t fv = face.size();
-                for (size_t v = 0; v < fv; ++v) {
-                    uint32_t i0 = face[v];
-                    uint32_t i1 = face[(v + 1) % fv];
+        // 3. Wireframe edges (Pure polygon outlines matching Blender/Maya UV Editor: NO triangulated diagonals!)
+        if (m_showUVWireframe) {
+            if (!m_lowPolyMesh.polygonFaces.empty()) {
+                for (const auto& face : m_lowPolyMesh.polygonFaces) {
+                    size_t fv = face.size();
+                    for (size_t v = 0; v < fv; ++v) {
+                        uint32_t i0 = face[v];
+                        uint32_t i1 = face[(v + 1) % fv];
+                        if (i0 < m_lowPolyMesh.vertices.size() && i1 < m_lowPolyMesh.vertices.size()) {
+                            ImVec2 p0 = UVToScreen(m_lowPolyMesh.vertices[i0].uv.u, m_lowPolyMesh.vertices[i0].uv.v);
+                            ImVec2 p1 = UVToScreen(m_lowPolyMesh.vertices[i1].uv.u, m_lowPolyMesh.vertices[i1].uv.v);
+                            drawList->AddLine(p0, p1, edgeCol, 1.0f);
+                        }
+                    }
+                }
+            } else if (!m_lowPolyMesh.wireframeLineIndices.empty()) {
+                for (size_t i = 0; i + 1 < m_lowPolyMesh.wireframeLineIndices.size(); i += 2) {
+                    uint32_t i0 = m_lowPolyMesh.wireframeLineIndices[i];
+                    uint32_t i1 = m_lowPolyMesh.wireframeLineIndices[i + 1];
                     if (i0 < m_lowPolyMesh.vertices.size() && i1 < m_lowPolyMesh.vertices.size()) {
                         ImVec2 p0 = UVToScreen(m_lowPolyMesh.vertices[i0].uv.u, m_lowPolyMesh.vertices[i0].uv.v);
                         ImVec2 p1 = UVToScreen(m_lowPolyMesh.vertices[i1].uv.u, m_lowPolyMesh.vertices[i1].uv.v);
                         drawList->AddLine(p0, p1, edgeCol, 1.0f);
                     }
                 }
-            }
-        } else if (!m_lowPolyMesh.wireframeLineIndices.empty()) {
-            for (size_t i = 0; i + 1 < m_lowPolyMesh.wireframeLineIndices.size(); i += 2) {
-                uint32_t i0 = m_lowPolyMesh.wireframeLineIndices[i];
-                uint32_t i1 = m_lowPolyMesh.wireframeLineIndices[i + 1];
-                if (i0 < m_lowPolyMesh.vertices.size() && i1 < m_lowPolyMesh.vertices.size()) {
-                    ImVec2 p0 = UVToScreen(m_lowPolyMesh.vertices[i0].uv.u, m_lowPolyMesh.vertices[i0].uv.v);
-                    ImVec2 p1 = UVToScreen(m_lowPolyMesh.vertices[i1].uv.u, m_lowPolyMesh.vertices[i1].uv.v);
+            } else {
+                for (const auto& tri : m_lowPolyMesh.triangles) {
+                    ImVec2 p0 = UVToScreen(m_lowPolyMesh.vertices[tri.indices[0]].uv.u, m_lowPolyMesh.vertices[tri.indices[0]].uv.v);
+                    ImVec2 p1 = UVToScreen(m_lowPolyMesh.vertices[tri.indices[1]].uv.u, m_lowPolyMesh.vertices[tri.indices[1]].uv.v);
+                    ImVec2 p2 = UVToScreen(m_lowPolyMesh.vertices[tri.indices[2]].uv.u, m_lowPolyMesh.vertices[tri.indices[2]].uv.v);
                     drawList->AddLine(p0, p1, edgeCol, 1.0f);
+                    drawList->AddLine(p1, p2, edgeCol, 1.0f);
+                    drawList->AddLine(p2, p0, edgeCol, 1.0f);
                 }
-            }
-        } else {
-            for (const auto& tri : m_lowPolyMesh.triangles) {
-                ImVec2 p0 = UVToScreen(m_lowPolyMesh.vertices[tri.indices[0]].uv.u, m_lowPolyMesh.vertices[tri.indices[0]].uv.v);
-                ImVec2 p1 = UVToScreen(m_lowPolyMesh.vertices[tri.indices[1]].uv.u, m_lowPolyMesh.vertices[tri.indices[1]].uv.v);
-                ImVec2 p2 = UVToScreen(m_lowPolyMesh.vertices[tri.indices[2]].uv.u, m_lowPolyMesh.vertices[tri.indices[2]].uv.v);
-                drawList->AddLine(p0, p1, edgeCol, 1.0f);
-                drawList->AddLine(p1, p2, edgeCol, 1.0f);
-                drawList->AddLine(p2, p0, edgeCol, 1.0f);
             }
         }
 
@@ -1137,8 +1116,8 @@ void UIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& size) {
         }
     }
 
-    // Draw marked cut seams on 2D UV canvas (Neon Cyan)
-    if (m_hasLowPoly && !m_lowPolyMesh.seamLineIndices.empty()) {
+    // Draw marked cut seams on 2D UV canvas (Maya Texture Borders in Neon Cyan)
+    if (m_showTextureBorders && m_hasLowPoly && !m_lowPolyMesh.seamLineIndices.empty()) {
         ImU32 seamCol = IM_COL32(0, 240, 255, 230);
         for (size_t i = 0; i + 1 < m_lowPolyMesh.seamLineIndices.size(); i += 2) {
             uint32_t i0 = m_lowPolyMesh.seamLineIndices[i];
@@ -1165,11 +1144,24 @@ void UIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& size) {
 
     // Interactive Component Selection & Marquee Box Drag
     if (inCanvas && m_hasLowPoly && !m_lowPolyMesh.triangles.empty()) {
-        // Component Hover Detection
+        // Component Hover Detection & Cursor Triangle Tracking
         int hoverVert = -1;
         int hoverEdgeV0 = -1, hoverEdgeV1 = -1;
         int hoverFace = -1;
         std::set<uint32_t> hoverShellFaces;
+
+        // Trace cursor triangle across UV space (active in all selection modes)
+        int cursorTri = -1;
+        for (size_t t = 0; t < m_lowPolyMesh.triangles.size(); ++t) {
+            const auto& tri = m_lowPolyMesh.triangles[t];
+            ImVec2 p0 = UVToScreen(m_lowPolyMesh.vertices[tri.indices[0]].uv.u, m_lowPolyMesh.vertices[tri.indices[0]].uv.v);
+            ImVec2 p1 = UVToScreen(m_lowPolyMesh.vertices[tri.indices[1]].uv.u, m_lowPolyMesh.vertices[tri.indices[1]].uv.v);
+            ImVec2 p2 = UVToScreen(m_lowPolyMesh.vertices[tri.indices[2]].uv.u, m_lowPolyMesh.vertices[tri.indices[2]].uv.v);
+            if (PointInTri2D(io.MousePos, p0, p1, p2)) {
+                cursorTri = static_cast<int>(t);
+                break;
+            }
+        }
 
         if (m_uvSelectionMode == UVSelectionMode::Vertex) {
             float minVertDist = 12.0f;
@@ -1208,16 +1200,7 @@ void UIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& size) {
                 drawList->AddLine(hP0, hP1, IM_COL32(0, 255, 255, 255), 3.5f);
             }
         } else if (m_uvSelectionMode == UVSelectionMode::Face || m_uvSelectionMode == UVSelectionMode::Shell) {
-            for (size_t t = 0; t < m_lowPolyMesh.triangles.size(); ++t) {
-                const auto& tri = m_lowPolyMesh.triangles[t];
-                ImVec2 p0 = UVToScreen(m_lowPolyMesh.vertices[tri.indices[0]].uv.u, m_lowPolyMesh.vertices[tri.indices[0]].uv.v);
-                ImVec2 p1 = UVToScreen(m_lowPolyMesh.vertices[tri.indices[1]].uv.u, m_lowPolyMesh.vertices[tri.indices[1]].uv.v);
-                ImVec2 p2 = UVToScreen(m_lowPolyMesh.vertices[tri.indices[2]].uv.u, m_lowPolyMesh.vertices[tri.indices[2]].uv.v);
-                if (PointInTri2D(io.MousePos, p0, p1, p2)) {
-                    hoverFace = static_cast<int>(t);
-                    break;
-                }
-            }
+            hoverFace = cursorTri;
             if (hoverFace >= 0) {
                 if (m_uvSelectionMode == UVSelectionMode::Face) {
                     const auto& tri = m_lowPolyMesh.triangles[hoverFace];
@@ -1227,7 +1210,7 @@ void UIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& size) {
                     drawList->AddTriangleFilled(p0, p1, p2, IM_COL32(0, 230, 255, 70));
                     drawList->AddTriangle(p0, p1, p2, IM_COL32(0, 255, 255, 255), 1.5f);
                 } else {
-                    hoverShellFaces = GetShellFaces(static_cast<uint32_t>(hoverFace));
+                    hoverShellFaces = GetConnectedUVIsland(static_cast<uint32_t>(hoverFace));
                     for (uint32_t fIdx : hoverShellFaces) {
                         const auto& tri = m_lowPolyMesh.triangles[fIdx];
                         ImVec2 p0 = UVToScreen(m_lowPolyMesh.vertices[tri.indices[0]].uv.u, m_lowPolyMesh.vertices[tri.indices[0]].uv.v);
@@ -1236,6 +1219,66 @@ void UIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& size) {
                         drawList->AddTriangleFilled(p0, p1, p2, IM_COL32(0, 230, 255, 50));
                     }
                 }
+            }
+        }
+
+        // Immediate Double-Click or 'L' Key Connected Island Selection
+        bool didDoubleOrL = false;
+        if (!io.KeyAlt && (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) || ImGui::IsKeyPressed(ImGuiKey_L))) {
+            int targetTri = (cursorTri >= 0) ? cursorTri : hoverFace;
+            if (targetTri < 0 && hoverVert >= 0) {
+                for (size_t t = 0; t < m_lowPolyMesh.triangles.size(); ++t) {
+                    const auto& tri = m_lowPolyMesh.triangles[t];
+                    if (tri.indices[0] == static_cast<uint32_t>(hoverVert) ||
+                        tri.indices[1] == static_cast<uint32_t>(hoverVert) ||
+                        tri.indices[2] == static_cast<uint32_t>(hoverVert)) {
+                        targetTri = static_cast<int>(t);
+                        break;
+                    }
+                }
+            } else if (targetTri < 0 && hoverEdgeV0 >= 0) {
+                for (size_t t = 0; t < m_lowPolyMesh.triangles.size(); ++t) {
+                    const auto& tri = m_lowPolyMesh.triangles[t];
+                    for (int e = 0; e < 3; ++e) {
+                        if (MakeEdgeKey(tri.indices[e], tri.indices[(e + 1) % 3]) == MakeEdgeKey(hoverEdgeV0, hoverEdgeV1)) {
+                            targetTri = static_cast<int>(t);
+                            break;
+                        }
+                    }
+                    if (targetTri >= 0) break;
+                }
+            }
+
+            if (targetTri >= 0) {
+                auto island = GetConnectedUVIsland(static_cast<uint32_t>(targetTri));
+                if (!io.KeyShift) {
+                    ClearUVSelection();
+                }
+                if (m_uvSelectionMode == UVSelectionMode::Vertex) {
+                    for (uint32_t f : island) {
+                        const auto& tri = m_lowPolyMesh.triangles[f];
+                        m_selectedUVVertices.insert(tri.indices[0]);
+                        m_selectedUVVertices.insert(tri.indices[1]);
+                        m_selectedUVVertices.insert(tri.indices[2]);
+                    }
+                } else if (m_uvSelectionMode == UVSelectionMode::Edge) {
+                    for (uint32_t f : island) {
+                        const auto& tri = m_lowPolyMesh.triangles[f];
+                        for (int e = 0; e < 3; ++e) {
+                            m_lowPolyMesh.selectedEdges.insert(MakeEdgeKey(tri.indices[e], tri.indices[(e + 1) % 3]));
+                        }
+                    }
+                    m_lowPolyMesh.GenerateSelectedEdgeLines();
+                    m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
+                } else {
+                    m_selectedUVFaces.insert(island.begin(), island.end());
+                }
+                PushHistoryState("Select Connected UV Shell");
+                char msg[128];
+                snprintf(msg, sizeof(msg), "Selected connected UV island (%zu faces)", island.size());
+                m_uvStatusMessage = msg;
+                m_isMarqueeSelecting = false;
+                didDoubleOrL = true;
             }
         }
 
@@ -1518,142 +1561,82 @@ void UIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& size) {
                         }
                     }
                     for (uint32_t sTri : hitTris) {
-                        auto sh = GetShellFaces(sTri);
+                        auto sh = GetConnectedUVIsland(sTri);
                         m_selectedUVFaces.insert(sh.begin(), sh.end());
                     }
                 }
                 PushHistoryState("Box Select UV Components");
-            } else {
-                // Double-Click or 'L' Key: Select Connected Shell / Island
-                if (io.MouseDoubleClicked[0] || ImGui::IsKeyPressed(ImGuiKey_L)) {
-                    int targetTri = -1;
-                    if (hoverFace >= 0) targetTri = hoverFace;
-                    else if (hoverVert >= 0) {
-                        for (size_t t = 0; t < m_lowPolyMesh.triangles.size(); ++t) {
-                            const auto& tri = m_lowPolyMesh.triangles[t];
-                            if (tri.indices[0] == static_cast<uint32_t>(hoverVert) ||
-                                tri.indices[1] == static_cast<uint32_t>(hoverVert) ||
-                                tri.indices[2] == static_cast<uint32_t>(hoverVert)) {
-                                targetTri = static_cast<int>(t);
-                                break;
-                            }
-                        }
-                    } else if (hoverEdgeV0 >= 0) {
-                        for (size_t t = 0; t < m_lowPolyMesh.triangles.size(); ++t) {
-                            const auto& tri = m_lowPolyMesh.triangles[t];
-                            for (int e = 0; e < 3; ++e) {
-                                if (MakeEdgeKey(tri.indices[e], tri.indices[(e + 1) % 3]) == MakeEdgeKey(hoverEdgeV0, hoverEdgeV1)) {
-                                    targetTri = static_cast<int>(t);
-                                    break;
-                                }
-                            }
-                            if (targetTri >= 0) break;
-                        }
-                    }
-
-                    if (targetTri >= 0) {
-                        auto sh = GetShellFaces(static_cast<uint32_t>(targetTri));
-                        if (!io.KeyShift) {
-                            m_selectedUVFaces.clear();
+            } else if (!didDoubleOrL) {
+                // Single Click Selection
+                if (m_uvSelectionMode == UVSelectionMode::Vertex) {
+                    if (hoverVert >= 0) {
+                        if (io.KeyShift) {
+                            if (m_selectedUVVertices.count(hoverVert)) m_selectedUVVertices.erase(hoverVert);
+                            else m_selectedUVVertices.insert(hoverVert);
+                        } else {
                             m_selectedUVVertices.clear();
-                            m_lowPolyMesh.selectedEdges.clear();
+                            m_selectedUVVertices.insert(hoverVert);
                         }
-                        if (m_uvSelectionMode == UVSelectionMode::Vertex) {
-                            for (uint32_t f : sh) {
-                                const auto& tri = m_lowPolyMesh.triangles[f];
-                                m_selectedUVVertices.insert(tri.indices[0]);
-                                m_selectedUVVertices.insert(tri.indices[1]);
-                                m_selectedUVVertices.insert(tri.indices[2]);
-                            }
-                        } else if (m_uvSelectionMode == UVSelectionMode::Edge) {
-                            for (uint32_t f : sh) {
-                                const auto& tri = m_lowPolyMesh.triangles[f];
-                                for (int e = 0; e < 3; ++e) {
-                                    m_lowPolyMesh.selectedEdges.insert(MakeEdgeKey(tri.indices[e], tri.indices[(e + 1) % 3]));
-                                }
-                            }
+                    } else if (!io.KeyShift) {
+                        m_selectedUVVertices.clear();
+                    }
+                } else if (m_uvSelectionMode == UVSelectionMode::Edge) {
+                    if (hoverEdgeV0 >= 0) {
+                        auto edgeKey = MakeEdgeKey(static_cast<uint32_t>(hoverEdgeV0), static_cast<uint32_t>(hoverEdgeV1));
+                        if (io.KeyShift && m_hasLastSelectedEdge && !m_lowPolyMesh.selectedEdges.empty() && m_lastSelectedEdge != edgeKey) {
+                            UVCutter::SelectShortestPath(m_lowPolyMesh, m_lastSelectedEdge.first, m_lastSelectedEdge.second,
+                                                         edgeKey.first, edgeKey.second, true);
+                            m_lastSelectedEdge = edgeKey;
+                            m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
+                            PushHistoryState("Select Shortest Path in 2D");
+                        } else if (io.KeyShift) {
+                            if (m_lowPolyMesh.selectedEdges.count(edgeKey)) m_lowPolyMesh.selectedEdges.erase(edgeKey);
+                            else m_lowPolyMesh.selectedEdges.insert(edgeKey);
+                            m_lastSelectedEdge = edgeKey;
+                            m_hasLastSelectedEdge = true;
                             m_lowPolyMesh.GenerateSelectedEdgeLines();
                             m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
                         } else {
-                            m_selectedUVFaces.insert(sh.begin(), sh.end());
-                        }
-                        PushHistoryState("Select Connected UV Shell");
-                        char msg[128];
-                        snprintf(msg, sizeof(msg), "Selected entire connected UV shell (%zu faces)", sh.size());
-                        m_uvStatusMessage = msg;
-                    }
-                } else {
-                    // Single Click Selection
-                    if (m_uvSelectionMode == UVSelectionMode::Vertex) {
-                        if (hoverVert >= 0) {
-                            if (io.KeyShift) {
-                                if (m_selectedUVVertices.count(hoverVert)) m_selectedUVVertices.erase(hoverVert);
-                                else m_selectedUVVertices.insert(hoverVert);
-                            } else {
-                                m_selectedUVVertices.clear();
-                                m_selectedUVVertices.insert(hoverVert);
-                            }
-                        } else if (!io.KeyShift) {
-                            m_selectedUVVertices.clear();
-                        }
-                    } else if (m_uvSelectionMode == UVSelectionMode::Edge) {
-                        if (hoverEdgeV0 >= 0) {
-                            auto edgeKey = MakeEdgeKey(static_cast<uint32_t>(hoverEdgeV0), static_cast<uint32_t>(hoverEdgeV1));
-                            if (io.KeyShift && m_hasLastSelectedEdge && !m_lowPolyMesh.selectedEdges.empty() && m_lastSelectedEdge != edgeKey) {
-                                UVCutter::SelectShortestPath(m_lowPolyMesh, m_lastSelectedEdge.first, m_lastSelectedEdge.second,
-                                                             edgeKey.first, edgeKey.second, true);
-                                m_lastSelectedEdge = edgeKey;
-                                m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
-                                PushHistoryState("Select Shortest Path in 2D");
-                            } else if (io.KeyShift) {
-                                if (m_lowPolyMesh.selectedEdges.count(edgeKey)) m_lowPolyMesh.selectedEdges.erase(edgeKey);
-                                else m_lowPolyMesh.selectedEdges.insert(edgeKey);
-                                m_lastSelectedEdge = edgeKey;
-                                m_hasLastSelectedEdge = true;
-                                m_lowPolyMesh.GenerateSelectedEdgeLines();
-                                m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
-                            } else {
-                                m_lowPolyMesh.selectedEdges.clear();
-                                m_lowPolyMesh.selectedEdges.insert(edgeKey);
-                                m_lastSelectedEdge = edgeKey;
-                                m_hasLastSelectedEdge = true;
-                                m_lowPolyMesh.GenerateSelectedEdgeLines();
-                                m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
-                            }
-                        } else if (!io.KeyShift) {
                             m_lowPolyMesh.selectedEdges.clear();
-                            m_hasLastSelectedEdge = false;
+                            m_lowPolyMesh.selectedEdges.insert(edgeKey);
+                            m_lastSelectedEdge = edgeKey;
+                            m_hasLastSelectedEdge = true;
                             m_lowPolyMesh.GenerateSelectedEdgeLines();
                             m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
                         }
-                    } else if (m_uvSelectionMode == UVSelectionMode::Face) {
-                        if (hoverFace >= 0) {
-                            if (io.KeyShift) {
-                                if (m_selectedUVFaces.count(hoverFace)) m_selectedUVFaces.erase(hoverFace);
-                                else m_selectedUVFaces.insert(hoverFace);
-                            } else {
-                                m_selectedUVFaces.clear();
-                                m_selectedUVFaces.insert(hoverFace);
-                            }
-                        } else if (!io.KeyShift) {
+                    } else if (!io.KeyShift) {
+                        m_lowPolyMesh.selectedEdges.clear();
+                        m_hasLastSelectedEdge = false;
+                        m_lowPolyMesh.GenerateSelectedEdgeLines();
+                        m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
+                    }
+                } else if (m_uvSelectionMode == UVSelectionMode::Face) {
+                    if (hoverFace >= 0) {
+                        if (io.KeyShift) {
+                            if (m_selectedUVFaces.count(hoverFace)) m_selectedUVFaces.erase(hoverFace);
+                            else m_selectedUVFaces.insert(hoverFace);
+                        } else {
                             m_selectedUVFaces.clear();
+                            m_selectedUVFaces.insert(hoverFace);
                         }
-                    } else if (m_uvSelectionMode == UVSelectionMode::Shell) {
-                        if (!hoverShellFaces.empty()) {
-                            if (io.KeyShift) {
-                                bool allIn = true;
-                                for (uint32_t f : hoverShellFaces) if (!m_selectedUVFaces.count(f)) { allIn = false; break; }
-                                if (allIn) {
-                                    for (uint32_t f : hoverShellFaces) m_selectedUVFaces.erase(f);
-                                } else {
-                                    m_selectedUVFaces.insert(hoverShellFaces.begin(), hoverShellFaces.end());
-                                }
+                    } else if (!io.KeyShift) {
+                        m_selectedUVFaces.clear();
+                    }
+                } else if (m_uvSelectionMode == UVSelectionMode::Shell) {
+                    if (!hoverShellFaces.empty()) {
+                        if (io.KeyShift) {
+                            bool allIn = true;
+                            for (uint32_t f : hoverShellFaces) if (!m_selectedUVFaces.count(f)) { allIn = false; break; }
+                            if (allIn) {
+                                for (uint32_t f : hoverShellFaces) m_selectedUVFaces.erase(f);
                             } else {
-                                m_selectedUVFaces = hoverShellFaces;
+                                m_selectedUVFaces.insert(hoverShellFaces.begin(), hoverShellFaces.end());
                             }
-                        } else if (!io.KeyShift) {
-                            m_selectedUVFaces.clear();
+                        } else {
+                            m_selectedUVFaces = hoverShellFaces;
                         }
+                    } else if (!io.KeyShift) {
+                        m_selectedUVFaces.clear();
                     }
                 }
             }
@@ -1667,22 +1650,23 @@ void UIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& size) {
         }
     }
 
-    // Draw Maya UV Space Header Toolbar (pinned at top of 2D UV Viewport)
+    // Draw Maya UV Editor Header Toolbar (pinned cleanly across top of 2D UV Viewport)
     drawList->AddRectFilled(origin, ImVec2(origin.x + size.x, origin.y + headerH), IM_COL32(24, 25, 28, 255));
     drawList->AddLine(ImVec2(origin.x, origin.y + headerH), ImVec2(origin.x + size.x, origin.y + headerH), IM_COL32(40, 42, 48, 255), 1.0f);
 
     ImGui::SetCursorScreenPos(ImVec2(origin.x + 8.0f, origin.y + 4.0f));
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 0));
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(7, 3));
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(3, 0));
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6, 3));
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 3.0f);
 
+    // 1. Maya Component Selection Modes
     auto ModeButton = [&](const char* label, UVSelectionMode mode, const char* tooltip) {
         bool active = (m_uvSelectionMode == mode);
         if (active) {
             ImGui::PushStyleColor(ImGuiCol_Button, BakerUI::Hex(0x4CC3A6));
             ImGui::PushStyleColor(ImGuiCol_Text, BakerUI::Hex(0x0C1412));
         } else {
-            ImGui::PushStyleColor(ImGuiCol_Button, BakerUI::Hex(0x282828));
+            ImGui::PushStyleColor(ImGuiCol_Button, BakerUI::Hex(0x222224));
             ImGui::PushStyleColor(ImGuiCol_Text, BakerUI::Hex(0xCCCCCC));
         }
         if (ImGui::Button(label)) {
@@ -1693,21 +1677,22 @@ void UIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& size) {
         ImGui::SameLine();
     };
 
-    ModeButton("VERT (1)", UVSelectionMode::Vertex, "Vertex Selection Mode [Hotkey: 1] (Click or Box Drag to select vertices)");
-    ModeButton("EDGE (2)", UVSelectionMode::Edge, "Edge Selection Mode [Hotkey: 2] (Click, Double-click loop, or Box Drag to select edges)");
-    ModeButton("FACE (3)", UVSelectionMode::Face, "Face Selection Mode [Hotkey: 3] (Click or Box Drag to select UV faces)");
-    ModeButton("SHELL (4)", UVSelectionMode::Shell, "Shell Selection Mode [Hotkey: 4] (Click or Box Drag to select whole UV islands)");
+    ModeButton("Vert (1)", UVSelectionMode::Vertex, "Vertex Selection Mode [Hotkey: 1]");
+    ModeButton("Edge (2)", UVSelectionMode::Edge, "Edge Selection Mode [Hotkey: 2]");
+    ModeButton("Face (3)", UVSelectionMode::Face, "Face Selection Mode [Hotkey: 3]");
+    ModeButton("Shell (4)", UVSelectionMode::Shell, "UV Shell Selection Mode [Hotkey: 4]");
 
     ImGui::TextDisabled("|");
     ImGui::SameLine();
 
+    // 2. Transform Gizmo Tools
     auto GizmoButton = [&](const char* label, UVGizmoMode mode, const char* tooltip) {
         bool active = (m_uvGizmoMode == mode);
         if (active) {
             ImGui::PushStyleColor(ImGuiCol_Button, BakerUI::Hex(0x4CC3A6));
             ImGui::PushStyleColor(ImGuiCol_Text, BakerUI::Hex(0x0C1412));
         } else {
-            ImGui::PushStyleColor(ImGuiCol_Button, BakerUI::Hex(0x282828));
+            ImGui::PushStyleColor(ImGuiCol_Button, BakerUI::Hex(0x222224));
             ImGui::PushStyleColor(ImGuiCol_Text, BakerUI::Hex(0xCCCCCC));
         }
         if (ImGui::Button(label)) {
@@ -1718,61 +1703,103 @@ void UIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& size) {
         ImGui::SameLine();
     };
 
-    GizmoButton("MOVE (W)", UVGizmoMode::Translate, "Move Gizmo Tool (Shortcut: W or G)");
-    GizmoButton("ROTATE (E)", UVGizmoMode::Rotate, "Rotate Gizmo Tool (Shortcut: E or R)");
-    GizmoButton("SCALE (R)", UVGizmoMode::Scale, "Scale Gizmo Tool (Shortcut: R or S)");
+    GizmoButton("Move (W)", UVGizmoMode::Translate, "Move Tool (Shortcut: W or G)");
+    GizmoButton("Rot (E)", UVGizmoMode::Rotate, "Rotate Tool (Shortcut: E or R)");
+    GizmoButton("Scale (R)", UVGizmoMode::Scale, "Scale Tool (Shortcut: R or S)");
 
     ImGui::TextDisabled("|");
     ImGui::SameLine();
 
-    if (ImGui::Button("CUT")) {
+    // 3. Maya Display Toggles
+    auto DisplayToggle = [&](const char* label, bool* var, const char* tip) {
+        if (*var) {
+            ImGui::PushStyleColor(ImGuiCol_Button, BakerUI::Hex(0x3B82F6));
+            ImGui::PushStyleColor(ImGuiCol_Text, BakerUI::Hex(0xFFFFFF));
+        } else {
+            ImGui::PushStyleColor(ImGuiCol_Button, BakerUI::Hex(0x222224));
+            ImGui::PushStyleColor(ImGuiCol_Text, BakerUI::Hex(0x888888));
+        }
+        if (ImGui::Button(label)) *var = !*var;
+        ImGui::PopStyleColor(2);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
+        ImGui::SameLine();
+    };
+
+    DisplayToggle("Borders", &m_showTextureBorders, "Toggle UV texture border / seam highlighting (Maya Texture Borders)");
+    DisplayToggle("Shell Colors", &m_showShellShading, "Toggle Maya UV Shell Shading (Color-code each island uniquely)");
+    DisplayToggle("Checker", &m_showUVChecker, "Toggle 16x16 UV checker background grid");
+    DisplayToggle("Distortion", &m_showDistortionHeatmap, "Toggle UV area stretch/compression distortion feedback");
+    DisplayToggle("Wire", &m_showUVWireframe, "Toggle UV polygon wireframe display");
+
+    ImGui::TextDisabled("|");
+    ImGui::SameLine();
+
+    // 4. Maya Quick Transforms
+    if (ImGui::Button("Flip U")) {
+        FlipSelectedUVs(true);
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Flip selected UV components horizontally along U-axis");
+    ImGui::SameLine();
+
+    if (ImGui::Button("Flip V")) {
+        FlipSelectedUVs(false);
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Flip selected UV components vertically along V-axis");
+    ImGui::SameLine();
+
+    if (ImGui::Button("Rot -90")) {
+        RotateSelectedUVs(-90.0f);
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rotate selected UVs 90 degrees CCW");
+    ImGui::SameLine();
+
+    if (ImGui::Button("Rot +90")) {
+        RotateSelectedUVs(90.0f);
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rotate selected UVs 90 degrees CW");
+    ImGui::SameLine();
+
+    if (ImGui::Button("Straighten")) {
+        StraightenIslands();
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Straighten and align UV islands to grid axes");
+    ImGui::SameLine();
+
+    ImGui::TextDisabled("|");
+    ImGui::SameLine();
+
+    // 5. Operations
+    if (ImGui::Button("Cut")) {
         CutCurrentUVSelection();
     }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cut UV seams along selected components");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cut UV seams along selected components (Shift+X)");
     ImGui::SameLine();
 
-    if (ImGui::Button("SEW")) {
+    if (ImGui::Button("Sew")) {
         SewCurrentUVSelection();
     }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sew/stitch selected seam edges or components together");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sew/stitch selected seam edges together (Shift+V)");
     ImGui::SameLine();
 
-    if (ImGui::Button("UNWRAP")) {
+    if (ImGui::Button("Unwrap")) {
         AutoCutUnwrapAndPack();
     }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Unwrap all islands partitioned by cut seams and pack neatly into UDIM tiles");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Unwrap all islands partitioned by cut seams and pack neatly into UDIM tiles (Ctrl+U)");
     ImGui::SameLine();
 
-    if (ImGui::Button("PACK")) {
+    if (ImGui::Button("Pack")) {
         PackUVs();
     }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pack existing UV islands across UDIM tiles");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pack existing UV islands across UDIM tiles (Ctrl+P)");
     ImGui::SameLine();
 
-    if (ImGui::Button("CAMERA PROJ")) {
-        ApplyCameraProjection();
-    }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Project UVs from 3D camera. If faces are selected, projects only selected faces. If unselected and seams exist, partitions into multiple shells.");
-    ImGui::SameLine();
-
-    if (ImGui::Button("FRAME")) {
+    if (ImGui::Button("Frame")) {
         FrameAllUVs();
     }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fit & Frame all UV coordinates in 2D canvas (Shortcut: F)");
     ImGui::SameLine();
 
-    if (m_showUVChecker) {
-        ImGui::PushStyleColor(ImGuiCol_Button, BakerUI::Hex(0x4CC3A6));
-        ImGui::PushStyleColor(ImGuiCol_Text, BakerUI::Hex(0x0C1412));
-    }
-    if (ImGui::Button("CHECKER")) {
-        m_showUVChecker = !m_showUVChecker;
-    }
-    if (m_showUVChecker) ImGui::PopStyleColor(2);
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle 16x16 UV checker background grid");
-    ImGui::SameLine();
-
-    if (ImGui::Button("CLEAR")) {
+    if (ImGui::Button("Clear")) {
         ClearUVSelection();
     }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Clear active component selection");
@@ -2106,45 +2133,34 @@ void UIManager::RenderViewportPanel() {
                             drawList->AddTriangle(s0, s1, s2, IM_COL32(0, 255, 255, 240), 2.0f);
 
                             if (io.MouseDoubleClicked[0] || ImGui::IsKeyPressed(ImGuiKey_L)) {
-                                auto islands = UVCutter::SegmentIslands(m_lowPolyMesh);
-                                for (const auto& islTris : islands) {
-                                    bool contains = false;
-                                    for (int t : islTris) {
-                                        if (t == hitTriIdx) { contains = true; break; }
+                                auto islTris = GetConnectedUVIsland(static_cast<uint32_t>(hitTriIdx));
+                                if (!io.KeyShift) {
+                                    m_selectedUVFaces.clear();
+                                    m_selectedUVVertices.clear();
+                                    m_lowPolyMesh.selectedEdges.clear();
+                                }
+                                if (m_uvSelectionMode == UVSelectionMode::Vertex) {
+                                    for (uint32_t t : islTris) {
+                                        const auto& tRef = m_lowPolyMesh.triangles[t];
+                                        m_selectedUVVertices.insert(tRef.indices[0]);
+                                        m_selectedUVVertices.insert(tRef.indices[1]);
+                                        m_selectedUVVertices.insert(tRef.indices[2]);
                                     }
-                                    if (contains) {
-                                        if (!io.KeyShift) {
-                                            m_selectedUVFaces.clear();
-                                            m_selectedUVVertices.clear();
-                                            m_lowPolyMesh.selectedEdges.clear();
+                                } else if (m_uvSelectionMode == UVSelectionMode::Edge) {
+                                    for (uint32_t t : islTris) {
+                                        const auto& tRef = m_lowPolyMesh.triangles[t];
+                                        for (int e = 0; e < 3; ++e) {
+                                            m_lowPolyMesh.selectedEdges.insert(MakeEdgeKey(tRef.indices[e], tRef.indices[(e+1)%3]));
                                         }
-                                        if (m_uvSelectionMode == UVSelectionMode::Vertex) {
-                                            for (int t : islTris) {
-                                                const auto& tRef = m_lowPolyMesh.triangles[t];
-                                                m_selectedUVVertices.insert(tRef.indices[0]);
-                                                m_selectedUVVertices.insert(tRef.indices[1]);
-                                                m_selectedUVVertices.insert(tRef.indices[2]);
-                                            }
-                                        } else if (m_uvSelectionMode == UVSelectionMode::Edge) {
-                                            for (int t : islTris) {
-                                                const auto& tRef = m_lowPolyMesh.triangles[t];
-                                                for (int e = 0; e < 3; ++e) {
-                                                    m_lowPolyMesh.selectedEdges.insert(MakeEdgeKey(tRef.indices[e], tRef.indices[(e+1)%3]));
-                                                }
-                                            }
-                                            m_lowPolyMesh.GenerateSelectedEdgeLines();
-                                            m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
-                                        } else {
-                                            for (int t : islTris) {
-                                                m_selectedUVFaces.insert(static_cast<uint32_t>(t));
-                                            }
-                                        }
-                                        break;
                                     }
+                                    m_lowPolyMesh.GenerateSelectedEdgeLines();
+                                    m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
+                                } else {
+                                    m_selectedUVFaces.insert(islTris.begin(), islTris.end());
                                 }
                                 PushHistoryState("Select Connected UV Shell");
                                 char msg[128];
-                                snprintf(msg, sizeof(msg), "Selected entire connected UV shell");
+                                snprintf(msg, sizeof(msg), "Selected entire connected UV shell (%zu faces)", islTris.size());
                                 m_uvStatusMessage = msg;
                             } else if (ImGui::IsMouseClicked(0)) {
                                 uint32_t fIdx = static_cast<uint32_t>(hitTriIdx);
@@ -2948,7 +2964,7 @@ void UIManager::RenderViewportPanel() {
         Render2DUVCanvas(splitPos, splitSize);
     }
 
-    // Floating Workspace Action HUD (bottom center of viewport)
+    // Floating Workspace Action HUD (bottom center of viewport, only in Baking view)
     if (!isUVMode) {
         // Baking View: Start Bake & Progress HUD
         int udimCount = m_lowPolyMesh.detectedUDIMs.empty() ? 1 : (int)m_lowPolyMesh.detectedUDIMs.size();
@@ -2959,9 +2975,6 @@ void UIManager::RenderViewportPanel() {
                 TriggerBake();
             }
         }
-    } else {
-        // UV Cut & Pack View: Quick Unwrap, Pack, and Export HUD
-        RenderFloatingUVBar(origin, avail);
     }
 
     RenderMarkingMenu();
@@ -4240,6 +4253,192 @@ void UIManager::ApplyCameraProjection() {
         PushHistoryState("Maya Camera Projection");
         m_uvStatusMessage = "Projected UVs from camera view across partitioned shells";
     }
+}
+
+std::set<uint32_t> UIManager::GetConnectedUVIsland(uint32_t seedTri) {
+    std::set<uint32_t> island;
+    if (!m_hasLowPoly || seedTri >= m_lowPolyMesh.triangles.size()) return island;
+
+    // Helper to quantize UV coordinate into a 64-bit integer
+    auto QuantizeUV = [](const Baker::Vec2& uv) -> uint64_t {
+        int32_t qu = static_cast<int32_t>(std::round(uv.u * 10000.0f));
+        int32_t qv = static_cast<int32_t>(std::round(uv.v * 10000.0f));
+        return (static_cast<uint64_t>(static_cast<uint32_t>(qu)) << 32) | static_cast<uint32_t>(qv);
+    };
+
+    typedef std::pair<uint64_t, uint64_t> UVEdgeKey;
+    auto MakeUVEdgeKey = [](uint64_t k0, uint64_t k1) -> UVEdgeKey {
+        return (k0 < k1) ? UVEdgeKey(k0, k1) : UVEdgeKey(k1, k0);
+    };
+
+    std::map<UVEdgeKey, std::vector<uint32_t>> uvEdgeToTris;
+    for (size_t t = 0; t < m_lowPolyMesh.triangles.size(); ++t) {
+        const auto& tri = m_lowPolyMesh.triangles[t];
+        uint64_t k0 = QuantizeUV(m_lowPolyMesh.vertices[tri.indices[0]].uv);
+        uint64_t k1 = QuantizeUV(m_lowPolyMesh.vertices[tri.indices[1]].uv);
+        uint64_t k2 = QuantizeUV(m_lowPolyMesh.vertices[tri.indices[2]].uv);
+
+        auto e01 = MakeEdgeKey(tri.indices[0], tri.indices[1]);
+        auto e12 = MakeEdgeKey(tri.indices[1], tri.indices[2]);
+        auto e20 = MakeEdgeKey(tri.indices[2], tri.indices[0]);
+
+        if (!m_lowPolyMesh.cutSeams.count(e01)) {
+            uvEdgeToTris[MakeUVEdgeKey(k0, k1)].push_back(static_cast<uint32_t>(t));
+        }
+        if (!m_lowPolyMesh.cutSeams.count(e12)) {
+            uvEdgeToTris[MakeUVEdgeKey(k1, k2)].push_back(static_cast<uint32_t>(t));
+        }
+        if (!m_lowPolyMesh.cutSeams.count(e20)) {
+            uvEdgeToTris[MakeUVEdgeKey(k2, k0)].push_back(static_cast<uint32_t>(t));
+        }
+    }
+
+    std::vector<uint32_t> q;
+    q.push_back(seedTri);
+    island.insert(seedTri);
+
+    while (!q.empty()) {
+        uint32_t cur = q.back();
+        q.pop_back();
+
+        const auto& tri = m_lowPolyMesh.triangles[cur];
+        uint64_t k[3] = {
+            QuantizeUV(m_lowPolyMesh.vertices[tri.indices[0]].uv),
+            QuantizeUV(m_lowPolyMesh.vertices[tri.indices[1]].uv),
+            QuantizeUV(m_lowPolyMesh.vertices[tri.indices[2]].uv)
+        };
+
+        for (int e = 0; e < 3; ++e) {
+            UVEdgeKey edgeKey = MakeUVEdgeKey(k[e], k[(e + 1) % 3]);
+            auto it = uvEdgeToTris.find(edgeKey);
+            if (it != uvEdgeToTris.end()) {
+                for (uint32_t n : it->second) {
+                    if (island.insert(n).second) {
+                        q.push_back(n);
+                    }
+                }
+            }
+        }
+    }
+
+    return island;
+}
+
+void UIManager::FlipSelectedUVs(bool horizontal) {
+    if (!m_hasLowPoly || m_lowPolyMesh.vertices.empty()) return;
+
+    std::vector<uint32_t> targetVerts;
+    if (m_uvSelectionMode == UVSelectionMode::Vertex && !m_selectedUVVertices.empty()) {
+        targetVerts.assign(m_selectedUVVertices.begin(), m_selectedUVVertices.end());
+    } else if (m_uvSelectionMode == UVSelectionMode::Edge && !m_lowPolyMesh.selectedEdges.empty()) {
+        for (const auto& e : m_lowPolyMesh.selectedEdges) {
+            targetVerts.push_back(e.first);
+            targetVerts.push_back(e.second);
+        }
+    } else if (!m_selectedUVFaces.empty()) {
+        for (uint32_t f : m_selectedUVFaces) {
+            if (f < m_lowPolyMesh.triangles.size()) {
+                const auto& tri = m_lowPolyMesh.triangles[f];
+                targetVerts.push_back(tri.indices[0]);
+                targetVerts.push_back(tri.indices[1]);
+                targetVerts.push_back(tri.indices[2]);
+            }
+        }
+    } else {
+        targetVerts.resize(m_lowPolyMesh.vertices.size());
+        for (size_t i = 0; i < m_lowPolyMesh.vertices.size(); ++i) targetVerts[i] = static_cast<uint32_t>(i);
+    }
+
+    std::sort(targetVerts.begin(), targetVerts.end());
+    targetVerts.erase(std::unique(targetVerts.begin(), targetVerts.end()), targetVerts.end());
+    if (targetVerts.empty()) return;
+
+    float minU = 1e9f, maxU = -1e9f, minV = 1e9f, maxV = -1e9f;
+    for (uint32_t v : targetVerts) {
+        if (v < m_lowPolyMesh.vertices.size()) {
+            minU = (std::min)(minU, m_lowPolyMesh.vertices[v].uv.u);
+            maxU = (std::max)(maxU, m_lowPolyMesh.vertices[v].uv.u);
+            minV = (std::min)(minV, m_lowPolyMesh.vertices[v].uv.v);
+            maxV = (std::max)(maxV, m_lowPolyMesh.vertices[v].uv.v);
+        }
+    }
+    float centerU = (minU + maxU) * 0.5f;
+    float centerV = (minV + maxV) * 0.5f;
+
+    for (uint32_t v : targetVerts) {
+        if (v < m_lowPolyMesh.vertices.size()) {
+            if (horizontal) {
+                m_lowPolyMesh.vertices[v].uv.u = centerU - (m_lowPolyMesh.vertices[v].uv.u - centerU);
+            } else {
+                m_lowPolyMesh.vertices[v].uv.v = centerV - (m_lowPolyMesh.vertices[v].uv.v - centerV);
+            }
+        }
+    }
+
+    m_viewportRenderer.SetLowPolyMesh(m_lowPolyMesh, m_settings.lowPolyScale);
+    PushHistoryState(horizontal ? "Flip UVs Horizontally (U)" : "Flip UVs Vertically (V)");
+    m_uvStatusMessage = horizontal ? "Flipped selected UVs along U-axis" : "Flipped selected UVs along V-axis";
+}
+
+void UIManager::RotateSelectedUVs(float angleDeg) {
+    if (!m_hasLowPoly || m_lowPolyMesh.vertices.empty()) return;
+
+    std::vector<uint32_t> targetVerts;
+    if (m_uvSelectionMode == UVSelectionMode::Vertex && !m_selectedUVVertices.empty()) {
+        targetVerts.assign(m_selectedUVVertices.begin(), m_selectedUVVertices.end());
+    } else if (m_uvSelectionMode == UVSelectionMode::Edge && !m_lowPolyMesh.selectedEdges.empty()) {
+        for (const auto& e : m_lowPolyMesh.selectedEdges) {
+            targetVerts.push_back(e.first);
+            targetVerts.push_back(e.second);
+        }
+    } else if (!m_selectedUVFaces.empty()) {
+        for (uint32_t f : m_selectedUVFaces) {
+            if (f < m_lowPolyMesh.triangles.size()) {
+                const auto& tri = m_lowPolyMesh.triangles[f];
+                targetVerts.push_back(tri.indices[0]);
+                targetVerts.push_back(tri.indices[1]);
+                targetVerts.push_back(tri.indices[2]);
+            }
+        }
+    } else {
+        targetVerts.resize(m_lowPolyMesh.vertices.size());
+        for (size_t i = 0; i < m_lowPolyMesh.vertices.size(); ++i) targetVerts[i] = static_cast<uint32_t>(i);
+    }
+
+    std::sort(targetVerts.begin(), targetVerts.end());
+    targetVerts.erase(std::unique(targetVerts.begin(), targetVerts.end()), targetVerts.end());
+    if (targetVerts.empty()) return;
+
+    float minU = 1e9f, maxU = -1e9f, minV = 1e9f, maxV = -1e9f;
+    for (uint32_t v : targetVerts) {
+        if (v < m_lowPolyMesh.vertices.size()) {
+            minU = (std::min)(minU, m_lowPolyMesh.vertices[v].uv.u);
+            maxU = (std::max)(maxU, m_lowPolyMesh.vertices[v].uv.u);
+            minV = (std::min)(minV, m_lowPolyMesh.vertices[v].uv.v);
+            maxV = (std::max)(maxV, m_lowPolyMesh.vertices[v].uv.v);
+        }
+    }
+    float centerU = (minU + maxU) * 0.5f;
+    float centerV = (minV + maxV) * 0.5f;
+
+    float rad = DirectX::XMConvertToRadians(angleDeg);
+    float cosA = std::cos(rad);
+    float sinA = std::sin(rad);
+
+    for (uint32_t v : targetVerts) {
+        if (v < m_lowPolyMesh.vertices.size()) {
+            float du = m_lowPolyMesh.vertices[v].uv.u - centerU;
+            float dv = m_lowPolyMesh.vertices[v].uv.v - centerV;
+            m_lowPolyMesh.vertices[v].uv.u = centerU + (du * cosA - dv * sinA);
+            m_lowPolyMesh.vertices[v].uv.v = centerV + (du * sinA + dv * cosA);
+        }
+    }
+
+    m_viewportRenderer.SetLowPolyMesh(m_lowPolyMesh, m_settings.lowPolyScale);
+    char buf[64];
+    snprintf(buf, sizeof(buf), "Rotate UVs (%.0f deg)", angleDeg);
+    PushHistoryState(buf);
+    m_uvStatusMessage = buf;
 }
 
 void UIManager::RenderUVCutAndPackPanel() {

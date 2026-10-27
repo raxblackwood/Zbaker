@@ -232,6 +232,20 @@ Resolved UV unwrapping artifacts and added full 2D UV manipulation tools:
 
 ---
 
+### 5.9 Maya UV Editor Toolbar Parity, Reliable Shell Selection & Stable Ground Grid (2026-10-27)
+Resolved ground grid subdivision popping, implemented genuine UV-space shell selection, and built the full Maya UV Editor Top Toolbar:
+- Stable Viewport Ground Grid: Replaced abrupt step-based LOD scaling with continuous dual-metric grid lines (1.0 unit minor lines, 10.0 units major lines) and smooth continuous LOD fading.
+- Preserved Ground Horizon: Fixed grid distance fading to adapt smoothly to camera distance without collapsing in front of the camera when zooming in.
+- Smooth UV Subgrid Fade: Updated the 2D UV tile subgrid to smoothly fade its opacity based on zoom level instead of popping abruptly at 80 pixels.
+- Reliable Double-Click & L-Key Island Selection: Moved double-click detection directly to the mouse-down click event frame, ensuring 100% responsive triggering.
+- Topological UV Island Connectivity: Implemented UIManager::GetConnectedUVIsland using shared UV-space edge adjacency, isolating exact UV islands without leaking across the 3D mesh.
+- Maya UV Editor Header Toolbar: Replaced divided, conflicting toolbars with a single, sleek, unified Maya-style top bar spanning the 2D UV canvas.
+- Maya Display Toggles: Added toggles for Maya Texture Borders (cyan seam lines), UV Shell Shading (multi-colored pastel islands), UV Checker grid, Stretch/Compression Heatmap, and Wireframe.
+- Maya Quick Transforms: Built Flip U, Flip V, Rot -90, Rot +90, and Straighten actions operating directly on selected UV components.
+- Workspace De-cluttering: Removed the redundant floating bottom UV bar, leaving the 2D UV workspace clean and spacious.
+
+---
+
 ## 6. Marmoset Paint Cage & Paint Skew Architecture (Phase 2 Roadmap)
 To achieve full parity with Marmoset Toolbag's interactive 3D brush toolset:
 1. **Interactive 3D Ray-Mesh Picking**:

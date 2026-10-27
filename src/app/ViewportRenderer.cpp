@@ -90,62 +90,57 @@ float4 PSMain(PS_INPUT input) : SV_TARGET {
         return float4(MeshColor.rgb, Opacity);
     }
 
-    // 5: Blender Procedural Dynamic Anti-Aliased Ground Grid & Colored Axes
-    // 5: Blender Procedural Dynamic Anti-Aliased Ground Grid & Colored Axes
+    // 5: Maya / Blender Procedural Continuous Anti-Aliased Ground Grid & Colored Axes
     if (ShadingMode == 5) {
         float2 coord = input.WorldPos.xz;
         float3 viewVec = input.WorldPos - CameraPos.xyz;
         float distToCam = length(viewVec);
-        float3 viewDir = viewVec / max(distToCam, 0.0001f);
 
-        // Blender clean unit grid: 1.0 unit spacing
-        float unit = 1.0f;
-        if (GridScale > 500.0f) unit = 50.0f;
-        else if (GridScale > 50.0f) unit = 5.0f;
-        else if (GridScale < 0.5f) unit = 0.1f;
+        // Minor grid (1.0 unit spacing - stable constant metric, no abrupt subdivision stepping)
+        float2 uvMinor = coord / 1.0f;
+        float2 fwMinor = max(fwidth(uvMinor), 0.000001f);
+        float2 gMin = abs(frac(uvMinor - 0.5f) - 0.5f) / fwMinor;
+        float lineMinor = 1.0f - saturate(min(gMin.x, gMin.y));
+        float cellPixMin = 1.0f / max(fwMinor.x, fwMinor.y);
+        float lodMin = smoothstep(1.5f, 6.0f, cellPixMin); // Smooth continuous LOD fade, never abrupt
 
-        float2 uv = coord / unit;
-        float2 fw = max(fwidth(uv), 0.000001f);
-
-        // Screen-space 1-pixel analytic line anti-aliasing (exact Blender line width)
-        float2 grid = abs(frac(uv - 0.5f) - 0.5f) / fw;
-        float lineDist = min(grid.x, grid.y);
-        float gridLine = 1.0f - saturate(lineDist);
-
-        // Smoothly fade line intensity when cells shrink to prevent moire
-        float cellPixels = 1.0f / max(fw.x, fw.y);
-        float lodFade = smoothstep(1.0f, 3.0f, cellPixels);
-        gridLine *= lodFade;
+        // Major grid (10.0 units spacing - prominent coordinate lines)
+        float2 uvMajor = coord / 10.0f;
+        float2 fwMajor = max(fwidth(uvMajor), 0.000001f);
+        float2 gMaj = abs(frac(uvMajor - 0.5f) - 0.5f) / fwMajor;
+        float lineMajor = 1.0f - saturate(min(gMaj.x, gMaj.y));
+        float cellPixMaj = 1.0f / max(fwMajor.x, fwMajor.y);
+        float lodMaj = smoothstep(1.0f, 4.0f, cellPixMaj);
 
         // Red X Axis (Z == 0) and Green Z Axis (X == 0)
         float2 dCoord = max(fwidth(coord), 0.000001f);
         float axisX = 1.0f - saturate(abs(input.WorldPos.z) / dCoord.y);
         float axisZ = 1.0f - saturate(abs(input.WorldPos.x) / dCoord.x);
 
-        // Unified smooth continuous distance fade into the dark background (Blender horizon fade)
-        float fadeStart = max(GridScale * 1.5f, 45.0f);
-        float fadeEnd   = max(GridScale * 3.5f, 105.0f);
+        // Stable horizon distance fade: Never collapses in front of camera when zooming in
+        float fadeEnd   = max(GridScale * 3.5f, 450.0f);
+        float fadeStart = fadeEnd * 0.35f;
         float distFade  = 1.0f - smoothstep(fadeStart, fadeEnd, distToCam);
 
         if (distFade <= 0.001f) discard;
 
-        // Blender grid lines: LIGHTER than the background (crisp light-grey over dark viewport)
+        // Composite grid lines: Minor lines (subtle crisp grey) + Major lines (prominent light grey)
+        float gridLine = max(lineMinor * lodMin * 0.28f, lineMajor * lodMaj * 0.60f);
         float3 col = float3(0.40f, 0.40f, 0.43f);
-        float lineAlpha = gridLine * 0.65f;
+        float lineAlpha = gridLine;
 
         // Red X Axis (along Z = 0 in DX coordinate space)
         if (axisX > 0.001f) {
             col = lerp(col, float3(0.85f, 0.28f, 0.28f), axisX);
-            // Axis line matches grid LOD fade so it never outlasts the grid
-            lineAlpha = max(lineAlpha, axisX * 0.85f * lodFade);
+            lineAlpha = max(lineAlpha, axisX * 0.85f);
         }
         // Green Z Axis (along X = 0 in DX coordinate space)
         if (axisZ > 0.001f) {
             col = lerp(col, float3(0.38f, 0.72f, 0.22f), axisZ);
-            lineAlpha = max(lineAlpha, axisZ * 0.85f * lodFade);
+            lineAlpha = max(lineAlpha, axisZ * 0.85f);
         }
 
-        // Apply identical horizon distance fade to BOTH the grid and the axis lines
+        // Unified distance fade applied to both grid lines and axes
         float alpha = lineAlpha * distFade;
         if (alpha < 0.002f) discard;
 

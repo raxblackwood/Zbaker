@@ -178,6 +178,9 @@ private:
     float m_gizmoInitialDist = 1.0f;
 
     bool m_showUVChecker = false;
+    bool m_showShellShading = true;
+    bool m_showTextureBorders = true;
+    bool m_showUVWireframe = true;
 
     std::pair<uint32_t, uint32_t> m_lastSelectedEdge = { UINT32_MAX, UINT32_MAX };
     bool m_hasLastSelectedEdge = false;
@@ -208,6 +211,9 @@ private:
     void SewCurrentUVSelection();
     void ClearUVSelection();
     void ApplyCameraProjection();
+    void FlipSelectedUVs(bool horizontal);
+    void RotateSelectedUVs(float angleDeg);
+    std::set<uint32_t> GetConnectedUVIsland(uint32_t seedTri);
 
     // UV Surface Curves State
     CurveManager m_curveManager;
