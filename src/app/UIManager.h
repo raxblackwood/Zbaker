@@ -10,6 +10,7 @@
 #include "ViewportRenderer.h"
 #include "BakerUI.h"
 #include "HistoryManager.h"
+#include "CommandRegistry.h"
 #include <string>
 #include <vector>
 #include <map>
@@ -154,6 +155,7 @@ private:
 
     // 2D UV Transform Gizmo State
     enum class UVGizmoMode {
+        Select,
         Translate,
         Rotate,
         Scale
@@ -252,6 +254,11 @@ private:
     int m_stagedNormalW = 0;
     int m_stagedNormalH = 0;
     std::atomic<bool> m_pendingNormalUpload{false};
+
+    // Command Registry & Architecture Management
+    BakerUI::CommandRegistry m_commandRegistry;
+    void InitCommandRegistry();
 };
+
 
 } // namespace Baker

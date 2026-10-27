@@ -248,6 +248,10 @@ Resolved ground grid subdivision popping, implemented genuine UV-space shell sel
 - Tier 2 provides quick transforms (Flip U, Flip V, Rot -90, Rot +90, Straighten), cut and sew operations (Cut, Sew), layout tools (Unwrap, Pack), and canvas navigation (Frame, Reset, Clear).
 - Zero Collision Architecture: Anchored floating 3D mode toggles strictly inside the 3D viewport region, eliminating collisions with the 2D UV canvas.
 - Isolated Child Clipping: Wrapped the 2D UV Canvas in an isolated ImGui child window, preventing buttons and geometry from leaking or rendering behind the docked right panels.
+- Central Command Registry (Phase 0): Implemented BakerUI::CommandRegistry in src/app/CommandRegistry.h as a single source of truth for all commands and actions.
+- Debug Invariant Enforcement: Enforced Rule R-1 through assertion checks guaranteeing no command is registered to both Tool Header and UV Toolkit simultaneously.
+- Control Inventory & Mapping: Cataloged and registered 38 distinct application commands across File, Edit, Select, View, and UV modules with proper hotkeys, tooltips, and enabled state callbacks.
+- Duplicate Audit: Documented all command duplications across toolbars, panel buttons, and menus for phased extraction and clean single-home unification.
 
 ---
 

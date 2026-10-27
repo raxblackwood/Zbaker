@@ -125,6 +125,7 @@ UIManager::~UIManager() {
 }
 
 void UIManager::Initialize(ID3D11Device* device, ID3D11DeviceContext* context) {
+    InitCommandRegistry();
     m_logEntries.push_back("[System] ZBrush UDIM Baker initialized.");
     if (device && context) {
         if (m_viewportRenderer.Initialize(device, context)) {
@@ -138,6 +139,409 @@ void UIManager::Initialize(ID3D11Device* device, ID3D11DeviceContext* context) {
             }
         }
     }
+}
+
+void UIManager::InitCommandRegistry() {
+    using BakerUI::Surface;
+    using BakerUI::Command;
+
+    m_commandRegistry.Clear();
+
+    // 1. File Commands
+    m_commandRegistry.Register(Command{
+        "file.new_session", "New Session (Clear Scene)", "Clear all active high-poly, low-poly, and baked data", "Ctrl+N",
+        static_cast<uint32_t>(Surface::Menu), "File", "",
+        [this]() { ClearScene(); }, nullptr, nullptr, nullptr
+    });
+    m_commandRegistry.Register(Command{
+        "file.open_low_poly", "Open Low-Poly...", "Open low-poly target mesh (OBJ, FBX)", "Ctrl+O",
+        static_cast<uint32_t>(Surface::Menu), "File", "",
+        [this]() { m_shellState.openLowPoly = true; }, nullptr, nullptr, nullptr
+    });
+    m_commandRegistry.Register(Command{
+        "file.open_high_poly", "Open High-Poly...", "Open high-poly sculpt (OBJ, FBX, BIN)", "Ctrl+Shift+O",
+        static_cast<uint32_t>(Surface::Menu), "File", "",
+        [this]() { m_shellState.openHighPoly = true; }, nullptr, nullptr, nullptr
+    });
+    m_commandRegistry.Register(Command{
+        "file.open_cage", "Open Cage...", "Open explicit morph cage mesh", "",
+        static_cast<uint32_t>(Surface::Menu), "File", "",
+        [this]() { m_shellState.openCage = true; }, nullptr, nullptr, nullptr
+    });
+    m_commandRegistry.Register(Command{
+        "file.export_low_poly", "Export UV Low-Poly OBJ...", "Export unwrapped low-poly OBJ with UV coordinates", "Ctrl+E",
+        static_cast<uint32_t>(Surface::Menu | Surface::Toolkit), "File", "Export",
+        [this]() { ExportUnwrappedOBJ(); },
+        [this]() { return m_hasLowPoly && !m_lowPolyMesh.vertices.empty(); },
+        nullptr,
+        []() { return "No low-poly mesh loaded to export"; }
+    });
+    m_commandRegistry.Register(Command{
+        "file.load_zbrush_cache", "Load ZBrush Cache", "Scan for active ZBrush GoZ cache files", "",
+        static_cast<uint32_t>(Surface::Menu), "File", "",
+        [this]() { AutoDetectZBrushCache(true); }, nullptr, nullptr, nullptr
+    });
+    m_commandRegistry.Register(Command{
+        "file.exit", "Exit", "Close and exit ZBrush UDIM Baker", "Alt+F4",
+        static_cast<uint32_t>(Surface::Menu), "File", "",
+        [this]() { PostQuitMessage(0); }, nullptr, nullptr, nullptr
+    });
+
+    // 2. Edit Commands
+    m_commandRegistry.Register(Command{
+        "edit.undo", "Undo", "Undo last mesh or seam action", "Ctrl+Z",
+        static_cast<uint32_t>(Surface::Menu), "Edit", "",
+        [this]() { PerformUndo(); },
+        [this]() { return m_history.CanUndo(); },
+        nullptr,
+        []() { return "No action to undo"; }
+    });
+    m_commandRegistry.Register(Command{
+        "edit.redo", "Redo", "Redo previously undone action", "Ctrl+Y",
+        static_cast<uint32_t>(Surface::Menu), "Edit", "",
+        [this]() { PerformRedo(); },
+        [this]() { return m_history.CanRedo(); },
+        nullptr,
+        []() { return "No action to redo"; }
+    });
+
+    // 3. Selection Modes
+    m_commandRegistry.Register(Command{
+        "select.mode_vertex", "Vertex", "Vertex Selection Mode [Hotkey: 1]", "1",
+        static_cast<uint32_t>(Surface::Menu | Surface::Header), "Select", "",
+        [this]() { m_uvSelectionMode = UVSelectionMode::Vertex; },
+        nullptr,
+        [this]() { return m_uvSelectionMode == UVSelectionMode::Vertex; },
+        nullptr
+    });
+    m_commandRegistry.Register(Command{
+        "select.mode_edge", "Edge", "Edge Selection Mode [Hotkey: 2]", "2",
+        static_cast<uint32_t>(Surface::Menu | Surface::Header), "Select", "",
+        [this]() { m_uvSelectionMode = UVSelectionMode::Edge; },
+        nullptr,
+        [this]() { return m_uvSelectionMode == UVSelectionMode::Edge; },
+        nullptr
+    });
+    m_commandRegistry.Register(Command{
+        "select.mode_face", "Face", "Face Selection Mode [Hotkey: 3]", "3",
+        static_cast<uint32_t>(Surface::Menu | Surface::Header), "Select", "",
+        [this]() { m_uvSelectionMode = UVSelectionMode::Face; },
+        nullptr,
+        [this]() { return m_uvSelectionMode == UVSelectionMode::Face; },
+        nullptr
+    });
+    m_commandRegistry.Register(Command{
+        "select.mode_shell", "Shell", "UV Shell Selection Mode [Hotkey: 4]", "4",
+        static_cast<uint32_t>(Surface::Menu | Surface::Header), "Select", "",
+        [this]() { m_uvSelectionMode = UVSelectionMode::Shell; },
+        nullptr,
+        [this]() { return m_uvSelectionMode == UVSelectionMode::Shell; },
+        nullptr
+    });
+    m_commandRegistry.Register(Command{
+        "select.edge_loop", "Select Edge Loop", "Select continuous loop through connected quads", "Alt+Double-LMB",
+        static_cast<uint32_t>(Surface::Menu | Surface::Marking), "Select", "",
+        [this]() {
+            if (m_hasLastSelectedEdge) {
+                UVCutter::SelectEdgeLoop(m_lowPolyMesh, m_lastSelectedEdge.first, m_lastSelectedEdge.second, true);
+                m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
+                PushHistoryState("Select Edge Loop");
+            }
+        },
+        [this]() { return m_hasLastSelectedEdge; },
+        nullptr,
+        []() { return "Requires an active edge selection"; }
+    });
+    m_commandRegistry.Register(Command{
+        "select.edge_ring", "Select Edge Ring", "Select parallel edge ring across quads", "Alt+Shift+LMB",
+        static_cast<uint32_t>(Surface::Menu | Surface::Marking), "Select", "",
+        [this]() {
+            if (m_hasLastSelectedEdge) {
+                UVCutter::SelectEdgeRing(m_lowPolyMesh, m_lastSelectedEdge.first, m_lastSelectedEdge.second, true);
+                m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
+                PushHistoryState("Select Edge Ring");
+            }
+        },
+        [this]() { return m_hasLastSelectedEdge; },
+        nullptr,
+        []() { return "Requires an active edge selection"; }
+    });
+    m_commandRegistry.Register(Command{
+        "select.clear", "Clear Selection", "Deselect all components", "Esc",
+        static_cast<uint32_t>(Surface::Menu), "Select", "",
+        [this]() { ClearUVSelection(); },
+        [this]() { return !m_selectedUVVertices.empty() || !m_lowPolyMesh.selectedEdges.empty() || !m_selectedUVFaces.empty(); },
+        nullptr,
+        []() { return "No selection active"; }
+    });
+
+    // 4. Transform Tools (Gizmo)
+    m_commandRegistry.Register(Command{
+        "tool.select", "Select", "Selection Box Tool [Q]", "Q",
+        static_cast<uint32_t>(Surface::Header), "", "",
+        [this]() { m_uvGizmoMode = UVGizmoMode::Select; },
+        nullptr,
+        [this]() { return m_uvGizmoMode == UVGizmoMode::Select; },
+        nullptr
+    });
+    m_commandRegistry.Register(Command{
+        "tool.move", "Move", "Move Gizmo Tool [W or G]", "W",
+        static_cast<uint32_t>(Surface::Header), "", "",
+        [this]() { m_uvGizmoMode = UVGizmoMode::Translate; },
+        nullptr,
+        [this]() { return m_uvGizmoMode == UVGizmoMode::Translate; },
+        nullptr
+    });
+    m_commandRegistry.Register(Command{
+        "tool.rotate", "Rotate", "Rotate Gizmo Tool [E or R]", "E",
+        static_cast<uint32_t>(Surface::Header), "", "",
+        [this]() { m_uvGizmoMode = UVGizmoMode::Rotate; },
+        nullptr,
+        [this]() { return m_uvGizmoMode == UVGizmoMode::Rotate; },
+        nullptr
+    });
+    m_commandRegistry.Register(Command{
+        "tool.scale", "Scale", "Scale Gizmo Tool [R or S]", "R",
+        static_cast<uint32_t>(Surface::Header), "", "",
+        [this]() { m_uvGizmoMode = UVGizmoMode::Scale; },
+        nullptr,
+        [this]() { return m_uvGizmoMode == UVGizmoMode::Scale; },
+        nullptr
+    });
+
+    // 5. Layout Modes & Navigation
+    m_commandRegistry.Register(Command{
+        "view.layout_3d", "3D View", "Switch to 3D Viewport Only", "",
+        static_cast<uint32_t>(Surface::Menu | Surface::Header), "View/Layout", "",
+        [this]() { m_viewportMode = ViewportMode::View3D; },
+        nullptr,
+        [this]() { return m_viewportMode == ViewportMode::View3D; },
+        nullptr
+    });
+    m_commandRegistry.Register(Command{
+        "view.layout_split", "Split 3D | 2D", "Switch to Split 3D and 2D Viewports", "",
+        static_cast<uint32_t>(Surface::Menu | Surface::Header), "View/Layout", "",
+        [this]() { m_viewportMode = ViewportMode::SplitBoth; },
+        nullptr,
+        [this]() { return m_viewportMode == ViewportMode::SplitBoth; },
+        nullptr
+    });
+    m_commandRegistry.Register(Command{
+        "view.layout_2d", "2D UV", "Switch to 2D UV Viewport Only", "",
+        static_cast<uint32_t>(Surface::Menu | Surface::Header), "View/Layout", "",
+        [this]() { m_viewportMode = ViewportMode::View2D; },
+        nullptr,
+        [this]() { return m_viewportMode == ViewportMode::View2D; },
+        nullptr
+    });
+    m_commandRegistry.Register(Command{
+        "view.frame_all", "Frame All", "Fit and frame 3D mesh or 2D UV canvas in view", "F",
+        static_cast<uint32_t>(Surface::Menu), "View", "",
+        [this]() { m_viewportRenderer.FrameAll(); },
+        nullptr, nullptr, nullptr
+    });
+    m_commandRegistry.Register(Command{
+        "view.reset_view", "Reset View", "Reset 2D UV zoom to 1.0x and pan to center", "Home",
+        static_cast<uint32_t>(Surface::Menu), "View", "",
+        [this]() { m_uvZoom = 1.0f; m_uvPan = ImVec2(0.0f, 0.0f); },
+        nullptr, nullptr, nullptr
+    });
+
+    // 6. Display Toggles (Popovers in Header)
+    m_commandRegistry.Register(Command{
+        "view.3d_low_poly", "Low-Poly Mesh", "Toggle Low-Poly 3D mesh rendering", "",
+        static_cast<uint32_t>(Surface::Menu | Surface::Header), "View/3D Display", "",
+        [this]() { m_viewportRenderer.showLowPoly = !m_viewportRenderer.showLowPoly; },
+        nullptr,
+        [this]() { return m_viewportRenderer.showLowPoly; },
+        nullptr
+    });
+    m_commandRegistry.Register(Command{
+        "view.3d_wireframe", "Wireframe", "Toggle quad wireframe display", "",
+        static_cast<uint32_t>(Surface::Menu | Surface::Header), "View/3D Display", "",
+        [this]() { m_viewportRenderer.showLowPolyWireframe = !m_viewportRenderer.showLowPolyWireframe; },
+        nullptr,
+        [this]() { return m_viewportRenderer.showLowPolyWireframe; },
+        nullptr
+    });
+    m_commandRegistry.Register(Command{
+        "view.3d_seams", "UV Seams", "Toggle 3D seam lines visualization", "",
+        static_cast<uint32_t>(Surface::Menu | Surface::Header), "View/3D Display", "",
+        [this]() { m_viewportRenderer.showSeams = !m_viewportRenderer.showSeams; },
+        nullptr,
+        [this]() { return m_viewportRenderer.showSeams; },
+        nullptr
+    });
+    m_commandRegistry.Register(Command{
+        "view.3d_grid", "Ground Grid", "Toggle 3D ground reference grid", "",
+        static_cast<uint32_t>(Surface::Menu | Surface::Header), "View/3D Display", "",
+        [this]() { m_viewportRenderer.showGrid = !m_viewportRenderer.showGrid; },
+        nullptr,
+        [this]() { return m_viewportRenderer.showGrid; },
+        nullptr
+    });
+    m_commandRegistry.Register(Command{
+        "view.uv_borders", "Texture Borders", "Toggle UV texture border / seam highlighting", "",
+        static_cast<uint32_t>(Surface::Menu | Surface::Header), "View/UV Display", "",
+        [this]() { m_showTextureBorders = !m_showTextureBorders; },
+        nullptr,
+        [this]() { return m_showTextureBorders; },
+        nullptr
+    });
+    m_commandRegistry.Register(Command{
+        "view.uv_shells", "Shell Shading", "Toggle pastel color coding for each UV island", "",
+        static_cast<uint32_t>(Surface::Menu | Surface::Header), "View/UV Display", "",
+        [this]() { m_showShellShading = !m_showShellShading; },
+        nullptr,
+        [this]() { return m_showShellShading; },
+        nullptr
+    });
+    m_commandRegistry.Register(Command{
+        "view.uv_checker", "Checker Grid", "Toggle 16x16 UV checker background grid", "",
+        static_cast<uint32_t>(Surface::Menu | Surface::Header), "View/UV Display", "",
+        [this]() { m_showUVChecker = !m_showUVChecker; },
+        nullptr,
+        [this]() { return m_showUVChecker; },
+        nullptr
+    });
+    m_commandRegistry.Register(Command{
+        "view.uv_distortion", "Distortion Heatmap", "Toggle area stretch and compression feedback", "",
+        static_cast<uint32_t>(Surface::Menu | Surface::Header), "View/UV Display", "",
+        [this]() { m_showDistortionHeatmap = !m_showDistortionHeatmap; },
+        nullptr,
+        [this]() { return m_showDistortionHeatmap; },
+        nullptr
+    });
+    m_commandRegistry.Register(Command{
+        "view.uv_wireframe", "UV Wireframe", "Toggle UV polygon wireframe display", "",
+        static_cast<uint32_t>(Surface::Menu | Surface::Header), "View/UV Display", "",
+        [this]() { m_showUVWireframe = !m_showUVWireframe; },
+        nullptr,
+        [this]() { return m_showUVWireframe; },
+        nullptr
+    });
+
+    // 7. UV Operations (UV Toolkit)
+    m_commandRegistry.Register(Command{
+        "uv.cut", "Cut Seam", "Cut UV seams along selected edges", "Shift+X",
+        static_cast<uint32_t>(Surface::Menu | Surface::Toolkit | Surface::Marking), "UV/Cut & Sew", "Cut & Sew",
+        [this]() { CutCurrentUVSelection(); },
+        [this]() { return !m_lowPolyMesh.selectedEdges.empty(); },
+        nullptr,
+        []() { return "No edges selected to cut"; }
+    });
+    m_commandRegistry.Register(Command{
+        "uv.sew", "Sew Seam", "Sew and stitch selected seam edges together", "Shift+V",
+        static_cast<uint32_t>(Surface::Menu | Surface::Toolkit | Surface::Marking), "UV/Cut & Sew", "Cut & Sew",
+        [this]() { SewCurrentUVSelection(); },
+        [this]() { return !m_lowPolyMesh.selectedEdges.empty(); },
+        nullptr,
+        []() { return "No edges selected to sew"; }
+    });
+    m_commandRegistry.Register(Command{
+        "uv.clear_seams", "Clear All Seams", "Clear all marked UV seam lines on mesh", "",
+        static_cast<uint32_t>(Surface::Menu | Surface::Toolkit | Surface::Marking), "UV/Cut & Sew", "Cut & Sew",
+        [this]() { ClearSeams(); },
+        [this]() { return !m_lowPolyMesh.cutSeams.empty(); },
+        nullptr,
+        []() { return "No marked seams to clear"; }
+    });
+    m_commandRegistry.Register(Command{
+        "uv.auto_seams", "Auto Seams", "Mark boundary seams by dihedral angle threshold", "",
+        static_cast<uint32_t>(Surface::Menu | Surface::Toolkit), "UV/Cut & Sew", "Cut & Sew",
+        [this]() { MarkSeamsByAngle(); },
+        [this]() { return m_hasLowPoly && !m_lowPolyMesh.triangles.empty(); },
+        nullptr,
+        []() { return "Requires low-poly mesh"; }
+    });
+    m_commandRegistry.Register(Command{
+        "uv.unwrap", "Unwrap", "Unwrap islands using conformal least-squares mapping", "Ctrl+U",
+        static_cast<uint32_t>(Surface::Menu | Surface::Toolkit | Surface::Marking), "UV/Unfold", "Unfold",
+        [this]() { UnwrapMesh(); },
+        [this]() { return m_hasLowPoly && !m_lowPolyMesh.triangles.empty(); },
+        nullptr,
+        []() { return "Requires low-poly mesh"; }
+    });
+    m_commandRegistry.Register(Command{
+        "uv.flip_u", "Flip U", "Flip selected UV components horizontally along U-axis", "",
+        static_cast<uint32_t>(Surface::Menu | Surface::Toolkit), "UV/Transform", "Transform",
+        [this]() { FlipSelectedUVs(true); },
+        [this]() { return !m_selectedUVVertices.empty() || !m_lowPolyMesh.selectedEdges.empty() || !m_selectedUVFaces.empty(); },
+        nullptr,
+        []() { return "No UV components selected"; }
+    });
+    m_commandRegistry.Register(Command{
+        "uv.flip_v", "Flip V", "Flip selected UV components vertically along V-axis", "",
+        static_cast<uint32_t>(Surface::Menu | Surface::Toolkit), "UV/Transform", "Transform",
+        [this]() { FlipSelectedUVs(false); },
+        [this]() { return !m_selectedUVVertices.empty() || !m_lowPolyMesh.selectedEdges.empty() || !m_selectedUVFaces.empty(); },
+        nullptr,
+        []() { return "No UV components selected"; }
+    });
+    m_commandRegistry.Register(Command{
+        "uv.rot_ccw", "Rotate -90°", "Rotate selected UVs 90 degrees counter-clockwise", "",
+        static_cast<uint32_t>(Surface::Menu | Surface::Toolkit), "UV/Transform", "Transform",
+        [this]() { RotateSelectedUVs(-90.0f); },
+        [this]() { return !m_selectedUVVertices.empty() || !m_lowPolyMesh.selectedEdges.empty() || !m_selectedUVFaces.empty(); },
+        nullptr,
+        []() { return "No UV components selected"; }
+    });
+    m_commandRegistry.Register(Command{
+        "uv.rot_cw", "Rotate +90°", "Rotate selected UVs 90 degrees clockwise", "",
+        static_cast<uint32_t>(Surface::Menu | Surface::Toolkit), "UV/Transform", "Transform",
+        [this]() { RotateSelectedUVs(90.0f); },
+        [this]() { return !m_selectedUVVertices.empty() || !m_lowPolyMesh.selectedEdges.empty() || !m_selectedUVFaces.empty(); },
+        nullptr,
+        []() { return "No UV components selected"; }
+    });
+    m_commandRegistry.Register(Command{
+        "uv.straighten", "Straighten Shells", "Straighten and align UV island boundaries to grid axes", "",
+        static_cast<uint32_t>(Surface::Menu | Surface::Toolkit), "UV/Transform", "Transform",
+        [this]() { StraightenIslands(); },
+        [this]() { return m_hasLowPoly && !m_lowPolyMesh.triangles.empty(); },
+        nullptr,
+        []() { return "Requires low-poly mesh"; }
+    });
+    m_commandRegistry.Register(Command{
+        "uv.orient", "Orient to World Up", "Rotate islands to align with 3D mesh world up axis", "",
+        static_cast<uint32_t>(Surface::Menu | Surface::Toolkit), "UV/Transform", "Transform",
+        [this]() { OrientIslandsToWorld(); },
+        [this]() { return m_hasLowPoly && !m_lowPolyMesh.triangles.empty(); },
+        nullptr,
+        []() { return "Requires low-poly mesh"; }
+    });
+    m_commandRegistry.Register(Command{
+        "uv.pack", "Pack Islands", "Pack UV islands across UDIM tiles", "Ctrl+P",
+        static_cast<uint32_t>(Surface::Menu | Surface::Toolkit), "UV/Pack", "Pack",
+        [this]() { PackUVs(); },
+        [this]() { return m_hasLowPoly && !m_lowPolyMesh.triangles.empty(); },
+        nullptr,
+        []() { return "Requires low-poly mesh"; }
+    });
+    m_commandRegistry.Register(Command{
+        "uv.stack_identical", "Stack Identical Shells", "Stack UV islands with matching 3D geometry and area", "",
+        static_cast<uint32_t>(Surface::Menu | Surface::Toolkit), "UV/Stack & Overlap", "Stack & Overlap",
+        [this]() { StackIdenticalIslands(); },
+        [this]() { return m_hasLowPoly && !m_lowPolyMesh.triangles.empty(); },
+        nullptr,
+        []() { return "Requires low-poly mesh"; }
+    });
+    m_commandRegistry.Register(Command{
+        "uv.separate_overlaps", "Separate Overlaps", "Offset overlapping islands by +1 tile for baking", "",
+        static_cast<uint32_t>(Surface::Menu | Surface::Toolkit), "UV/Stack & Overlap", "Stack & Overlap",
+        [this]() { SeparateOverlappingIslands(); },
+        [this]() { return m_hasLowPoly && !m_lowPolyMesh.triangles.empty(); },
+        nullptr,
+        []() { return "Requires low-poly mesh"; }
+    });
+    m_commandRegistry.Register(Command{
+        "uv.auto_cut_unwrap_pack", "Auto UV: Cut, Unwrap, Pack", "Segment into charts, unwrap, and pack into UDIMs", "",
+        static_cast<uint32_t>(Surface::Menu | Surface::Toolkit | Surface::Marking), "UV", "Auto UV",
+        [this]() { AutoCutUnwrapAndPack(); },
+        [this]() { return m_hasLowPoly && !m_lowPolyMesh.triangles.empty(); },
+        nullptr,
+        []() { return "Requires low-poly mesh"; }
+    });
 }
 
 void UIManager::CheckScaleAndAutoCalibrate() {
