@@ -212,6 +212,8 @@ private:
     void CutCurrentUVSelection();
     void SewCurrentUVSelection();
     void ClearUVSelection();
+    void FrameAllUVs();
+    void FrameSelectedUVs();
     void ApplyCameraProjection();
     void FlipSelectedUVs(bool horizontal);
     void RotateSelectedUVs(float angleDeg);

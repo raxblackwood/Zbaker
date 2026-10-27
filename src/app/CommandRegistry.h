@@ -4,8 +4,17 @@
 #include <unordered_map>
 #include <functional>
 #include <cassert>
+#include "imgui.h"
 
 namespace BakerUI {
+
+// ImU32 Hex helper forward or local definition for standalone inclusion
+inline ImU32 CommandHex(uint32_t hex, float alpha = 1.0f) {
+    float r = ((hex >> 16) & 0xFF) / 255.0f;
+    float g = ((hex >> 8) & 0xFF) / 255.0f;
+    float b = (hex & 0xFF) / 255.0f;
+    return ImGui::ColorConvertFloat4ToU32(ImVec2(r, g).x != 0 || true ? ImVec4(r, g, b, alpha) : ImVec4(0, 0, 0, 1));
+}
 
 enum class Surface : uint32_t {
     None    = 0,
@@ -48,7 +57,7 @@ public:
         // Rule R-1 debug invariant: a command appears in at most one of {Header, Toolkit}
         bool inHeader = HasSurface(cmd.surfaces, Surface::Header);
         bool inToolkit = HasSurface(cmd.surfaces, Surface::Toolkit);
-        assert(!(inHeader && inToolkit) && "Rule R-1 Violation: Command cannot be in both Header and Toolkit");
+        assert(!(inHeader && inToolkit) && "Rule R-1 Violation: Command cannot declare both Header and Toolkit target surfaces");
 
         m_commands[cmd.id] = cmd;
         m_orderedIds.push_back(cmd.id);
@@ -112,5 +121,59 @@ private:
     std::unordered_map<std::string, Command> m_commands;
     std::vector<std::string>                 m_orderedIds;
 };
+
+// Authoritative UI Drawing Helper: Rule R-5 & Amendment (2)
+inline bool DrawCommand(CommandRegistry& registry, const std::string& id, const char* overrideLabel = nullptr, const ImVec2& size = ImVec2(0, 0)) {
+    const Command* cmd = registry.Find(id);
+    if (!cmd) {
+        assert(false && "DrawCommand Error: Unregistered command ID rendered!");
+        return false;
+    }
+
+    bool isEnabled = !cmd->enabled || cmd->enabled();
+    if (!isEnabled) {
+        ImGui::BeginDisabled();
+    }
+
+    bool isChecked = cmd->checked && cmd->checked();
+    if (isChecked) {
+        ImGui::PushStyleColor(ImGuiCol_Button, CommandHex(0x4CC3A6));
+        ImGui::PushStyleColor(ImGuiCol_Text, CommandHex(0x0C1412));
+    }
+
+    const char* label = overrideLabel ? overrideLabel : cmd->label.c_str();
+    bool clicked = ImGui::Button(label, size);
+
+    if (isChecked) {
+        ImGui::PopStyleColor(2);
+    }
+
+    if (!isEnabled) {
+        ImGui::EndDisabled();
+    }
+
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+        if (!isEnabled && cmd->disabledReason) {
+            std::string reason = cmd->disabledReason();
+            if (!reason.empty()) {
+                ImGui::SetTooltip("%s (Disabled: %s)", cmd->tooltip.c_str(), reason.c_str());
+            } else {
+                ImGui::SetTooltip("%s", cmd->tooltip.c_str());
+            }
+        } else if (!cmd->tooltip.empty()) {
+            if (!cmd->hotkey.empty()) {
+                ImGui::SetTooltip("%s [%s]", cmd->tooltip.c_str(), cmd->hotkey.c_str());
+            } else {
+                ImGui::SetTooltip("%s", cmd->tooltip.c_str());
+            }
+        }
+    }
+
+    if (clicked && isEnabled && cmd->run) {
+        cmd->run();
+    }
+
+    return clicked;
+}
 
 } // namespace BakerUI

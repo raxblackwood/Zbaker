@@ -335,9 +335,20 @@ void UIManager::InitCommandRegistry() {
         nullptr
     });
     m_commandRegistry.Register(Command{
-        "view.frame_all", "Frame All", "Fit and frame 3D mesh or 2D UV canvas in view", "F",
+        "view.frame_all", "Frame All", "Fit and frame entire 3D mesh or 2D UV canvas in view", "Home",
         static_cast<uint32_t>(Surface::Menu), "View", "",
-        [this]() { m_viewportRenderer.FrameAll(); },
+        [this]() { 
+            m_viewportRenderer.FrameAll();
+            FrameAllUVs();
+        },
+        nullptr, nullptr, nullptr
+    });
+    m_commandRegistry.Register(Command{
+        "view.frame_selected", "Frame Selected", "Fit and frame selected components in view", "F",
+        static_cast<uint32_t>(Surface::Menu), "View", "",
+        [this]() { 
+            FrameSelectedUVs();
+        },
         nullptr, nullptr, nullptr
     });
     m_commandRegistry.Register(Command{
@@ -542,6 +553,83 @@ void UIManager::InitCommandRegistry() {
         nullptr,
         []() { return "Requires low-poly mesh"; }
     });
+}
+
+void UIManager::FrameAllUVs() {
+    if (m_lowPolyMesh.vertices.empty()) return;
+    float minU = 1e9f, minV = 1e9f, maxU = -1e9f, maxV = -1e9f;
+    for (const auto& v : m_lowPolyMesh.vertices) {
+        minU = (std::min)(minU, v.uv.u); minV = (std::min)(minV, v.uv.v);
+        maxU = (std::max)(maxU, v.uv.u); maxV = (std::max)(maxV, v.uv.v);
+    }
+    float rangeU = (std::max)(maxU - minU, 0.05f);
+    float rangeV = (std::max)(maxV - minV, 0.05f);
+    float headerH = 58.0f;
+    ImVec2 size = ImGui::GetWindowSize();
+    float availW = size.x * 0.85f;
+    float availH = (size.y - headerH) * 0.85f;
+    float baseTileSize = (std::min)(size.x, size.y) * 0.72f;
+    if (baseTileSize < 120.0f) baseTileSize = 300.0f;
+    float newTileSize = (std::min)(availW / rangeU, availH / rangeV);
+    m_uvZoom = std::clamp(newTileSize / baseTileSize, 0.05f, 50.0f);
+    float currentTileSize = baseTileSize * m_uvZoom;
+    float midU = (minU + maxU) * 0.5f;
+    float midV = (minV + maxV) * 0.5f;
+    m_uvPan.x = (size.x * 0.5f) - midU * currentTileSize;
+    m_uvPan.y = (headerH + (size.y - headerH) * 0.5f) - (1.0f - midV) * currentTileSize;
+}
+
+void UIManager::FrameSelectedUVs() {
+    if (m_lowPolyMesh.vertices.empty()) return;
+
+    std::vector<uint32_t> verts;
+    if (m_uvSelectionMode == UVSelectionMode::Vertex) {
+        verts.assign(m_selectedUVVertices.begin(), m_selectedUVVertices.end());
+    } else if (m_uvSelectionMode == UVSelectionMode::Edge) {
+        for (const auto& edge : m_lowPolyMesh.selectedEdges) {
+            verts.push_back(edge.first);
+            verts.push_back(edge.second);
+        }
+    } else { // Face or Shell
+        for (uint32_t f : m_selectedUVFaces) {
+            if (f < m_lowPolyMesh.triangles.size()) {
+                const auto& tri = m_lowPolyMesh.triangles[f];
+                verts.push_back(tri.indices[0]);
+                verts.push_back(tri.indices[1]);
+                verts.push_back(tri.indices[2]);
+            }
+        }
+    }
+
+    if (verts.empty()) {
+        FrameAllUVs();
+        return;
+    }
+
+    float minU = 1e9f, minV = 1e9f, maxU = -1e9f, maxV = -1e9f;
+    for (uint32_t vIdx : verts) {
+        if (vIdx < m_lowPolyMesh.vertices.size()) {
+            const auto& v = m_lowPolyMesh.vertices[vIdx];
+            minU = (std::min)(minU, v.uv.u); minV = (std::min)(minV, v.uv.v);
+            maxU = (std::max)(maxU, v.uv.u); maxV = (std::max)(maxV, v.uv.v);
+        }
+    }
+
+    float rangeU = (std::max)(maxU - minU, 0.05f);
+    float rangeV = (std::max)(maxV - minV, 0.05f);
+    float headerH = 58.0f;
+    ImVec2 size = ImGui::GetWindowSize();
+    float availW = size.x * 0.85f;
+    float availH = (size.y - headerH) * 0.85f;
+    float baseTileSize = (std::min)(size.x, size.y) * 0.72f;
+    if (baseTileSize < 120.0f) baseTileSize = 300.0f;
+    float newTileSize = (std::min)(availW / rangeU, availH / rangeV);
+    m_uvZoom = std::clamp(newTileSize / baseTileSize, 0.05f, 50.0f);
+    float currentTileSize = baseTileSize * m_uvZoom;
+    float midU = (minU + maxU) * 0.5f;
+    float midV = (minV + maxV) * 0.5f;
+    m_uvPan.x = (size.x * 0.5f) - midU * currentTileSize;
+    m_uvPan.y = (headerH + (size.y - headerH) * 0.5f) - (1.0f - midV) * currentTileSize;
 }
 
 void UIManager::CheckScaleAndAutoCalibrate() {

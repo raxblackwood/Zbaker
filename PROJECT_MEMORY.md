@@ -252,6 +252,11 @@ Resolved ground grid subdivision popping, implemented genuine UV-space shell sel
 - Debug Invariant Enforcement: Enforced Rule R-1 through assertion checks guaranteeing no command is registered to both Tool Header and UV Toolkit simultaneously.
 - Control Inventory & Mapping: Cataloged and registered 38 distinct application commands across File, Edit, Select, View, and UV modules with proper hotkeys, tooltips, and enabled state callbacks.
 - Duplicate Audit: Documented all command duplications across toolbars, panel buttons, and menus for phased extraction and clean single-home unification.
+- Phase 0 Amendments Approved: Swapped Phase 1 and 2 sequence so complete menus and reorganized UV Toolkit are built first before removing duplicate buttons.
+- Authoritative DrawCommand Engine: Added BakerUI::DrawCommand helper in src/app/CommandRegistry.h with debug assertions enforcing that all buttons route through registered command IDs.
+- Target Surface Declarations: Configured CommandRegistry to declare strictly target destinations while keeping legacy locations in the inventory catalog only.
+- Command Inventory Documented: Authored docs/ui_handoff/COMMAND_INVENTORY.md providing an exhaustive widget-by-widget registry mapping.
+- Dedicated Frame Commands: Split view framing into view.frame_all (entire scene/tiles, Home key) and view.frame_selected (selected components only, F key).
 
 ---
 
