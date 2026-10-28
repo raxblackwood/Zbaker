@@ -258,6 +258,18 @@ Resolved ground grid subdivision popping, implemented genuine UV-space shell sel
 - Command Inventory Documented: Authored docs/ui_handoff/COMMAND_INVENTORY.md providing an exhaustive widget-by-widget registry mapping.
 - Dedicated Frame Commands: Split view framing into view.frame_all (entire scene/tiles, Home key) and view.frame_selected (selected components only, F key).
 
+### 5.10 UV Redesign Phase 1 Step 1: Registry Menus, UV Toolkit, Simple Outliner (2026-10-27)
+Uncommitted on `feature/blender-grid-baked-normals-8k-16k`. Build compiles; TestBaker passes. Not yet deployed or checked on screen.
+- Registry-driven menus: in the UV workspace, Edit, Select, UV, View and Help are generated from `CommandRegistry` by `DrawCommandMenuContents` (menuPath based; `UV/Cut & Sew` renders as a section, deeper paths as submenus). `BeginFrameHost` takes an optional registry; the standalone build keeps the legacy menus.
+- New helpers in `CommandRegistry.h`: `DrawCommandMenuItem`, `DrawCommandTooltip`, `CommandStyle` (Action / Primary / Destructive). Labels get a `##id` suffix for unique ImGui IDs.
+- UV Toolkit panel (`UV Toolkit###uvtoolkit`): Cut & Sew (Auto Seams, collapsed Curve Cut), Unfold, Transform, Stack & Overlap, Texel Density, Pack (Advanced disclosure), Export, pinned primary footer "Auto UV: Cut, Unwrap, Pack". Docked beside the legacy UV Tool panel, which is untouched until Step 2.
+- New commands: `uv.curve_*` (6), `uv.td_get/set/equalize`, `view.3d_high_poly`, `view.3d_cage`, `scene.remove_*` (3), `help.shortcuts`, `help.about`.
+- Hotkeys corrected to the real keymap (R7): Ctrl+N/O/E/U/P, Shift+X/V, Esc, Home and the Q/W/E/R tool keys were never bound and are now blank. F = Frame All (hovered view); edge loop = double-click edge.
+- Scene Outliner simplified (Apple Purpose / Simplicity review): one row per object (eye toggle, name, dim type), right-click to remove. Header "Clear" removed (File > New Session covers it).
+- New Properties panel (`Properties###properties`), docked under the outliner, shows the selected object's counts, polypaint/polygroups, opacity, shading, UDIM tiles to bake, cage offset, and a destructive "Remove from Scene". Old saved layouts get it split under the outliner once (`DockPropertiesUnderOutliner`).
+- Tabbed Properties editor (follow-up review, Blender-inspired, Apple principles first): the separate UV Toolkit window is gone. `Properties###properties` now has a vertical strip of vector icon tabs (`BakerUI::IconTab`, `DrawTabIcon`, scaled from font size): Object, then in the UV workspace Cut & Sew, Unfold, Transform, Stack & Overlap, Texel Density, Pack, Export. Each tab shows collapsible subpanels; Auto UV stays pinned at the bottom of every UV tab. Default layout: Outliner top 25 percent, Properties first tab in the large right-bottom node with the legacy panels. Layouts without a Properties entry get it docked beside the tool panels once (`DockPropertiesWithToolPanels`); layouts from the earlier split need View > Reset Layout.
+- Open: V2 keymap preset decision (W/E/R/G/S start gizmo drags, not tool switches); accordion open state not persisted; legacy File menu still shows unbound shortcuts; removal of the legacy duplicates is Phase 1 Step 2.
+
 ---
 
 ## 6. Marmoset Paint Cage & Paint Skew Architecture (Phase 2 Roadmap)

@@ -59,6 +59,9 @@ private:
     void RenderMeshPanel();
     void RenderSettingsPanel();
     void RenderUVCutAndPackPanel();
+    void RenderPropertiesPanel();
+    void DockPropertiesWithToolPanels();
+    void RenderHelpWindows();
     void RenderUDIMCanvasPanel();
     void RenderBakeProgressPanel();
 
@@ -260,6 +263,22 @@ private:
     // Command Registry & Architecture Management
     BakerUI::CommandRegistry m_commandRegistry;
     void InitCommandRegistry();
+    void SetUVSelectionMode(UVSelectionMode mode, const char* statusText);
+    bool HasUVComponentSelection() const;
+    bool m_showShortcutsWindow = false;
+
+    // Scene Outliner selection drives the Properties panel
+    enum class SceneObject { None, HighPoly, LowPoly, Cage };
+    SceneObject m_selectedObject = SceneObject::None;
+    bool SceneObjectExists(SceneObject obj) const;
+    bool m_propertiesDockChecked = false;
+
+    // Properties editor tabs: Object, then one tab per UV pipeline stage (UV workspace only)
+    enum class PropertiesTab { Object, CutSew, Unfold, Transform, Stack, TexelDensity, Pack, Export };
+    PropertiesTab m_propertiesTab = PropertiesTab::CutSew;
+    void RenderObjectProperties();
+    void RenderUVToolTab(PropertiesTab tab);
+    bool m_showAboutWindow = false;
 };
 
 

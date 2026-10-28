@@ -149,17 +149,17 @@ void UIManager::InitCommandRegistry() {
 
     // 1. File Commands
     m_commandRegistry.Register(Command{
-        "file.new_session", "New Session (Clear Scene)", "Clear all active high-poly, low-poly, and baked data", "Ctrl+N",
+        "file.new_session", "New Session (Clear Scene)", "Clear all active high-poly, low-poly, and baked data", "",
         static_cast<uint32_t>(Surface::Menu), "File", "",
         [this]() { ClearScene(); }, nullptr, nullptr, nullptr
     });
     m_commandRegistry.Register(Command{
-        "file.open_low_poly", "Open Low-Poly...", "Open low-poly target mesh (OBJ, FBX)", "Ctrl+O",
+        "file.open_low_poly", "Open Low-Poly...", "Open low-poly target mesh (OBJ, FBX)", "",
         static_cast<uint32_t>(Surface::Menu), "File", "",
         [this]() { m_shellState.openLowPoly = true; }, nullptr, nullptr, nullptr
     });
     m_commandRegistry.Register(Command{
-        "file.open_high_poly", "Open High-Poly...", "Open high-poly sculpt (OBJ, FBX, BIN)", "Ctrl+Shift+O",
+        "file.open_high_poly", "Open High-Poly...", "Open high-poly sculpt (OBJ, FBX, BIN)", "",
         static_cast<uint32_t>(Surface::Menu), "File", "",
         [this]() { m_shellState.openHighPoly = true; }, nullptr, nullptr, nullptr
     });
@@ -169,7 +169,7 @@ void UIManager::InitCommandRegistry() {
         [this]() { m_shellState.openCage = true; }, nullptr, nullptr, nullptr
     });
     m_commandRegistry.Register(Command{
-        "file.export_low_poly", "Export UV Low-Poly OBJ...", "Export unwrapped low-poly OBJ with UV coordinates", "Ctrl+E",
+        "file.export_low_poly", "Export UV Low-Poly OBJ...", "Export unwrapped low-poly OBJ with UV coordinates", "",
         static_cast<uint32_t>(Surface::Menu | Surface::Toolkit), "File", "Export",
         [this]() { ExportUnwrappedOBJ(); },
         [this]() { return m_hasLowPoly && !m_lowPolyMesh.vertices.empty(); },
@@ -207,39 +207,39 @@ void UIManager::InitCommandRegistry() {
 
     // 3. Selection Modes
     m_commandRegistry.Register(Command{
-        "select.mode_vertex", "Vertex", "Vertex Selection Mode [Hotkey: 1]", "1",
+        "select.mode_vertex", "Vertex", "Select vertex components", "1",
         static_cast<uint32_t>(Surface::Menu | Surface::Header), "Select", "",
-        [this]() { m_uvSelectionMode = UVSelectionMode::Vertex; },
+        [this]() { SetUVSelectionMode(UVSelectionMode::Vertex, "Vertex Selection Mode [Hotkey: 1]"); },
         nullptr,
         [this]() { return m_uvSelectionMode == UVSelectionMode::Vertex; },
         nullptr
     });
     m_commandRegistry.Register(Command{
-        "select.mode_edge", "Edge", "Edge Selection Mode [Hotkey: 2]", "2",
+        "select.mode_edge", "Edge", "Select edge components", "2",
         static_cast<uint32_t>(Surface::Menu | Surface::Header), "Select", "",
-        [this]() { m_uvSelectionMode = UVSelectionMode::Edge; },
+        [this]() { SetUVSelectionMode(UVSelectionMode::Edge, "Edge Selection Mode [Hotkey: 2]"); },
         nullptr,
         [this]() { return m_uvSelectionMode == UVSelectionMode::Edge; },
         nullptr
     });
     m_commandRegistry.Register(Command{
-        "select.mode_face", "Face", "Face Selection Mode [Hotkey: 3]", "3",
+        "select.mode_face", "Face", "Select face components", "3",
         static_cast<uint32_t>(Surface::Menu | Surface::Header), "Select", "",
-        [this]() { m_uvSelectionMode = UVSelectionMode::Face; },
+        [this]() { SetUVSelectionMode(UVSelectionMode::Face, "Face Selection Mode [Hotkey: 3]"); },
         nullptr,
         [this]() { return m_uvSelectionMode == UVSelectionMode::Face; },
         nullptr
     });
     m_commandRegistry.Register(Command{
-        "select.mode_shell", "Shell", "UV Shell Selection Mode [Hotkey: 4]", "4",
+        "select.mode_shell", "Shell", "Select uv shell components", "4",
         static_cast<uint32_t>(Surface::Menu | Surface::Header), "Select", "",
-        [this]() { m_uvSelectionMode = UVSelectionMode::Shell; },
+        [this]() { SetUVSelectionMode(UVSelectionMode::Shell, "UV Shell Selection Mode [Hotkey: 4]"); },
         nullptr,
         [this]() { return m_uvSelectionMode == UVSelectionMode::Shell; },
         nullptr
     });
     m_commandRegistry.Register(Command{
-        "select.edge_loop", "Select Edge Loop", "Select continuous loop through connected quads", "Alt+Double-LMB",
+        "select.edge_loop", "Select Edge Loop", "Select continuous loop through connected quads", "Double-Click Edge",
         static_cast<uint32_t>(Surface::Menu | Surface::Marking), "Select", "",
         [this]() {
             if (m_hasLastSelectedEdge) {
@@ -253,7 +253,7 @@ void UIManager::InitCommandRegistry() {
         []() { return "Requires an active edge selection"; }
     });
     m_commandRegistry.Register(Command{
-        "select.edge_ring", "Select Edge Ring", "Select parallel edge ring across quads", "Alt+Shift+LMB",
+        "select.edge_ring", "Select Edge Ring", "Select parallel edge ring across quads", "",
         static_cast<uint32_t>(Surface::Menu | Surface::Marking), "Select", "",
         [this]() {
             if (m_hasLastSelectedEdge) {
@@ -267,17 +267,17 @@ void UIManager::InitCommandRegistry() {
         []() { return "Requires an active edge selection"; }
     });
     m_commandRegistry.Register(Command{
-        "select.clear", "Clear Selection", "Deselect all components", "Esc",
+        "select.clear", "Clear Selection", "Deselect all components", "",
         static_cast<uint32_t>(Surface::Menu), "Select", "",
         [this]() { ClearUVSelection(); },
-        [this]() { return !m_selectedUVVertices.empty() || !m_lowPolyMesh.selectedEdges.empty() || !m_selectedUVFaces.empty(); },
+        [this]() { return HasUVComponentSelection(); },
         nullptr,
         []() { return "No selection active"; }
     });
 
     // 4. Transform Tools (Gizmo)
     m_commandRegistry.Register(Command{
-        "tool.select", "Select", "Selection Box Tool [Q]", "Q",
+        "tool.select", "Select", "Selection box tool without gizmo handles", "",
         static_cast<uint32_t>(Surface::Header), "", "",
         [this]() { m_uvGizmoMode = UVGizmoMode::Select; },
         nullptr,
@@ -285,7 +285,7 @@ void UIManager::InitCommandRegistry() {
         nullptr
     });
     m_commandRegistry.Register(Command{
-        "tool.move", "Move", "Move Gizmo Tool [W or G]", "W",
+        "tool.move", "Move", "Move gizmo (translate UVs)", "",
         static_cast<uint32_t>(Surface::Header), "", "",
         [this]() { m_uvGizmoMode = UVGizmoMode::Translate; },
         nullptr,
@@ -293,7 +293,7 @@ void UIManager::InitCommandRegistry() {
         nullptr
     });
     m_commandRegistry.Register(Command{
-        "tool.rotate", "Rotate", "Rotate Gizmo Tool [E or R]", "E",
+        "tool.rotate", "Rotate", "Rotate gizmo (rotate UVs)", "",
         static_cast<uint32_t>(Surface::Header), "", "",
         [this]() { m_uvGizmoMode = UVGizmoMode::Rotate; },
         nullptr,
@@ -301,7 +301,7 @@ void UIManager::InitCommandRegistry() {
         nullptr
     });
     m_commandRegistry.Register(Command{
-        "tool.scale", "Scale", "Scale Gizmo Tool [R or S]", "R",
+        "tool.scale", "Scale", "Scale gizmo (scale UVs)", "",
         static_cast<uint32_t>(Surface::Header), "", "",
         [this]() { m_uvGizmoMode = UVGizmoMode::Scale; },
         nullptr,
@@ -335,7 +335,7 @@ void UIManager::InitCommandRegistry() {
         nullptr
     });
     m_commandRegistry.Register(Command{
-        "view.frame_all", "Frame All", "Fit and frame entire 3D mesh or 2D UV canvas in view", "Home",
+        "view.frame_all", "Frame All", "Fit and frame the hovered 3D viewport or 2D UV canvas", "F",
         static_cast<uint32_t>(Surface::Menu), "View", "",
         [this]() { 
             m_viewportRenderer.FrameAll();
@@ -344,7 +344,7 @@ void UIManager::InitCommandRegistry() {
         nullptr, nullptr, nullptr
     });
     m_commandRegistry.Register(Command{
-        "view.frame_selected", "Frame Selected", "Fit and frame selected components in view", "F",
+        "view.frame_selected", "Frame Selected", "Fit and frame selected components in view", "",
         static_cast<uint32_t>(Surface::Menu), "View", "",
         [this]() { 
             FrameSelectedUVs();
@@ -352,7 +352,7 @@ void UIManager::InitCommandRegistry() {
         nullptr, nullptr, nullptr
     });
     m_commandRegistry.Register(Command{
-        "view.reset_view", "Reset View", "Reset 2D UV zoom to 1.0x and pan to center", "Home",
+        "view.reset_view", "Reset View", "Reset 2D UV zoom to 1.0x and pan to center", "",
         static_cast<uint32_t>(Surface::Menu), "View", "",
         [this]() { m_uvZoom = 1.0f; m_uvPan = ImVec2(0.0f, 0.0f); },
         nullptr, nullptr, nullptr
@@ -434,7 +434,7 @@ void UIManager::InitCommandRegistry() {
 
     // 7. UV Operations (UV Toolkit)
     m_commandRegistry.Register(Command{
-        "uv.cut", "Cut Seam", "Cut UV seams along selected edges", "Shift+X",
+        "uv.cut", "Cut Seam", "Cut UV seams along selected edges", "",
         static_cast<uint32_t>(Surface::Menu | Surface::Toolkit | Surface::Marking), "UV/Cut & Sew", "Cut & Sew",
         [this]() { CutCurrentUVSelection(); },
         [this]() { return !m_lowPolyMesh.selectedEdges.empty(); },
@@ -442,7 +442,7 @@ void UIManager::InitCommandRegistry() {
         []() { return "No edges selected to cut"; }
     });
     m_commandRegistry.Register(Command{
-        "uv.sew", "Sew Seam", "Sew and stitch selected seam edges together", "Shift+V",
+        "uv.sew", "Sew Seam", "Sew and stitch selected seam edges together", "",
         static_cast<uint32_t>(Surface::Menu | Surface::Toolkit | Surface::Marking), "UV/Cut & Sew", "Cut & Sew",
         [this]() { SewCurrentUVSelection(); },
         [this]() { return !m_lowPolyMesh.selectedEdges.empty(); },
@@ -466,7 +466,68 @@ void UIManager::InitCommandRegistry() {
         []() { return "Requires low-poly mesh"; }
     });
     m_commandRegistry.Register(Command{
-        "uv.unwrap", "Unwrap", "Unwrap islands using conformal least-squares mapping", "Ctrl+U",
+        "uv.curve_new", "New Curve", "Add a surface curve and start drawing it on the 3D mesh", "",
+        static_cast<uint32_t>(Surface::Menu | Surface::Toolkit), "UV/Cut & Sew/Curve Cut", "Cut & Sew",
+        [this]() {
+            m_curveManager.AddCurve();
+            m_toolMode = ToolMode::DrawCurve;
+            m_viewportRenderer.showSeams = true;
+        },
+        [this]() { return m_hasLowPoly; },
+        nullptr,
+        []() { return "Requires low-poly mesh"; }
+    });
+    m_commandRegistry.Register(Command{
+        "uv.curve_delete", "Delete Curve", "Delete the active surface curve", "",
+        static_cast<uint32_t>(Surface::Menu | Surface::Toolkit), "UV/Cut & Sew/Curve Cut", "Cut & Sew",
+        [this]() { m_curveManager.RemoveCurve(m_curveManager.activeCurveIndex); },
+        [this]() { return m_curveManager.GetActiveCurve() != nullptr; },
+        nullptr,
+        []() { return "No active curve"; }
+    });
+    m_commandRegistry.Register(Command{
+        "uv.curve_draw_mode", "Draw Mode", "Click the 3D mesh to add points to the active curve", "",
+        static_cast<uint32_t>(Surface::Menu | Surface::Toolkit), "UV/Cut & Sew/Curve Cut", "Cut & Sew",
+        [this]() {
+            m_toolMode = (m_toolMode == ToolMode::DrawCurve) ? ToolMode::Navigate : ToolMode::DrawCurve;
+            if (m_toolMode == ToolMode::DrawCurve) m_viewportRenderer.showSeams = true;
+        },
+        [this]() { return m_hasLowPoly; },
+        [this]() { return m_toolMode == ToolMode::DrawCurve; },
+        []() { return "Requires low-poly mesh"; }
+    });
+    m_commandRegistry.Register(Command{
+        "uv.curve_apply", "Apply Curve", "Turn the active curve into seams using the selected method", "",
+        static_cast<uint32_t>(Surface::Menu | Surface::Toolkit), "UV/Cut & Sew/Curve Cut", "Cut & Sew",
+        [this]() {
+            if (m_curveCutTopology) CutActiveCurveIntoTopology();
+            else SnapActiveCurveToSeams();
+        },
+        [this]() {
+            SurfaceCurve* c = m_curveManager.GetActiveCurve();
+            return m_hasLowPoly && c && c->points.size() >= 2;
+        },
+        nullptr,
+        []() { return "Active curve needs at least 2 points"; }
+    });
+    m_commandRegistry.Register(Command{
+        "uv.curve_apply_all", "Apply All Curves", "Turn every curve into seams using the selected method", "",
+        static_cast<uint32_t>(Surface::Menu | Surface::Toolkit), "UV/Cut & Sew/Curve Cut", "Cut & Sew",
+        [this]() { BakeAllCurvesToSeams(m_curveCutTopology); },
+        [this]() { return m_hasLowPoly && !m_curveManager.curves.empty(); },
+        nullptr,
+        []() { return "No curves to apply"; }
+    });
+    m_commandRegistry.Register(Command{
+        "uv.curve_clear_all", "Clear All Curves", "Delete every surface curve (undoable)", "",
+        static_cast<uint32_t>(Surface::Menu | Surface::Toolkit), "UV/Cut & Sew/Curve Cut", "Cut & Sew",
+        [this]() { ClearAllCurves(); },
+        [this]() { return !m_curveManager.curves.empty(); },
+        nullptr,
+        []() { return "No curves to clear"; }
+    });
+    m_commandRegistry.Register(Command{
+        "uv.unwrap", "Unwrap", "Unwrap islands using conformal least-squares mapping", "",
         static_cast<uint32_t>(Surface::Menu | Surface::Toolkit | Surface::Marking), "UV/Unfold", "Unfold",
         [this]() { UnwrapMesh(); },
         [this]() { return m_hasLowPoly && !m_lowPolyMesh.triangles.empty(); },
@@ -477,7 +538,7 @@ void UIManager::InitCommandRegistry() {
         "uv.flip_u", "Flip U", "Flip selected UV components horizontally along U-axis", "",
         static_cast<uint32_t>(Surface::Menu | Surface::Toolkit), "UV/Transform", "Transform",
         [this]() { FlipSelectedUVs(true); },
-        [this]() { return !m_selectedUVVertices.empty() || !m_lowPolyMesh.selectedEdges.empty() || !m_selectedUVFaces.empty(); },
+        [this]() { return HasUVComponentSelection(); },
         nullptr,
         []() { return "No UV components selected"; }
     });
@@ -485,23 +546,23 @@ void UIManager::InitCommandRegistry() {
         "uv.flip_v", "Flip V", "Flip selected UV components vertically along V-axis", "",
         static_cast<uint32_t>(Surface::Menu | Surface::Toolkit), "UV/Transform", "Transform",
         [this]() { FlipSelectedUVs(false); },
-        [this]() { return !m_selectedUVVertices.empty() || !m_lowPolyMesh.selectedEdges.empty() || !m_selectedUVFaces.empty(); },
+        [this]() { return HasUVComponentSelection(); },
         nullptr,
         []() { return "No UV components selected"; }
     });
     m_commandRegistry.Register(Command{
-        "uv.rot_ccw", "Rotate -90°", "Rotate selected UVs 90 degrees counter-clockwise", "",
+        "uv.rot_ccw", "Rotate -90", "Rotate selected UVs 90 degrees counter-clockwise", "",
         static_cast<uint32_t>(Surface::Menu | Surface::Toolkit), "UV/Transform", "Transform",
         [this]() { RotateSelectedUVs(-90.0f); },
-        [this]() { return !m_selectedUVVertices.empty() || !m_lowPolyMesh.selectedEdges.empty() || !m_selectedUVFaces.empty(); },
+        [this]() { return HasUVComponentSelection(); },
         nullptr,
         []() { return "No UV components selected"; }
     });
     m_commandRegistry.Register(Command{
-        "uv.rot_cw", "Rotate +90°", "Rotate selected UVs 90 degrees clockwise", "",
+        "uv.rot_cw", "Rotate +90", "Rotate selected UVs 90 degrees clockwise", "",
         static_cast<uint32_t>(Surface::Menu | Surface::Toolkit), "UV/Transform", "Transform",
         [this]() { RotateSelectedUVs(90.0f); },
-        [this]() { return !m_selectedUVVertices.empty() || !m_lowPolyMesh.selectedEdges.empty() || !m_selectedUVFaces.empty(); },
+        [this]() { return HasUVComponentSelection(); },
         nullptr,
         []() { return "No UV components selected"; }
     });
@@ -517,14 +578,6 @@ void UIManager::InitCommandRegistry() {
         "uv.orient", "Orient to World Up", "Rotate islands to align with 3D mesh world up axis", "",
         static_cast<uint32_t>(Surface::Menu | Surface::Toolkit), "UV/Transform", "Transform",
         [this]() { OrientIslandsToWorld(); },
-        [this]() { return m_hasLowPoly && !m_lowPolyMesh.triangles.empty(); },
-        nullptr,
-        []() { return "Requires low-poly mesh"; }
-    });
-    m_commandRegistry.Register(Command{
-        "uv.pack", "Pack Islands", "Pack UV islands across UDIM tiles", "Ctrl+P",
-        static_cast<uint32_t>(Surface::Menu | Surface::Toolkit), "UV/Pack", "Pack",
-        [this]() { PackUVs(); },
         [this]() { return m_hasLowPoly && !m_lowPolyMesh.triangles.empty(); },
         nullptr,
         []() { return "Requires low-poly mesh"; }
@@ -546,6 +599,38 @@ void UIManager::InitCommandRegistry() {
         []() { return "Requires low-poly mesh"; }
     });
     m_commandRegistry.Register(Command{
+        "uv.td_get", "Measure Density", "Measure the current average texel density of the UV layout", "",
+        static_cast<uint32_t>(Surface::Menu | Surface::Toolkit), "UV/Texel Density", "Texel Density",
+        [this]() { CalculateTexelDensity(); },
+        [this]() { return m_hasLowPoly && !m_lowPolyMesh.triangles.empty(); },
+        nullptr,
+        []() { return "Requires low-poly mesh"; }
+    });
+    m_commandRegistry.Register(Command{
+        "uv.td_set", "Set Density", "Scale islands to match the target px/cm", "",
+        static_cast<uint32_t>(Surface::Menu | Surface::Toolkit), "UV/Texel Density", "Texel Density",
+        [this]() { SetTargetTexelDensity(m_targetTexelDensity); },
+        [this]() { return m_hasLowPoly && !m_lowPolyMesh.triangles.empty(); },
+        nullptr,
+        []() { return "Requires low-poly mesh"; }
+    });
+    m_commandRegistry.Register(Command{
+        "uv.td_equalize", "Equalize Density", "Equalize texel density across all islands", "",
+        static_cast<uint32_t>(Surface::Menu | Surface::Toolkit), "UV/Texel Density", "Texel Density",
+        [this]() { EqualizeTexelDensity(); },
+        [this]() { return m_hasLowPoly && !m_lowPolyMesh.triangles.empty(); },
+        nullptr,
+        []() { return "Requires low-poly mesh"; }
+    });
+    m_commandRegistry.Register(Command{
+        "uv.pack", "Pack Islands", "Pack UV islands across UDIM tiles", "",
+        static_cast<uint32_t>(Surface::Menu | Surface::Toolkit), "UV/Pack", "Pack",
+        [this]() { PackUVs(); },
+        [this]() { return m_hasLowPoly && !m_lowPolyMesh.triangles.empty(); },
+        nullptr,
+        []() { return "Requires low-poly mesh"; }
+    });
+    m_commandRegistry.Register(Command{
         "uv.auto_cut_unwrap_pack", "Auto UV: Cut, Unwrap, Pack", "Segment into charts, unwrap, and pack into UDIMs", "",
         static_cast<uint32_t>(Surface::Menu | Surface::Toolkit | Surface::Marking), "UV", "Auto UV",
         [this]() { AutoCutUnwrapAndPack(); },
@@ -553,6 +638,72 @@ void UIManager::InitCommandRegistry() {
         nullptr,
         []() { return "Requires low-poly mesh"; }
     });
+
+    // 8. Scene objects (Outliner rows and Properties panel)
+    m_commandRegistry.Register(Command{
+        "view.3d_high_poly", "High-Poly Sculpt", "Show or hide the high-poly sculpt in the 3D viewport", "",
+        static_cast<uint32_t>(Surface::Menu | Surface::Header), "View/3D Display", "",
+        [this]() { m_viewportRenderer.showHighPoly = !m_viewportRenderer.showHighPoly; },
+        nullptr,
+        [this]() { return m_viewportRenderer.showHighPoly; },
+        nullptr
+    });
+    m_commandRegistry.Register(Command{
+        "view.3d_cage", "Cage", "Show or hide the bake cage in the 3D viewport", "",
+        static_cast<uint32_t>(Surface::Menu | Surface::Header), "View/3D Display", "",
+        [this]() { m_viewportRenderer.showCage = !m_viewportRenderer.showCage; },
+        nullptr,
+        [this]() { return m_viewportRenderer.showCage; },
+        nullptr
+    });
+    m_commandRegistry.Register(Command{
+        "scene.remove_high_poly", "Remove from Scene", "Unload the high-poly sculpt. This cannot be undone.", "",
+        static_cast<uint32_t>(Surface::None), "", "",
+        [this]() { ClearHighPoly(); },
+        [this]() { return m_hasHighPoly && !m_isLoadingHighPoly; },
+        nullptr,
+        []() { return "Wait for the sculpt to finish loading"; }
+    });
+    m_commandRegistry.Register(Command{
+        "scene.remove_low_poly", "Remove from Scene", "Unload the low-poly mesh and its UVs. This cannot be undone.", "",
+        static_cast<uint32_t>(Surface::None), "", "",
+        [this]() { ClearLowPoly(); },
+        [this]() { return m_hasLowPoly; },
+        nullptr,
+        []() { return "No low-poly mesh loaded"; }
+    });
+    m_commandRegistry.Register(Command{
+        "scene.remove_cage", "Remove Cage File", "Drop the explicit cage and return to the push-offset cage", "",
+        static_cast<uint32_t>(Surface::None), "", "",
+        [this]() { ClearCage(); },
+        [this]() { return m_hasExplicitCage; },
+        nullptr,
+        []() { return "The push-offset cage is generated from the low-poly mesh"; }
+    });
+
+    // 9. Help
+    m_commandRegistry.Register(Command{
+        "help.shortcuts", "Keyboard Shortcuts", "List every command that has a shortcut", "",
+        static_cast<uint32_t>(Surface::Menu), "Help", "",
+        [this]() { m_showShortcutsWindow = true; }, nullptr, nullptr, nullptr
+    });
+    m_commandRegistry.Register(Command{
+        "help.about", "About ZBrush UDIM Baker", "Version and build information", "",
+        static_cast<uint32_t>(Surface::Menu), "Help", "",
+        [this]() { m_showAboutWindow = true; }, nullptr, nullptr, nullptr
+    });
+}
+
+void UIManager::SetUVSelectionMode(UVSelectionMode mode, const char* statusText) {
+    m_uvSelectionMode = mode;
+    if (m_shellState.activeTab == BakerUI::ShellState::AppTab::UVCutAndPack) {
+        m_toolMode = ToolMode::CutSeam;
+    }
+    m_uvStatusMessage = statusText;
+}
+
+bool UIManager::HasUVComponentSelection() const {
+    return !m_selectedUVVertices.empty() || !m_lowPolyMesh.selectedEdges.empty() || !m_selectedUVFaces.empty();
 }
 
 void UIManager::FrameAllUVs() {
@@ -911,29 +1062,13 @@ void UIManager::RenderUI() {
         // Blender Component Selection Modes: 1 = Vertex, 2 = Edge, 3 = Face, 4 = UV Shell
         if (!io.KeyCtrl && !io.KeyShift && !io.KeyAlt) {
             if (ImGui::IsKeyPressed(ImGuiKey_1, false) || ImGui::IsKeyPressed(ImGuiKey_Keypad1, false)) {
-                m_uvSelectionMode = UVSelectionMode::Vertex;
-                if (m_shellState.activeTab == BakerUI::ShellState::AppTab::UVCutAndPack) {
-                    m_toolMode = ToolMode::CutSeam;
-                }
-                m_uvStatusMessage = "Vertex Selection Mode [Hotkey: 1]";
+                SetUVSelectionMode(UVSelectionMode::Vertex, "Vertex Selection Mode [Hotkey: 1]");
             } else if (ImGui::IsKeyPressed(ImGuiKey_2, false) || ImGui::IsKeyPressed(ImGuiKey_Keypad2, false)) {
-                m_uvSelectionMode = UVSelectionMode::Edge;
-                if (m_shellState.activeTab == BakerUI::ShellState::AppTab::UVCutAndPack) {
-                    m_toolMode = ToolMode::CutSeam;
-                }
-                m_uvStatusMessage = "Edge Selection Mode [Hotkey: 2]";
+                SetUVSelectionMode(UVSelectionMode::Edge, "Edge Selection Mode [Hotkey: 2]");
             } else if (ImGui::IsKeyPressed(ImGuiKey_3, false) || ImGui::IsKeyPressed(ImGuiKey_Keypad3, false)) {
-                m_uvSelectionMode = UVSelectionMode::Face;
-                if (m_shellState.activeTab == BakerUI::ShellState::AppTab::UVCutAndPack) {
-                    m_toolMode = ToolMode::CutSeam;
-                }
-                m_uvStatusMessage = "Face Selection Mode [Hotkey: 3]";
+                SetUVSelectionMode(UVSelectionMode::Face, "Face Selection Mode [Hotkey: 3]");
             } else if (ImGui::IsKeyPressed(ImGuiKey_4, false) || ImGui::IsKeyPressed(ImGuiKey_Keypad4, false)) {
-                m_uvSelectionMode = UVSelectionMode::Shell;
-                if (m_shellState.activeTab == BakerUI::ShellState::AppTab::UVCutAndPack) {
-                    m_toolMode = ToolMode::CutSeam;
-                }
-                m_uvStatusMessage = "UV Shell Selection Mode [Hotkey: 4]";
+                SetUVSelectionMode(UVSelectionMode::Shell, "UV Shell Selection Mode [Hotkey: 4]");
             }
         }
     }
@@ -979,7 +1114,8 @@ void UIManager::RenderUI() {
     }
 
     // Begin Host (Main Menu Bar, Top Toolbar, DockSpace, Status Bar)
-    BakerUI::BeginFrameHost(m_shellState);
+    DockPropertiesWithToolPanels();
+    BakerUI::BeginFrameHost(m_shellState, &m_commandRegistry);
 
     // Handle menu triggers
     if (m_shellState.openLowPoly) {
@@ -1106,7 +1242,9 @@ void UIManager::RenderUI() {
             m_viewportRenderer.showLowPolyWireframe = true;
             m_viewportRenderer.showSeams = true;
             ImGui::SetWindowFocus("UV Tool###uvpanel");
+            ImGui::SetWindowFocus("Properties###properties");
             ImGui::SetWindowFocus("UDIM Layout###udim");
+            if (m_propertiesTab == PropertiesTab::Object) m_propertiesTab = PropertiesTab::CutSew;
             m_logEntries.push_back("[Workspace] Switched to UV Cut & Pack View (Split 3D/2D).");
         } else {
             // Switched from UV Cut & Pack to Baking
@@ -1125,6 +1263,9 @@ void UIManager::RenderUI() {
     // 0. Scene Outliner (available in both workspaces)
     if (m_shellState.showOutliner) {
         RenderOutlinerPanel();
+    }
+    if (m_shellState.showProperties) {
+        RenderPropertiesPanel();
     }
 
     // 1. Center / Main Stage: Viewport (3D / 2D / Split)
@@ -1148,191 +1289,554 @@ void UIManager::RenderUI() {
         RenderBakeProgressPanel();
     }
 
+    RenderHelpWindows();
+
     BakerUI::EndFrameHost();
 }
 
+bool UIManager::SceneObjectExists(SceneObject obj) const {
+    switch (obj) {
+        case SceneObject::HighPoly: return m_hasHighPoly || m_isLoadingHighPoly;
+        case SceneObject::LowPoly:  return m_hasLowPoly;
+        case SceneObject::Cage:     return m_hasLowPoly; // the push-offset cage exists whenever a low-poly does
+        default:                    return false;
+    }
+}
+
+// Saved layouts from before the Properties editor have no slot for it: dock it as a tab beside the tool panels once.
+// Runs before the dockspace is submitted so the dock tree is never edited mid-frame.
+void UIManager::DockPropertiesWithToolPanels() {
+    if (m_propertiesDockChecked) return;
+    if (ImGui::FindWindowSettingsByID(ImHashStr("Properties###properties"))) {
+        m_propertiesDockChecked = true;
+        return;
+    }
+    if (ImGuiWindow* props = ImGui::FindWindowByName("Properties###properties")) {
+        if (props->DockId != 0) {
+            m_propertiesDockChecked = true;
+            return;
+        }
+    }
+    ImGuiWindow* target = nullptr;
+    for (const char* name : { "UV Tool###uvpanel", "Bake Parameters###params", "Mesh Ingestion###ingest" }) {
+        ImGuiWindow* w = ImGui::FindWindowByName(name);
+        if (w && w->DockId != 0) { target = w; break; }
+    }
+    if (!target) return; // try again once a tool panel is docked
+
+    ImGui::DockBuilderDockWindow("Properties###properties", target->DockId);
+    ImGui::DockBuilderFinish(ImGui::DockNodeGetRootNode(ImGui::DockBuilderGetNode(target->DockId))->ID);
+    m_propertiesDockChecked = true;
+}
+
+// Scene Outliner: one row per object (visibility, name, type). Everything else lives in Properties.
 void UIManager::RenderOutlinerPanel() {
     if (!ImGui::Begin("Scene Outliner###outliner", &m_shellState.showOutliner)) {
         ImGui::End();
         return;
     }
 
-    bool hasAnyObject = m_hasHighPoly || m_hasLowPoly || m_isLoadingHighPoly;
-
-    // Header with clear button if meshes exist
-    ImGui::BeginGroup();
-    BakerUI::SectionLabel("SCENE COLLECTION");
-    if (hasAnyObject) {
-        ImGui::SameLine(ImGui::GetWindowWidth() - 75.0f);
-        if (ImGui::SmallButton("Clear##outliner_clr")) {
-            ClearScene();
-        }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Clear all meshes from scene");
+    if (!SceneObjectExists(m_selectedObject)) {
+        m_selectedObject = m_hasLowPoly ? SceneObject::LowPoly
+                         : SceneObjectExists(SceneObject::HighPoly) ? SceneObject::HighPoly
+                         : SceneObject::None;
     }
-    ImGui::EndGroup();
 
-    // Scene Collection Tree Node (Blender style)
-    bool collOpen = ImGui::TreeNodeEx("##collection_tree",
-                                      ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth,
-                                      hasAnyObject ? "Collection" : "Collection (Empty)");
+    if (!SceneObjectExists(SceneObject::HighPoly) && !m_hasLowPoly) {
+        ImGui::Spacing();
+        ImGui::TextDisabled("No objects yet.");
+        ImGui::TextDisabled("File > Open Low-Poly... to start.");
+        ImGui::End();
+        return;
+    }
 
-    if (collOpen) {
-        if (!hasAnyObject) {
-            ImGui::Indent(18.0f);
-            ImGui::TextDisabled("No objects in scene");
-            ImGui::Unindent(18.0f);
+    const float rowH = ImGui::GetFrameHeight();
+    const ImGuiStyle& style = ImGui::GetStyle();
+
+    // Visibility eye bound to a registry toggle command
+    auto drawEye = [&](const char* cmdId) {
+        const BakerUI::Command* cmd = m_commandRegistry.Find(cmdId);
+        bool visible = cmd && cmd->checked && cmd->checked();
+        ImVec2 p = ImGui::GetCursorScreenPos();
+        bool clicked = ImGui::InvisibleButton(cmdId, ImVec2(rowH, rowH));
+        bool hovered = ImGui::IsItemHovered();
+        if (cmd) BakerUI::DrawCommandTooltip(*cmd, true);
+        if (clicked) m_commandRegistry.Execute(cmdId);
+
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        ImVec2 c(p.x + rowH * 0.5f, p.y + rowH * 0.5f);
+        float rx = rowH * 0.30f, ry = rowH * 0.18f;
+        ImVec4 eyeCol = visible ? BakerUI::Col::Text() : BakerUI::Col::TextDim();
+        eyeCol.w = hovered ? 1.0f : (visible ? 0.85f : 0.55f);
+        ImU32 col = ImGui::GetColorU32(eyeCol);
+        dl->AddBezierQuadratic(ImVec2(c.x - rx, c.y), ImVec2(c.x, c.y - ry * 2.0f), ImVec2(c.x + rx, c.y), col, 1.2f);
+        dl->AddBezierQuadratic(ImVec2(c.x - rx, c.y), ImVec2(c.x, c.y + ry * 2.0f), ImVec2(c.x + rx, c.y), col, 1.2f);
+        if (visible) {
+            dl->AddCircleFilled(c, rowH * 0.09f, col);
         } else {
-            // 1. High-Poly Sculpt Node (Only if loaded or loading)
-            if (m_hasHighPoly || m_isLoadingHighPoly) {
-                std::string hpName = std::filesystem::path(m_highPolyPath).stem().string();
-                if (hpName.empty()) hpName = "HighPoly_Sculpt";
-
-                ImGui::PushID("hp_node_hdr");
-                bool hpOpen = ImGui::TreeNodeEx("##hp_tree", ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth,
-                                                "[HP] %s", hpName.c_str());
-                ImGui::SameLine(ImGui::GetWindowWidth() - 95.0f);
-                BakerUI::ToggleChip("View", &m_viewportRenderer.showHighPoly);
-                ImGui::SameLine();
-                if (ImGui::SmallButton("X##hp_del")) {
-                    ClearHighPoly();
-                }
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Unload high-poly sculpt");
-                ImGui::PopID();
-
-                if (hpOpen) {
-                    ImGui::Indent(16.0f);
-                    if (m_isLoadingHighPoly) {
-                        BakerUI::StatusPill("Ingesting & building BVH...", BakerUI::Col::Warn());
-                    } else {
-                        if (m_highPolyMesh.isQuadMesh && !m_highPolyMesh.quadIndices.empty()) {
-                            ImGui::TextDisabled("Verts: %zu  |  Quads: %zu", m_highPolyMesh.positions.size(), m_highPolyMesh.quadIndices.size() / 4);
-                        } else {
-                            ImGui::TextDisabled("Verts: %zu  |  Tris: %zu", m_highPolyMesh.positions.size(), m_highPolyMesh.indices.size() / 3);
-                        }
-
-                        // Badges
-                        if (!m_highPolyMesh.colors.empty()) {
-                            BakerUI::StatusPill("Polypaint", BakerUI::Col::Ok());
-                        } else {
-                            BakerUI::StatusPill("No Polypaint", BakerUI::Col::TextDim());
-                        }
-                        ImGui::SameLine();
-                        if (!m_highPolyMesh.polygroupPerFace.empty()) {
-                            BakerUI::StatusPill("Polygroups", BakerUI::Col::Ok());
-                        } else {
-                            BakerUI::StatusPill("No Polygroups", BakerUI::Col::TextDim());
-                        }
-
-                        ImGui::SetNextItemWidth(120);
-                        ImGui::SliderFloat("Opacity##hp_op", &m_viewportRenderer.highPolyOpacity, 0.05f, 1.0f, "%.2f");
-
-                        ImGui::SetNextItemWidth(120);
-                        const char* shadingModes[] = { "Studio White", "Clay", "Wax Red", "Normals", "Flat" };
-                        int currentShading = (m_viewportRenderer.highPolyShading == ShadingMode::FlatShaded) ? 4 : (int)m_viewportRenderer.highPolyShading;
-                        if (ImGui::Combo("Shading##hp_shade", &currentShading, shadingModes, IM_ARRAYSIZE(shadingModes))) {
-                            m_viewportRenderer.highPolyShading = (currentShading == 4) ? ShadingMode::FlatShaded : (ShadingMode)currentShading;
-                        }
-                    }
-                    ImGui::Unindent(16.0f);
-                    ImGui::TreePop();
-                }
-                ImGui::Spacing();
-            }
-
-            // 2. Low-Poly Target Node (Only if loaded)
-            if (m_hasLowPoly) {
-                std::string lpName = std::filesystem::path(m_lowPolyPath).stem().string();
-                if (lpName.empty()) lpName = "LowPoly_UDIM";
-
-                ImGui::PushID("lp_node_hdr");
-                bool lpOpen = ImGui::TreeNodeEx("##lp_tree", ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth,
-                                                "[LP] %s", lpName.c_str());
-                ImGui::SameLine(ImGui::GetWindowWidth() - 145.0f);
-                BakerUI::ToggleChip("View", &m_viewportRenderer.showLowPoly);
-                ImGui::SameLine();
-                BakerUI::ToggleChip("Wire", &m_viewportRenderer.showLowPolyWireframe);
-                ImGui::SameLine();
-                if (ImGui::SmallButton("X##lp_del")) {
-                    ClearLowPoly();
-                }
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Unload low-poly mesh");
-                ImGui::PopID();
-
-                if (lpOpen) {
-                    ImGui::Indent(16.0f);
-                    if (m_lowPolyMesh.quadCount > 0 && m_lowPolyMesh.triCount == 0) {
-                        ImGui::TextDisabled("Verts: %zu  |  Quads: %u", m_lowPolyMesh.vertices.size(), m_lowPolyMesh.quadCount);
-                    } else if (m_lowPolyMesh.quadCount > 0) {
-                        ImGui::TextDisabled("Verts: %zu  |  Faces: %u (%u Quads, %u Tris)",
-                                            m_lowPolyMesh.vertices.size(), m_lowPolyMesh.polyCount,
-                                            m_lowPolyMesh.quadCount, m_lowPolyMesh.triCount);
-                    } else {
-                        ImGui::TextDisabled("Verts: %zu  |  Tris: %zu", m_lowPolyMesh.vertices.size(), m_lowPolyMesh.triangles.size());
-                    }
-                    ImGui::SetNextItemWidth(120);
-                    ImGui::SliderFloat("Opacity##lp_op", &m_viewportRenderer.lowPolyOpacity, 0.05f, 1.0f, "%.2f");
-
-                    // UDIM tiles checklist
-                    char udimHeader[64];
-                    snprintf(udimHeader, sizeof(udimHeader), "UDIM Tiles (%zu)###lp_udims", m_lowPolyMesh.detectedUDIMs.size());
-                    if (ImGui::TreeNodeEx(udimHeader, ImGuiTreeNodeFlags_DefaultOpen)) {
-                        if (ImGui::SmallButton("All##sel_all")) SelectAllUDIMs();
-                        ImGui::SameLine();
-                        if (ImGui::SmallButton("None##sel_none")) m_selectedUDIMs.clear();
-
-                        for (int tile : m_lowPolyMesh.detectedUDIMs) {
-                            bool sel = IsUDIMSelected(tile);
-                            char tLabel[32];
-                            snprintf(tLabel, sizeof(tLabel), "Tile %d", tile);
-                            if (ImGui::Checkbox(tLabel, &sel)) {
-                                ToggleUDIM(tile);
-                            }
-                        }
-                        ImGui::TreePop();
-                    }
-                    ImGui::Unindent(16.0f);
-                    ImGui::TreePop();
-                }
-                ImGui::Spacing();
-
-                // 3. Cage Shell Node (Only visible when low-poly is present)
-                ImGui::PushID("cage_node_hdr");
-                const char* cageLabel = m_hasExplicitCage ? "[Cage] Explicit Cage" : "[Cage] Normal Push Shell";
-                bool cageOpen = ImGui::TreeNodeEx("##cage_tree", ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth,
-                                                  "%s", cageLabel);
-                ImGui::SameLine(ImGui::GetWindowWidth() - (m_hasExplicitCage ? 95.0f : 65.0f));
-                BakerUI::ToggleChip("View##cage_v", &m_viewportRenderer.showCage);
-                if (m_hasExplicitCage) {
-                    ImGui::SameLine();
-                    if (ImGui::SmallButton("X##cage_del")) {
-                        ClearCage();
-                    }
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Clear explicit cage");
-                }
-                ImGui::PopID();
-
-                if (cageOpen) {
-                    ImGui::Indent(16.0f);
-                    if (!m_hasExplicitCage) {
-                        ImGui::SetNextItemWidth(120);
-                        if (ImGui::DragFloat("Offset##cage_dist", &m_settings.cageDistance, 0.001f, 0.0f, 2.0f, "%.4f")) {
-                            m_viewportRenderer.UpdateCage(m_lowPolyMesh, m_settings.cageDistance, m_settings.lowPolyScale);
-                        }
-                    } else {
-                        std::string cName = std::filesystem::path(m_cagePath).stem().string();
-                        ImGui::TextDisabled("File: %s", cName.c_str());
-                    }
-                    ImGui::SetNextItemWidth(120);
-                    ImGui::SliderFloat("Opacity##cage_op", &m_viewportRenderer.cageOpacity, 0.05f, 1.0f, "%.2f");
-                    ImGui::Unindent(16.0f);
-                    ImGui::TreePop();
-                }
-            }
+            dl->AddLine(ImVec2(c.x - rx * 0.8f, c.y + ry * 1.4f), ImVec2(c.x + rx * 0.8f, c.y - ry * 1.4f), col, 1.2f);
         }
-        ImGui::TreePop();
+    };
+
+    auto drawRow = [&](SceneObject obj, const char* visCmd, const std::string& name, const char* typeLabel,
+                       const ImVec4& typeColor, const char* removeCmd) {
+        ImGui::PushID(static_cast<int>(obj));
+        drawEye(visCmd);
+        ImGui::SameLine(0.0f, style.ItemSpacing.x * 0.5f);
+
+        ImGui::PushStyleVar(ImGuiStyleVar_SelectableTextAlign, ImVec2(0.0f, 0.5f));
+        bool selected = (m_selectedObject == obj);
+        if (ImGui::Selectable(name.c_str(), selected, ImGuiSelectableFlags_None, ImVec2(0.0f, rowH))) {
+            m_selectedObject = obj;
+        }
+        ImGui::PopStyleVar();
+
+        // Type label right-aligned inside the row
+        ImVec2 rMin = ImGui::GetItemRectMin(), rMax = ImGui::GetItemRectMax();
+        ImVec2 typeSize = ImGui::CalcTextSize(typeLabel);
+        ImGui::GetWindowDrawList()->AddText(ImVec2(rMax.x - typeSize.x - style.FramePadding.x, rMin.y + (rowH - typeSize.y) * 0.5f),
+                                            ImGui::GetColorU32(typeColor), typeLabel);
+
+        if (ImGui::BeginPopupContextItem("##row_ctx")) {
+            m_selectedObject = obj;
+            BakerUI::DrawCommandMenuItem(m_commandRegistry, removeCmd);
+            ImGui::EndPopup();
+        }
+        ImGui::PopID();
+    };
+
+    if (SceneObjectExists(SceneObject::HighPoly)) {
+        std::string hpName = std::filesystem::path(m_highPolyPath).stem().string();
+        if (hpName.empty()) hpName = "High-Poly Sculpt";
+        drawRow(SceneObject::HighPoly, "view.3d_high_poly", hpName,
+                m_isLoadingHighPoly ? "Loading..." : "Sculpt",
+                m_isLoadingHighPoly ? BakerUI::Col::Warn() : BakerUI::Col::TextDim(), "scene.remove_high_poly");
+    }
+    if (m_hasLowPoly) {
+        std::string lpName = std::filesystem::path(m_lowPolyPath).stem().string();
+        if (lpName.empty()) lpName = "Low-Poly";
+        drawRow(SceneObject::LowPoly, "view.3d_low_poly", lpName, "Low-Poly", BakerUI::Col::TextDim(), "scene.remove_low_poly");
+
+        std::string cageName = m_hasExplicitCage ? std::filesystem::path(m_cagePath).stem().string() : std::string("Cage");
+        drawRow(SceneObject::Cage, "view.3d_cage", cageName, m_hasExplicitCage ? "Cage File" : "Cage", BakerUI::Col::TextDim(), "scene.remove_cage");
     }
 
     ImGui::End();
+}
+
+// Properties editor: a vertical icon tab strip (Object, then the UV pipeline stages in the UV workspace)
+// beside the active tab's subpanels. The UV workspace pins Auto UV, the panel's single primary action (R-3).
+void UIManager::RenderPropertiesPanel() {
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+    bool open = ImGui::Begin("Properties###properties", &m_shellState.showProperties);
+    ImGui::PopStyleVar();
+    if (!open) {
+        ImGui::End();
+        return;
+    }
+
+    struct TabDef { PropertiesTab tab; BakerUI::TabIcon icon; const char* label; };
+    static const TabDef kTabs[] = {
+        { PropertiesTab::Object,       BakerUI::TabIcon::Object,       "Object" },
+        { PropertiesTab::CutSew,       BakerUI::TabIcon::CutSew,       "Cut & Sew" },
+        { PropertiesTab::Unfold,       BakerUI::TabIcon::Unfold,       "Unfold" },
+        { PropertiesTab::Transform,    BakerUI::TabIcon::Transform,    "Transform" },
+        { PropertiesTab::Stack,        BakerUI::TabIcon::Stack,        "Stack & Overlap" },
+        { PropertiesTab::TexelDensity, BakerUI::TabIcon::TexelDensity, "Texel Density" },
+        { PropertiesTab::Pack,         BakerUI::TabIcon::Pack,         "Pack" },
+        { PropertiesTab::Export,       BakerUI::TabIcon::Export,       "Export" },
+    };
+
+    const bool isUV = (m_shellState.activeTab == BakerUI::ShellState::AppTab::UVCutAndPack);
+    const PropertiesTab activeTab = isUV ? m_propertiesTab : PropertiesTab::Object;
+    const float em = ImGui::GetFontSize();
+    const float pad = em * 0.3f;
+
+    // Tab strip
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, BakerUI::Col::Bg());
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(pad, pad));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0.0f, pad));
+    ImGui::BeginChild("##props_tab_strip", ImVec2(em * 1.9f + pad * 2.0f, 0.0f), ImGuiChildFlags_AlwaysUseWindowPadding,
+                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    for (const TabDef& def : kTabs) {
+        if (def.tab != PropertiesTab::Object && !isUV) break;
+        if (BakerUI::IconTab(def.label, def.icon, activeTab == def.tab)) {
+            m_propertiesTab = def.tab;
+        }
+        if (def.tab == PropertiesTab::Object) ImGui::Dummy(ImVec2(0.0f, pad)); // separates the object tab from the tool tabs
+    }
+    ImGui::EndChild();
+    ImGui::PopStyleVar(2);
+    ImGui::PopStyleColor();
+
+    ImGui::SameLine(0.0f, 0.0f);
+
+    // Active tab content, with the pinned footer in the UV workspace
+    const float primaryH = ImGui::GetFrameHeight() * 1.5f;
+    const float footerH = isUV ? primaryH + em * 0.8f : 0.0f;
+    ImGui::BeginGroup();
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(em * 0.6f, em * 0.5f));
+    if (ImGui::BeginChild("##props_content", ImVec2(0.0f, -footerH), ImGuiChildFlags_AlwaysUseWindowPadding)) {
+        const char* title = "Object";
+        for (const TabDef& def : kTabs) {
+            if (def.tab == activeTab) title = def.label;
+        }
+        if (activeTab != PropertiesTab::Object) {
+            if (BakerUI::gFontBold) ImGui::PushFont(BakerUI::gFontBold);
+            ImGui::TextUnformatted(title);
+            if (BakerUI::gFontBold) ImGui::PopFont();
+            if (!m_hasLowPoly) {
+                ImGui::TextDisabled("Load a low-poly mesh to use the UV tools.");
+            }
+            ImGui::Spacing();
+        }
+
+        if (activeTab == PropertiesTab::Object) {
+            RenderObjectProperties();
+        } else {
+            RenderUVToolTab(activeTab);
+        }
+    }
+    ImGui::EndChild();
+
+    if (isUV) {
+        if (ImGui::BeginChild("##props_footer", ImVec2(0.0f, footerH), ImGuiChildFlags_AlwaysUseWindowPadding,
+                              ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
+            BakerUI::DrawCommand(m_commandRegistry, "uv.auto_cut_unwrap_pack", nullptr, ImVec2(-FLT_MIN, primaryH), BakerUI::CommandStyle::Primary);
+        }
+        ImGui::EndChild();
+    }
+    ImGui::PopStyleVar();
+    ImGui::EndGroup();
+
+    ImGui::End();
+}
+
+// Object tab: details and settings for the object selected in the Scene Outliner.
+void UIManager::RenderObjectProperties() {
+    if (!SceneObjectExists(m_selectedObject)) {
+        ImGui::TextDisabled("Select an object in the Scene Outliner.");
+        return;
+    }
+
+    auto header = [](const std::string& name, const char* type, const std::string& path) {
+        if (BakerUI::gFontBold) ImGui::PushFont(BakerUI::gFontBold);
+        ImGui::TextUnformatted(name.c_str());
+        if (BakerUI::gFontBold) ImGui::PopFont();
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s", type);
+        if (!path.empty()) {
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextDisabled("%s", path.c_str());
+            ImGui::PopTextWrapPos();
+        }
+        ImGui::Spacing();
+    };
+    const ImVec2 fullW(-FLT_MIN, 0.0f);
+    char buf[128];
+
+    switch (m_selectedObject) {
+    case SceneObject::HighPoly: {
+        std::string name = std::filesystem::path(m_highPolyPath).stem().string();
+        header(name.empty() ? "High-Poly Sculpt" : name, "Sculpt", m_highPolyPath);
+        if (m_isLoadingHighPoly) {
+            ImGui::TextColored(BakerUI::Col::Warn(), "Loading and building BVH...");
+            break;
+        }
+        if (BakerUI::BeginSectionCard("Mesh", "##pp_hp_mesh", true)) {
+            if (BakerUI::BeginProps("##pp_hp_mesh_props")) {
+                snprintf(buf, sizeof(buf), "%zu", m_highPolyMesh.positions.size());
+                BakerUI::PropValue("Vertices", buf);
+                if (m_highPolyMesh.isQuadMesh && !m_highPolyMesh.quadIndices.empty()) {
+                    snprintf(buf, sizeof(buf), "%zu quads", m_highPolyMesh.quadIndices.size() / 4);
+                } else {
+                    snprintf(buf, sizeof(buf), "%zu triangles", m_highPolyMesh.indices.size() / 3);
+                }
+                BakerUI::PropValue("Faces", buf);
+                BakerUI::PropValue("Polypaint", m_highPolyMesh.colors.empty() ? "None" : "Yes");
+                BakerUI::PropValue("Polygroups", m_highPolyMesh.polygroupPerFace.empty() ? "None" : "Yes");
+                BakerUI::EndProps();
+            }
+            BakerUI::EndSectionCard();
+        }
+        if (BakerUI::BeginSectionCard("Viewport Display", "##pp_hp_display", true)) {
+            if (BakerUI::BeginProps("##pp_hp_display_props")) {
+                BakerUI::PropFloat("Opacity", &m_viewportRenderer.highPolyOpacity, 0.01f, 0.05f, 1.0f, "%.2f");
+                const char* shadingModes[] = { "Studio White", "Clay", "Wax Red", "Normals", "Flat" };
+                int currentShading = (m_viewportRenderer.highPolyShading == ShadingMode::FlatShaded) ? 4 : (int)m_viewportRenderer.highPolyShading;
+                if (BakerUI::PropCombo("Shading", &currentShading, shadingModes, IM_ARRAYSIZE(shadingModes))) {
+                    m_viewportRenderer.highPolyShading = (currentShading == 4) ? ShadingMode::FlatShaded : (ShadingMode)currentShading;
+                }
+                BakerUI::EndProps();
+            }
+            BakerUI::EndSectionCard();
+        }
+        BakerUI::DrawCommand(m_commandRegistry, "scene.remove_high_poly", nullptr, fullW, BakerUI::CommandStyle::Destructive);
+        break;
+    }
+    case SceneObject::LowPoly: {
+        std::string name = std::filesystem::path(m_lowPolyPath).stem().string();
+        header(name.empty() ? "Low-Poly" : name, "Low-Poly", m_lowPolyPath);
+        if (BakerUI::BeginSectionCard("Mesh", "##pp_lp_mesh", true)) {
+            if (BakerUI::BeginProps("##pp_lp_mesh_props")) {
+                snprintf(buf, sizeof(buf), "%zu", m_lowPolyMesh.vertices.size());
+                BakerUI::PropValue("Vertices", buf);
+                if (m_lowPolyMesh.quadCount > 0 && m_lowPolyMesh.triCount == 0) {
+                    snprintf(buf, sizeof(buf), "%u quads", m_lowPolyMesh.quadCount);
+                } else if (m_lowPolyMesh.quadCount > 0) {
+                    snprintf(buf, sizeof(buf), "%u (%u quads, %u tris)", m_lowPolyMesh.polyCount, m_lowPolyMesh.quadCount, m_lowPolyMesh.triCount);
+                } else {
+                    snprintf(buf, sizeof(buf), "%zu triangles", m_lowPolyMesh.triangles.size());
+                }
+                BakerUI::PropValue("Faces", buf);
+                BakerUI::EndProps();
+            }
+            BakerUI::EndSectionCard();
+        }
+        if (BakerUI::BeginSectionCard("Viewport Display", "##pp_lp_display", true)) {
+            if (BakerUI::BeginProps("##pp_lp_display_props")) {
+                BakerUI::PropFloat("Opacity", &m_viewportRenderer.lowPolyOpacity, 0.01f, 0.05f, 1.0f, "%.2f");
+                BakerUI::EndProps();
+            }
+            BakerUI::EndSectionCard();
+        }
+        snprintf(buf, sizeof(buf), "UDIM Tiles to Bake (%zu)", m_lowPolyMesh.detectedUDIMs.size());
+        if (BakerUI::BeginSectionCard(buf, "##pp_lp_udims", true)) {
+            if (!m_lowPolyMesh.detectedUDIMs.empty()) {
+                bool allSelected = true;
+                for (int tile : m_lowPolyMesh.detectedUDIMs) {
+                    if (!IsUDIMSelected(tile)) { allSelected = false; break; }
+                }
+                if (ImGui::Checkbox("All Tiles", &allSelected)) {
+                    if (allSelected) SelectAllUDIMs();
+                    else m_selectedUDIMs.clear();
+                }
+                ImGui::Indent();
+                for (int tile : m_lowPolyMesh.detectedUDIMs) {
+                    bool sel = IsUDIMSelected(tile);
+                    snprintf(buf, sizeof(buf), "%d", tile);
+                    if (ImGui::Checkbox(buf, &sel)) {
+                        ToggleUDIM(tile);
+                    }
+                }
+                ImGui::Unindent();
+            } else {
+                ImGui::TextDisabled("No UVs yet.");
+            }
+            BakerUI::EndSectionCard();
+        }
+        BakerUI::DrawCommand(m_commandRegistry, "scene.remove_low_poly", nullptr, fullW, BakerUI::CommandStyle::Destructive);
+        break;
+    }
+    case SceneObject::Cage: {
+        std::string name = m_hasExplicitCage ? std::filesystem::path(m_cagePath).stem().string() : std::string("Cage");
+        header(name, m_hasExplicitCage ? "Cage File" : "Push-Offset Cage", m_hasExplicitCage ? m_cagePath : std::string());
+        if (BakerUI::BeginSectionCard("Cage", "##pp_cage", true)) {
+            if (BakerUI::BeginProps("##pp_cage_props")) {
+                BakerUI::PropValue("Source", m_hasExplicitCage ? "Loaded file" : "Low-poly pushed along normals");
+                if (!m_hasExplicitCage) {
+                    if (BakerUI::PropFloat("Offset", &m_settings.cageDistance, 0.001f, 0.0f, 2.0f, "%.4f", "Distance the cage is pushed out from the low-poly surface")) {
+                        m_viewportRenderer.UpdateCage(m_lowPolyMesh, m_settings.cageDistance, m_settings.lowPolyScale);
+                    }
+                }
+                BakerUI::EndProps();
+            }
+            BakerUI::EndSectionCard();
+        }
+        if (BakerUI::BeginSectionCard("Viewport Display", "##pp_cage_display", true)) {
+            if (BakerUI::BeginProps("##pp_cage_display_props")) {
+                BakerUI::PropFloat("Opacity", &m_viewportRenderer.cageOpacity, 0.01f, 0.05f, 1.0f, "%.2f");
+                BakerUI::EndProps();
+            }
+            BakerUI::EndSectionCard();
+        }
+        if (m_hasExplicitCage) {
+            BakerUI::DrawCommand(m_commandRegistry, "scene.remove_cage", nullptr, fullW, BakerUI::CommandStyle::Destructive);
+        }
+        break;
+    }
+    default:
+        break;
+    }
+}
+
+// UV tool tabs: one pipeline stage per tab, split into collapsible subpanels.
+// Every button goes through BakerUI::DrawCommand; parameters stay as plain property rows.
+void UIManager::RenderUVToolTab(PropertiesTab tab) {
+    using BakerUI::CommandStyle;
+    using BakerUI::DrawCommand;
+
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const ImVec2 fullW(-FLT_MIN, 0.0f);
+    auto halfW = [&style]() { return ImVec2((ImGui::GetContentRegionAvail().x - style.ItemSpacing.x) * 0.5f, 0.0f); };
+    auto drawPair = [&](const char* left, const char* right) {
+        DrawCommand(m_commandRegistry, left, nullptr, halfW());
+        ImGui::SameLine();
+        DrawCommand(m_commandRegistry, right, nullptr, fullW);
+    };
+
+    switch (tab) {
+    case PropertiesTab::CutSew:
+        if (BakerUI::BeginSectionCard("Seams", "##pp_seams", true)) {
+            drawPair("uv.cut", "uv.sew");
+            DrawCommand(m_commandRegistry, "uv.clear_seams", nullptr, fullW, CommandStyle::Destructive);
+            BakerUI::EndSectionCard();
+        }
+        if (BakerUI::BeginSectionCard("Auto Seams", "##pp_auto_seams", true)) {
+            if (BakerUI::BeginProps("##pp_auto_seams_props")) {
+                BakerUI::PropFloat("Angle Crease", &m_seamAngleThreshold, 1.0f, 15.0f, 90.0f, "%.1f deg", "Edges sharper than this dihedral angle become seams");
+                BakerUI::EndProps();
+            }
+            DrawCommand(m_commandRegistry, "uv.auto_seams", "Mark Seams", fullW);
+            BakerUI::EndSectionCard();
+        }
+        if (BakerUI::BeginSectionCard("Curve Cut", "##pp_curve_cut", false)) {
+            std::vector<std::string> curveNames;
+            std::vector<const char*> curveNamePtrs;
+            for (const auto& curve : m_curveManager.curves) {
+                char nameBuf[128];
+                snprintf(nameBuf, sizeof(nameBuf), "%s (%zu pts)%s", curve.name.c_str(), curve.points.size(), curve.isBaked ? " [Applied]" : "");
+                curveNames.push_back(nameBuf);
+            }
+            for (const auto& name : curveNames) curveNamePtrs.push_back(name.c_str());
+
+            static const char* kCurveMethods[] = { "Snap to Edges", "Cut Topology" };
+            int methodIdx = m_curveCutTopology ? 1 : 0;
+            if (BakerUI::BeginProps("##pp_curve_props")) {
+                if (!curveNamePtrs.empty()) {
+                    int curCurve = m_curveManager.activeCurveIndex;
+                    if (BakerUI::PropCombo("Curve", &curCurve, curveNamePtrs.data(), static_cast<int>(curveNamePtrs.size()))) {
+                        m_curveManager.activeCurveIndex = curCurve;
+                    }
+                }
+                if (BakerUI::PropCombo("Method", &methodIdx, kCurveMethods, IM_ARRAYSIZE(kCurveMethods))) {
+                    m_curveCutTopology = (methodIdx == 1);
+                }
+                if (SurfaceCurve* c = m_curveManager.GetActiveCurve()) {
+                    BakerUI::PropCheck("Close Loop", &c->isClosed, "Connect the last point back to the first");
+                }
+                BakerUI::EndProps();
+            }
+            if (curveNamePtrs.empty()) {
+                ImGui::TextDisabled("No curves yet. New Curve starts drawing on the 3D mesh.");
+            }
+            drawPair("uv.curve_new", "uv.curve_delete");
+            DrawCommand(m_commandRegistry, "uv.curve_draw_mode", nullptr, fullW);
+            drawPair("uv.curve_apply", "uv.curve_apply_all");
+            DrawCommand(m_commandRegistry, "uv.curve_clear_all", nullptr, fullW, CommandStyle::Destructive);
+            BakerUI::EndSectionCard();
+        }
+        break;
+
+    case PropertiesTab::Unfold:
+        if (BakerUI::BeginSectionCard("Unwrap", "##pp_unwrap", true)) {
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextDisabled("Flattens each shell with a conformal solve that includes relaxation, then packs the shells with the Pack settings.");
+            ImGui::PopTextWrapPos();
+            ImGui::Spacing();
+            DrawCommand(m_commandRegistry, "uv.unwrap", nullptr, fullW);
+            BakerUI::EndSectionCard();
+        }
+        break;
+
+    case PropertiesTab::Transform:
+        if (BakerUI::BeginSectionCard("Flip & Rotate", "##pp_flip_rotate", true)) {
+            drawPair("uv.flip_u", "uv.flip_v");
+            drawPair("uv.rot_ccw", "uv.rot_cw");
+            BakerUI::EndSectionCard();
+        }
+        if (BakerUI::BeginSectionCard("Align", "##pp_align", true)) {
+            drawPair("uv.straighten", "uv.orient");
+            BakerUI::EndSectionCard();
+        }
+        break;
+
+    case PropertiesTab::Stack:
+        if (BakerUI::BeginSectionCard("Stacking", "##pp_stacking", true)) {
+            if (BakerUI::BeginProps("##pp_stack_props")) {
+                BakerUI::PropCheck("Lock Overlaps", &m_lockOverlapping, "Treat stacked identical islands as a single unit during pack");
+                BakerUI::EndProps();
+            }
+            drawPair("uv.stack_identical", "uv.separate_overlaps");
+            BakerUI::EndSectionCard();
+        }
+        break;
+
+    case PropertiesTab::TexelDensity:
+        if (BakerUI::BeginSectionCard("Density", "##pp_density", true)) {
+            if (BakerUI::BeginProps("##pp_td_props")) {
+                BakerUI::PropFloat("Target (px/cm)", &m_targetTexelDensity, 0.5f, 0.1f, 100.0f, "%.2f px/cm", "Desired texel density per world centimetre");
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::AlignTextToFramePadding();
+                ImGui::TextUnformatted("Measured");
+                ImGui::TableSetColumnIndex(1);
+                ImGui::AlignTextToFramePadding();
+                if (m_calculatedTexelDensity > 0.0f) {
+                    ImGui::Text("%.2f px/cm", m_calculatedTexelDensity);
+                } else {
+                    ImGui::TextDisabled("Not measured");
+                }
+                BakerUI::EndProps();
+            }
+            drawPair("uv.td_get", "uv.td_set");
+            DrawCommand(m_commandRegistry, "uv.td_equalize", nullptr, fullW);
+            BakerUI::EndSectionCard();
+        }
+        break;
+
+    case PropertiesTab::Pack:
+        if (BakerUI::BeginSectionCard("Layout", "##pp_pack_layout", true)) {
+            if (BakerUI::BeginProps("##pp_pack_props")) {
+                BakerUI::PropCheck("Multi-UDIM", &m_packSettings.multiUDIM, "Pack across tiles 1001, 1002, 1003...");
+                if (m_packSettings.multiUDIM) {
+                    BakerUI::PropInt("Max Tiles", &m_packSettings.maxUDIMCount, 1, 10, "Maximum number of UDIM tiles to fill");
+                }
+                BakerUI::PropInt("Island Padding (px)", &m_packSettings.paddingPixels, 0, 64, "Spacing between UV islands in pixels");
+                static const char* kRotOptions[] = { "None", "90 deg Steps", "45 deg Steps", "Free Rotation" };
+                int rotIdx = static_cast<int>(m_packSettings.rotation);
+                if (BakerUI::PropCombo("Rotation Steps", &rotIdx, kRotOptions, IM_ARRAYSIZE(kRotOptions))) {
+                    m_packSettings.rotation = static_cast<PackSettings::RotationMode>(rotIdx);
+                }
+                BakerUI::EndProps();
+            }
+            DrawCommand(m_commandRegistry, "uv.pack", nullptr, fullW);
+            BakerUI::EndSectionCard();
+        }
+        if (BakerUI::BeginSectionCard("Advanced", "##pp_pack_adv", false)) {
+            static const int kResValues[] = { 512, 1024, 2048, 4096, 8192, 16384 };
+            static const char* kResOptions[] = { "512", "1024", "2048", "4096", "8192", "16384" };
+            int resIdx = 2;
+            for (int i = 0; i < IM_ARRAYSIZE(kResValues); ++i) {
+                if (kResValues[i] == m_packSettings.resolution) resIdx = i;
+            }
+            if (BakerUI::BeginProps("##pp_pack_adv_props")) {
+                if (BakerUI::PropCombo("Resolution", &resIdx, kResOptions, IM_ARRAYSIZE(kResOptions))) {
+                    m_packSettings.resolution = kResValues[resIdx];
+                }
+                BakerUI::PropInt("Tile Margin (px)", &m_packSettings.marginPixels, 0, 64, "Margin from the outer UDIM border in pixels");
+                BakerUI::PropCheck("Normalize Texel Density", &m_packSettings.normalizeTexelDensity, "Scale islands by 3D surface area before packing");
+                BakerUI::PropCheck("Group by Polygroup", &m_packSettings.packByPolygroup, "Keep islands of the same polygroup on dedicated tiles");
+                BakerUI::EndProps();
+            }
+            BakerUI::EndSectionCard();
+        }
+        break;
+
+    case PropertiesTab::Export:
+        if (BakerUI::BeginSectionCard("Mesh", "##pp_export_mesh", true)) {
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextDisabled("Writes the low-poly with its new UVs as an OBJ.");
+            ImGui::PopTextWrapPos();
+            ImGui::Spacing();
+            DrawCommand(m_commandRegistry, "file.export_low_poly", "Export Mesh (OBJ)...", fullW);
+            BakerUI::EndSectionCard();
+        }
+        break;
+
+    default:
+        break;
+    }
 }
 
 void UIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& size) {
@@ -5318,6 +5822,41 @@ void UIManager::RenderUVCutAndPackPanel() {
     }
 
     ImGui::End();
+}
+
+void UIManager::RenderHelpWindows() {
+    if (m_showShortcutsWindow) {
+        const float em = ImGui::GetFontSize();
+        ImGui::SetNextWindowSize(ImVec2(em * 30.0f, em * 26.0f), ImGuiCond_FirstUseEver);
+        if (ImGui::Begin("Keyboard Shortcuts###help_shortcuts", &m_showShortcutsWindow, ImGuiWindowFlags_NoDocking)) {
+            if (ImGui::BeginTable("##shortcut_table", 2, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_ScrollY)) {
+                ImGui::TableSetupColumn("Command", ImGuiTableColumnFlags_WidthStretch);
+                ImGui::TableSetupColumn("Shortcut", ImGuiTableColumnFlags_WidthFixed, em * 10.0f);
+                ImGui::TableSetupScrollFreeze(0, 1);
+                ImGui::TableHeadersRow();
+                for (const std::string& id : m_commandRegistry.GetOrderedIds()) {
+                    const BakerUI::Command* cmd = m_commandRegistry.Find(id);
+                    if (!cmd || cmd->hotkey.empty()) continue;
+                    ImGui::TableNextRow();
+                    ImGui::TableSetColumnIndex(0);
+                    ImGui::TextUnformatted(cmd->label.c_str());
+                    ImGui::TableSetColumnIndex(1);
+                    ImGui::TextDisabled("%s", cmd->hotkey.c_str());
+                }
+                ImGui::EndTable();
+            }
+        }
+        ImGui::End();
+    }
+
+    if (m_showAboutWindow) {
+        if (ImGui::Begin("About###help_about", &m_showAboutWindow, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::TextUnformatted("ZBrush UDIM Baker");
+            ImGui::TextDisabled("UDIM bake and UV companion for ZBrush");
+            ImGui::TextDisabled("Embree 3  *  D3D11");
+        }
+        ImGui::End();
+    }
 }
 
 void UIManager::RenderUDIMCanvasPanel() {

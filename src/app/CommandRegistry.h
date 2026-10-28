@@ -122,8 +122,25 @@ private:
     std::vector<std::string>                 m_orderedIds;
 };
 
+// Button grammar (R10): Action is neutral, Primary is filled accent (Auto UV footer only),
+// Destructive is red text on neutral fill.
+enum class CommandStyle { Action, Primary, Destructive };
+
+// Shared tooltip: label line, hotkey, and the disabled reason when the command cannot run.
+inline void DrawCommandTooltip(const Command& cmd, bool isEnabled) {
+    if (!ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled | ImGuiHoveredFlags_DelayNormal)) return;
+    std::string reason = (!isEnabled && cmd.disabledReason) ? cmd.disabledReason() : std::string();
+    if (cmd.tooltip.empty() && reason.empty()) return;
+    ImGui::BeginTooltip();
+    ImGui::TextUnformatted(cmd.tooltip.c_str());
+    if (!cmd.hotkey.empty()) ImGui::TextDisabled("Shortcut: %s", cmd.hotkey.c_str());
+    if (!reason.empty()) ImGui::TextColored(ImVec4(0.94f, 0.62f, 0.04f, 1.0f), "Disabled: %s", reason.c_str());
+    ImGui::EndTooltip();
+}
+
 // Authoritative UI Drawing Helper: Rule R-5 & Amendment (2)
-inline bool DrawCommand(CommandRegistry& registry, const std::string& id, const char* overrideLabel = nullptr, const ImVec2& size = ImVec2(0, 0)) {
+inline bool DrawCommand(CommandRegistry& registry, const std::string& id, const char* overrideLabel = nullptr,
+                        const ImVec2& size = ImVec2(0, 0), CommandStyle style = CommandStyle::Action) {
     const Command* cmd = registry.Find(id);
     if (!cmd) {
         assert(false && "DrawCommand Error: Unregistered command ID rendered!");
@@ -135,45 +152,103 @@ inline bool DrawCommand(CommandRegistry& registry, const std::string& id, const 
         ImGui::BeginDisabled();
     }
 
+    int pushedColors = 0;
     bool isChecked = cmd->checked && cmd->checked();
-    if (isChecked) {
+    if (style == CommandStyle::Primary) {
+        ImGui::PushStyleColor(ImGuiCol_Button, CommandHex(0x4CC3A6));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, CommandHex(0x5FD2B6));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, CommandHex(0x3EB496));
+        ImGui::PushStyleColor(ImGuiCol_Text, CommandHex(0x0C1412));
+        pushedColors = 4;
+    } else if (isChecked) {
         ImGui::PushStyleColor(ImGuiCol_Button, CommandHex(0x4CC3A6));
         ImGui::PushStyleColor(ImGuiCol_Text, CommandHex(0x0C1412));
+        pushedColors = 2;
+    } else if (style == CommandStyle::Destructive) {
+        ImGui::PushStyleColor(ImGuiCol_Text, CommandHex(0xEF4444));
+        pushedColors = 1;
     }
 
-    const char* label = overrideLabel ? overrideLabel : cmd->label.c_str();
-    bool clicked = ImGui::Button(label, size);
+    // "##id" suffix keeps ImGui IDs unique when two commands share a visible label
+    std::string label = std::string(overrideLabel ? overrideLabel : cmd->label.c_str()) + "##" + cmd->id;
+    bool clicked = ImGui::Button(label.c_str(), size);
 
-    if (isChecked) {
-        ImGui::PopStyleColor(2);
+    if (pushedColors) {
+        ImGui::PopStyleColor(pushedColors);
     }
 
     if (!isEnabled) {
         ImGui::EndDisabled();
     }
 
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-        if (!isEnabled && cmd->disabledReason) {
-            std::string reason = cmd->disabledReason();
-            if (!reason.empty()) {
-                ImGui::SetTooltip("%s (Disabled: %s)", cmd->tooltip.c_str(), reason.c_str());
-            } else {
-                ImGui::SetTooltip("%s", cmd->tooltip.c_str());
-            }
-        } else if (!cmd->tooltip.empty()) {
-            if (!cmd->hotkey.empty()) {
-                ImGui::SetTooltip("%s [%s]", cmd->tooltip.c_str(), cmd->hotkey.c_str());
-            } else {
-                ImGui::SetTooltip("%s", cmd->tooltip.c_str());
-            }
-        }
-    }
+    DrawCommandTooltip(*cmd, isEnabled);
 
     if (clicked && isEnabled && cmd->run) {
         cmd->run();
     }
 
     return clicked;
+}
+
+// Menu-bar counterpart of DrawCommand: label, hotkey, checked and enabled state all come from the registry.
+inline bool DrawCommandMenuItem(CommandRegistry& registry, const std::string& id) {
+    const Command* cmd = registry.Find(id);
+    if (!cmd) {
+        assert(false && "DrawCommandMenuItem Error: Unregistered command ID rendered!");
+        return false;
+    }
+
+    bool isEnabled = !cmd->enabled || cmd->enabled();
+    bool isChecked = cmd->checked && cmd->checked();
+    std::string label = cmd->label + "##" + cmd->id;
+    bool clicked = ImGui::MenuItem(label.c_str(), cmd->hotkey.empty() ? nullptr : cmd->hotkey.c_str(), isChecked, isEnabled);
+    DrawCommandTooltip(*cmd, isEnabled);
+
+    if (clicked && isEnabled && cmd->run) {
+        cmd->run();
+    }
+    return clicked;
+}
+
+// Draws every Menu-surface command whose menuPath is `path` or nested below it, in registration order.
+// With inlineGroups, first-level sub-paths render as labelled sections ("UV/Cut & Sew"); deeper levels
+// (and all levels when inlineGroups is false) render as submenus ("View/3D Display").
+inline void DrawCommandMenuContents(CommandRegistry& registry, const std::string& path, bool inlineGroups) {
+    struct Entry { const Command* cmd; std::string group; };
+    std::vector<Entry> entries;
+    const std::string prefix = path + "/";
+    for (const Command* cmd : registry.GetBySurface(Surface::Menu)) {
+        if (cmd->menuPath == path) {
+            entries.push_back({ cmd, "" });
+        } else if (cmd->menuPath.compare(0, prefix.size(), prefix) == 0) {
+            std::string rest = cmd->menuPath.substr(prefix.size());
+            std::string group = rest.substr(0, rest.find('/'));
+            bool seen = false;
+            for (const Entry& e : entries) {
+                if (!e.cmd && e.group == group) { seen = true; break; }
+            }
+            if (!seen) entries.push_back({ nullptr, group });
+        }
+    }
+
+    bool prevWasSection = false;
+    for (const Entry& e : entries) {
+        if (e.cmd) {
+            if (prevWasSection) ImGui::Separator();
+            DrawCommandMenuItem(registry, e.cmd->id);
+            prevWasSection = false;
+        } else if (inlineGroups) {
+            ImGui::SeparatorText(e.group.c_str());
+            DrawCommandMenuContents(registry, prefix + e.group, false);
+            prevWasSection = true;
+        } else {
+            if (ImGui::BeginMenu(e.group.c_str())) {
+                DrawCommandMenuContents(registry, prefix + e.group, false);
+                ImGui::EndMenu();
+            }
+            prevWasSection = false;
+        }
+    }
 }
 
 } // namespace BakerUI
