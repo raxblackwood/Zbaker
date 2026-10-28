@@ -99,21 +99,21 @@ The following table explicitly audits every duplicated command currently active 
 
 | Command ID | Current Duplicated Locations | Authoritative Target Home | Removal Step |
 | :--- | :--- | :--- | :--- |
-| `uv.cut` | 2D UV Canvas Header Tier 2, UV Tool Panel, Marking Menu | UV Toolkit (`Cut & Sew`), UV Menu, Marking Menu | Phase 1 Step 2 (Remove from UV Header) |
-| `uv.sew` | 2D UV Canvas Header Tier 2, UV Tool Panel, Marking Menu | UV Toolkit (`Cut & Sew`), UV Menu, Marking Menu | Phase 1 Step 2 (Remove from UV Header) |
-| `uv.unwrap` | 2D UV Canvas Header Tier 2, UV Tool Panel, Marking Menu | UV Toolkit (`Unfold`), UV Menu, Marking Menu | Phase 1 Step 2 (Remove from UV Header) |
-| `uv.pack` | 2D UV Canvas Header Tier 2, UV Tool Panel | UV Toolkit (`Pack`), UV Menu | Phase 1 Step 2 (Remove from UV Header) |
-| `uv.flip_u` | 2D UV Canvas Header Tier 2, UV Tool Panel | UV Toolkit (`Transform`), UV Menu | Phase 1 Step 2 (Remove from UV Header) |
-| `uv.flip_v` | 2D UV Canvas Header Tier 2, UV Tool Panel | UV Toolkit (`Transform`), UV Menu | Phase 1 Step 2 (Remove from UV Header) |
-| `uv.rot_ccw` | 2D UV Canvas Header Tier 2, UV Tool Panel | UV Toolkit (`Transform`), UV Menu | Phase 1 Step 2 (Remove from UV Header) |
-| `uv.rot_cw` | 2D UV Canvas Header Tier 2, UV Tool Panel | UV Toolkit (`Transform`), UV Menu | Phase 1 Step 2 (Remove from UV Header) |
-| `uv.straighten` | 2D UV Canvas Header Tier 2, UV Tool Panel | UV Toolkit (`Transform`), UV Menu | Phase 1 Step 2 (Remove from UV Header) |
-| `view.frame_all` | 3D Viewport Top ("Focus (F)"), 2D UV Header ("Frame (F)") | View Menu (`Frame All`), Hotkey `Home` | Phase 1 Step 2 (Remove Header Buttons) |
-| `view.frame_selected` | 2D UV Canvas Header ("Frame (F)") | View Menu (`Frame Selected`), Hotkey `F` | Phase 1 Step 2 (Remove Header Button) |
-| `view.reset_view` | 3D Viewport ("Reset Cam"), 2D UV Header ("Reset View") | View Menu (`Reset View`), Hotkey `Home` | Phase 1 Step 2 (Remove Header Buttons) |
-| `select.clear` | 2D UV Canvas Header ("Clear Sel"), Outliner ("Clear") | Select Menu (`Clear Selection`), Hotkey `Esc` | Phase 1 Step 2 (Remove Header Button) |
-| `edit.undo` | 3D Viewport Overlay button, Hotkey `Ctrl+Z` | Edit Menu (`Undo`), Hotkey `Ctrl+Z` | Phase 1 Step 2 (Remove Overlay Button) |
-| `edit.redo` | 3D Viewport Overlay button, Hotkey `Ctrl+Y` | Edit Menu (`Redo`), Hotkey `Ctrl+Y` | Phase 1 Step 2 (Remove Overlay Button) |
+| `uv.cut` | 2D UV Canvas Header Tier 2, UV Tool Panel, Marking Menu | UV Toolkit (`Cut & Sew`), UV Menu, Marking Menu | Done (Phase 1 Step 2, 2026-10-28) |
+| `uv.sew` | 2D UV Canvas Header Tier 2, UV Tool Panel, Marking Menu | UV Toolkit (`Cut & Sew`), UV Menu, Marking Menu | Done (Phase 1 Step 2, 2026-10-28) |
+| `uv.unwrap` | 2D UV Canvas Header Tier 2, UV Tool Panel, Marking Menu | UV Toolkit (`Unfold`), UV Menu, Marking Menu | Done (Phase 1 Step 2, 2026-10-28) |
+| `uv.pack` | 2D UV Canvas Header Tier 2, UV Tool Panel | UV Toolkit (`Pack`), UV Menu | Done (Phase 1 Step 2, 2026-10-28) |
+| `uv.flip_u` | 2D UV Canvas Header Tier 2, UV Tool Panel | UV Toolkit (`Transform`), UV Menu | Done (Phase 1 Step 2, 2026-10-28) |
+| `uv.flip_v` | 2D UV Canvas Header Tier 2, UV Tool Panel | UV Toolkit (`Transform`), UV Menu | Done (Phase 1 Step 2, 2026-10-28) |
+| `uv.rot_ccw` | 2D UV Canvas Header Tier 2, UV Tool Panel | UV Toolkit (`Transform`), UV Menu | Done (Phase 1 Step 2, 2026-10-28) |
+| `uv.rot_cw` | 2D UV Canvas Header Tier 2, UV Tool Panel | UV Toolkit (`Transform`), UV Menu | Done (Phase 1 Step 2, 2026-10-28) |
+| `uv.straighten` | 2D UV Canvas Header Tier 2, UV Tool Panel | UV Toolkit (`Transform`), UV Menu | Done (Phase 1 Step 2, 2026-10-28) |
+| `view.frame_all` | 3D Viewport Top ("Focus (F)"), 2D UV Header ("Frame (F)") | View Menu (`Frame All`), Hotkey `Home` | Done (Phase 1 Step 2, 2026-10-28) |
+| `view.frame_selected` | 2D UV Canvas Header ("Frame (F)") | View Menu (`Frame Selected`), Hotkey `F` | Done (Phase 1 Step 2, 2026-10-28) |
+| `view.reset_view` | 3D Viewport ("Reset Cam"), 2D UV Header ("Reset View") | View Menu (`Reset View`), Hotkey `Home` | Done (Phase 1 Step 2, 2026-10-28) |
+| `select.clear` | 2D UV Canvas Header ("Clear Sel"), Outliner ("Clear") | Select Menu (`Clear Selection`), Hotkey `Esc` | Done (Phase 1 Step 2, 2026-10-28) |
+| `edit.undo` | 3D Viewport Overlay button, Hotkey `Ctrl+Z` | Edit Menu (`Undo`), Hotkey `Ctrl+Z` | Done (Phase 1 Step 2, 2026-10-28) |
+| `edit.redo` | 3D Viewport Overlay button, Hotkey `Ctrl+Y` | Edit Menu (`Redo`), Hotkey `Ctrl+Y` | Done (Phase 1 Step 2, 2026-10-28) |
 
 ---
 
@@ -136,3 +136,17 @@ Per user approval and amendment (1):
 - `uv.relax` dropped (V4): `m_relaxIterations` is not consumed by any algorithm; relaxation is part of the conformal solve.
 - `tool.*` hotkeys (Q/W/E/R) are header-only and still need V2: today W/G, E/R and S start a gizmo drag instead of switching tools, and Q is unbound.
 - UV workspace Edit/Select/UV/View/Help menus are generated by `DrawCommandMenuContents`; UV Toolkit panel (`UV Toolkit###uvtoolkit`) is drawn only through `DrawCommand`.
+
+## 6. Phase 1 Step 2 Status (2026-10-28)
+
+- Removed the 2D UV header second tier (Flip U/V, Rotate, Straighten, Cut, Sew, Unwrap, Pack, Frame, Reset View, Clear Sel). The header's "Unwrap" button actually ran Auto Cut, Unwrap & Pack; that mislabel is gone with it.
+- Removed the 3D viewport Undo/Redo buttons (Edit menu, Ctrl+Z / Ctrl+Y) and the filled "Focus (F)" button (View > Frame All, F). Edit and View registry menus now appear in both workspaces.
+- Removed the old UV Tool panel. Its unique features moved first: curve editing (`uv.curve_delete_point`, `uv.curve_smooth_segment`, `uv.curve_straighten_segment`, `uv.curve_smooth_all`, `uv.curve_straighten_all`, `uv.curve_recalc_path`) to Properties > Cut & Sew > Edit Curve; pack statistics to Properties > Pack > Last Pack; the gesture cheat sheet to Help > Viewport Gestures (`help.gestures`).
+- Dropped on purpose: "Auto Seams & Unwrap" (two clicks, or Auto UV) and the "Spring Iterations" slider (not consumed by any algorithm).
+- Still duplicated, for later phases: the 3D curve-draw tool bar (Snap Seams, Cut Topology, New, segment edits) and the 3D hint strip (Phase 4 status bar).
+
+## 7. UV Tools Panel and Tear-Off Windows (2026-10-28)
+
+- The icon-tab Properties editor was replaced after review. Toolkit-surface commands now live in one `UV Tools###uvtools` panel: Cut, Sew, Unwrap, Pack in an always-visible top row; Seams, Curve Cut (with Edit Points), Transform, Stack & Overlap, Texel Density, Pack Options (with Last Pack), Export as collapsible sections; Auto UV pinned at the bottom.
+- `Properties###properties` shows only the selected object's settings.
+- Multi-viewport is on: any panel can be docked at any edge of the main window or dragged out into its own OS window.

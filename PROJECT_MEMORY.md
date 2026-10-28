@@ -270,6 +270,17 @@ Uncommitted on `feature/blender-grid-baked-normals-8k-16k`. Build compiles; Test
 - Tabbed Properties editor (follow-up review, Blender-inspired, Apple principles first): the separate UV Toolkit window is gone. `Properties###properties` now has a vertical strip of vector icon tabs (`BakerUI::IconTab`, `DrawTabIcon`, scaled from font size): Object, then in the UV workspace Cut & Sew, Unfold, Transform, Stack & Overlap, Texel Density, Pack, Export. Each tab shows collapsible subpanels; Auto UV stays pinned at the bottom of every UV tab. Default layout: Outliner top 25 percent, Properties first tab in the large right-bottom node with the legacy panels. Layouts without a Properties entry get it docked beside the tool panels once (`DockPropertiesWithToolPanels`); layouts from the earlier split need View > Reset Layout.
 - Open: V2 keymap preset decision (W/E/R/G/S start gizmo drags, not tool switches); accordion open state not persisted; legacy File menu still shows unbound shortcuts; removal of the legacy duplicates is Phase 1 Step 2.
 
+### 5.11 UV Redesign Phase 1 Step 2: Duplicate Removal (2026-10-28)
+Uncommitted on `feature/blender-grid-baked-normals-8k-16k`. Build clean; TestBaker passes.
+- Removed the UV header second tier; the header is one row (`headerH` 58 to 30). Its "Unwrap" button had silently run Auto Cut, Unwrap & Pack.
+- Removed the 3D Undo/Redo buttons and the filled "Focus (F)" button; Edit and View registry menus now show in both workspaces. Tightened the 3D layout chip group so it no longer overlaps the Shading dropdown.
+- Removed the old UV Tool panel (`RenderUVCutAndPackPanel`) after moving its unique features: Edit Curve subpanel (point list with click / Shift+click From-To selection, segment and whole-curve smooth/straighten, recalculate path), Last Pack readout, and Help > Viewport Gestures.
+- Deleted the dead handlers for the legacy Edit/UV menu flags; the standalone build keeps its legacy menus.
+- Remaining duplicates: 3D curve-draw tool bar and 3D hint strip (Phase 3/4).
+- Review follow-up (2026-10-28): the icon tab strip was a suggestion, not a mandate. Replaced with one scrolling `UV Tools###uvtools` panel: Cut, Sew, Unwrap, Pack in a top row that is always visible; collapsible Seams, Curve Cut (Edit Points inside), Transform, Stack & Overlap, Texel Density, Pack Options (Last Pack inside), Export; Auto UV pinned. Properties is plain object settings again. Default right column: Outliner, Properties, tool panels. `DockNewPanelsIntoSavedLayout` docks new panels into old saved layouts once.
+- Tear-off panels: `ImGuiConfigFlags_ViewportsEnable` in `Main.cpp` with `UpdatePlatformWindows` / `RenderPlatformWindowsDefault`; host windows pinned to the main viewport; theme uses square corners and opaque window backgrounds when viewports are on; marking menu draws on its own window's viewport.
+
+
 ---
 
 ## 6. Marmoset Paint Cage & Paint Skew Architecture (Phase 2 Roadmap)

@@ -527,6 +527,99 @@ void UIManager::InitCommandRegistry() {
         []() { return "No curves to clear"; }
     });
     m_commandRegistry.Register(Command{
+        "uv.curve_delete_point", "Delete Point", "Delete the selected control point from the active curve", "",
+        static_cast<uint32_t>(Surface::Menu | Surface::Toolkit), "UV/Cut & Sew/Curve Cut", "Cut & Sew",
+        [this]() { m_curveManager.RemoveActivePoint(m_curveManager.selectedPointIndex); },
+        [this]() {
+            SurfaceCurve* c = m_curveManager.GetActiveCurve();
+            return c && m_curveManager.selectedPointIndex >= 0 && m_curveManager.selectedPointIndex < static_cast<int>(c->points.size());
+        },
+        nullptr,
+        []() { return "Select a control point first"; }
+    });
+    m_commandRegistry.Register(Command{
+        "uv.curve_smooth_segment", "Smooth Segment", "Relax kinks between the From and To points", "",
+        static_cast<uint32_t>(Surface::Menu | Surface::Toolkit), "UV/Cut & Sew/Curve Cut", "Cut & Sew",
+        [this]() {
+            int p0 = 0, p1 = 0;
+            SurfaceCurve* c = m_curveManager.GetActiveCurve();
+            if (!c || !GetActiveCurveSegment(p0, p1)) return;
+            PushHistoryState("Smooth Curve Segment");
+            c->SmoothSegment(p0, p1, m_curveManager.smoothIterations, m_curveManager.smoothFactor, m_lowPolyMesh);
+            char msg[128];
+            snprintf(msg, sizeof(msg), "Smoothed segment between P%d and P%d (%d iterations).", p0, p1, m_curveManager.smoothIterations);
+            m_uvStatusMessage = msg;
+            m_logEntries.push_back(std::string("[Curve Edit] ") + msg);
+        },
+        [this]() { int p0, p1; return GetActiveCurveSegment(p0, p1); },
+        nullptr,
+        []() { return "Active curve needs at least 2 points"; }
+    });
+    m_commandRegistry.Register(Command{
+        "uv.curve_straighten_segment", "Straighten Segment", "Replace the path between the From and To points with a straight chord", "",
+        static_cast<uint32_t>(Surface::Menu | Surface::Toolkit), "UV/Cut & Sew/Curve Cut", "Cut & Sew",
+        [this]() {
+            int p0 = 0, p1 = 0;
+            SurfaceCurve* c = m_curveManager.GetActiveCurve();
+            if (!c || !GetActiveCurveSegment(p0, p1)) return;
+            PushHistoryState("Straighten Curve Segment");
+            c->StraightenSegment(p0, p1, m_lowPolyMesh);
+            char msg[128];
+            snprintf(msg, sizeof(msg), "Straightened segment between P%d and P%d.", p0, p1);
+            m_uvStatusMessage = msg;
+            m_logEntries.push_back(std::string("[Curve Edit] ") + msg);
+        },
+        [this]() { int p0, p1; return GetActiveCurveSegment(p0, p1); },
+        nullptr,
+        []() { return "Active curve needs at least 2 points"; }
+    });
+    m_commandRegistry.Register(Command{
+        "uv.curve_smooth_all", "Smooth Curve", "Relax kinks along the whole active curve", "",
+        static_cast<uint32_t>(Surface::Menu | Surface::Toolkit), "UV/Cut & Sew/Curve Cut", "Cut & Sew",
+        [this]() {
+            SurfaceCurve* c = m_curveManager.GetActiveCurve();
+            if (!c) return;
+            PushHistoryState("Smooth Entire Curve");
+            c->SmoothEntireCurve(m_curveManager.smoothIterations, m_curveManager.smoothFactor, m_lowPolyMesh);
+            m_uvStatusMessage = "Smoothed entire curve.";
+            m_logEntries.push_back("[Curve Edit] Smoothed entire curve.");
+        },
+        [this]() { int p0, p1; return GetActiveCurveSegment(p0, p1); },
+        nullptr,
+        []() { return "Active curve needs at least 2 points"; }
+    });
+    m_commandRegistry.Register(Command{
+        "uv.curve_straighten_all", "Straighten Curve", "Straighten every segment of the active curve", "",
+        static_cast<uint32_t>(Surface::Menu | Surface::Toolkit), "UV/Cut & Sew/Curve Cut", "Cut & Sew",
+        [this]() {
+            SurfaceCurve* c = m_curveManager.GetActiveCurve();
+            if (!c) return;
+            PushHistoryState("Straighten Entire Curve");
+            c->StraightenEntireCurve(m_lowPolyMesh);
+            m_uvStatusMessage = "Straightened all segments on curve.";
+            m_logEntries.push_back("[Curve Edit] Straightened all segments on curve.");
+        },
+        [this]() { int p0, p1; return GetActiveCurveSegment(p0, p1); },
+        nullptr,
+        []() { return "Active curve needs at least 2 points"; }
+    });
+    m_commandRegistry.Register(Command{
+        "uv.curve_recalc_path", "Recalculate Path", "Discard segment edits and re-trace the curve from the current camera", "",
+        static_cast<uint32_t>(Surface::Menu | Surface::Toolkit), "UV/Cut & Sew/Curve Cut", "Cut & Sew",
+        [this]() {
+            SurfaceCurve* c = m_curveManager.GetActiveCurve();
+            if (!c) return;
+            c->ResetSegmentCustomization(0, c->points.size());
+            DirectX::XMMATRIX worldMat = m_viewportRenderer.GetLowPolyWorldMatrix();
+            DirectX::XMMATRIX viewProjMat = m_viewportRenderer.GetViewProjectionMatrix();
+            c->UpdateSampledPath(m_lowPolyMesh, &worldMat, &viewProjMat, m_viewportRenderer.GetWidth(), m_viewportRenderer.GetHeight());
+            m_uvStatusMessage = "Recalculated sampled curve path from camera.";
+        },
+        [this]() { int p0, p1; return GetActiveCurveSegment(p0, p1); },
+        nullptr,
+        []() { return "Active curve needs at least 2 points"; }
+    });
+    m_commandRegistry.Register(Command{
         "uv.unwrap", "Unwrap", "Unwrap islands using conformal least-squares mapping", "",
         static_cast<uint32_t>(Surface::Menu | Surface::Toolkit | Surface::Marking), "UV/Unfold", "Unfold",
         [this]() { UnwrapMesh(); },
@@ -688,6 +781,11 @@ void UIManager::InitCommandRegistry() {
         [this]() { m_showShortcutsWindow = true; }, nullptr, nullptr, nullptr
     });
     m_commandRegistry.Register(Command{
+        "help.gestures", "Viewport Gestures", "Mouse gestures and the marking menu layout", "",
+        static_cast<uint32_t>(Surface::Menu), "Help", "",
+        [this]() { m_showGesturesWindow = true; }, nullptr, nullptr, nullptr
+    });
+    m_commandRegistry.Register(Command{
         "help.about", "About ZBrush UDIM Baker", "Version and build information", "",
         static_cast<uint32_t>(Surface::Menu), "Help", "",
         [this]() { m_showAboutWindow = true; }, nullptr, nullptr, nullptr
@@ -700,6 +798,19 @@ void UIManager::SetUVSelectionMode(UVSelectionMode mode, const char* statusText)
         m_toolMode = ToolMode::CutSeam;
     }
     m_uvStatusMessage = statusText;
+}
+
+// From/To control points used by the segment edit commands (defaults to the selected point and its neighbour)
+bool UIManager::GetActiveCurveSegment(int& p0, int& p1) {
+    SurfaceCurve* c = m_curveManager.GetActiveCurve();
+    if (!c || c->points.size() < 2) return false;
+    int count = static_cast<int>(c->points.size());
+    p0 = (m_curveManager.selectedPointIndex >= 0) ? m_curveManager.selectedPointIndex : 0;
+    if (p0 >= count) p0 = count - 1;
+    int defaultP1 = (p0 + 1 < count) ? (p0 + 1) : (c->isClosed ? 0 : p0);
+    p1 = (m_curveManager.selectedPointEndIndex >= 0) ? m_curveManager.selectedPointEndIndex : defaultP1;
+    if (p1 >= count) p1 = count - 1;
+    return true;
 }
 
 bool UIManager::HasUVComponentSelection() const {
@@ -715,7 +826,7 @@ void UIManager::FrameAllUVs() {
     }
     float rangeU = (std::max)(maxU - minU, 0.05f);
     float rangeV = (std::max)(maxV - minV, 0.05f);
-    float headerH = 58.0f;
+    float headerH = 30.0f;
     ImVec2 size = ImGui::GetWindowSize();
     float availW = size.x * 0.85f;
     float availH = (size.y - headerH) * 0.85f;
@@ -768,7 +879,7 @@ void UIManager::FrameSelectedUVs() {
 
     float rangeU = (std::max)(maxU - minU, 0.05f);
     float rangeV = (std::max)(maxV - minV, 0.05f);
-    float headerH = 58.0f;
+    float headerH = 30.0f;
     ImVec2 size = ImGui::GetWindowSize();
     float availW = size.x * 0.85f;
     float availH = (size.y - headerH) * 0.85f;
@@ -1114,7 +1225,7 @@ void UIManager::RenderUI() {
     }
 
     // Begin Host (Main Menu Bar, Top Toolbar, DockSpace, Status Bar)
-    DockPropertiesWithToolPanels();
+    DockNewPanelsIntoSavedLayout();
     BakerUI::BeginFrameHost(m_shellState, &m_commandRegistry);
 
     // Handle menu triggers
@@ -1166,63 +1277,6 @@ void UIManager::RenderUI() {
         m_viewportRenderer.ClearBakedNormalMap();
         m_logEntries.push_back("[Viewport] Cleared baked normal map preview.");
     }
-    if (m_shellState.triggerUndo) {
-        m_shellState.triggerUndo = false;
-        PerformUndo();
-    }
-    if (m_shellState.triggerRedo) {
-        m_shellState.triggerRedo = false;
-        PerformRedo();
-    }
-    if (m_shellState.selectEdgeLoop) {
-        m_shellState.selectEdgeLoop = false;
-        if (m_hasLastSelectedEdge) {
-            UVCutter::SelectEdgeLoop(m_lowPolyMesh, m_lastSelectedEdge.first, m_lastSelectedEdge.second, true);
-            m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
-            PushHistoryState("Select Edge Loop");
-        }
-    }
-    if (m_shellState.selectEdgeRing) {
-        m_shellState.selectEdgeRing = false;
-        if (m_hasLastSelectedEdge) {
-            UVCutter::SelectEdgeRing(m_lowPolyMesh, m_lastSelectedEdge.first, m_lastSelectedEdge.second, true);
-            m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
-            PushHistoryState("Select Edge Ring");
-        }
-    }
-    if (m_shellState.triggerAutoSeams) {
-        m_shellState.triggerAutoSeams = false;
-        MarkSeamsByAngle();
-    }
-    if (m_shellState.triggerCutSeams) {
-        m_shellState.triggerCutSeams = false;
-        if (!m_lowPolyMesh.selectedEdges.empty()) {
-            UVCutter::CutSelectedEdges(m_lowPolyMesh);
-            m_viewportRenderer.UpdateSeams(m_lowPolyMesh);
-            m_viewportRenderer.showSeams = true;
-            PushHistoryState("Cut Seams");
-        }
-    }
-    if (m_shellState.triggerSewSeams) {
-        m_shellState.triggerSewSeams = false;
-        if (!m_lowPolyMesh.selectedEdges.empty()) {
-            UVCutter::SewSelectedEdges(m_lowPolyMesh);
-            m_viewportRenderer.UpdateSeams(m_lowPolyMesh);
-            PushHistoryState("Sew Seams");
-        }
-    }
-    if (m_shellState.triggerClearSeams) {
-        m_shellState.triggerClearSeams = false;
-        ClearSeams();
-    }
-    if (m_shellState.triggerUnwrap) {
-        m_shellState.triggerUnwrap = false;
-        UnwrapMesh();
-    }
-    if (m_shellState.triggerPack) {
-        m_shellState.triggerPack = false;
-        PackUVs();
-    }
     if (m_shellState.exportLowPoly) {
         m_shellState.exportLowPoly = false;
         ExportUnwrappedOBJ();
@@ -1241,10 +1295,8 @@ void UIManager::RenderUI() {
             m_viewportRenderer.showLowPoly = true;
             m_viewportRenderer.showLowPolyWireframe = true;
             m_viewportRenderer.showSeams = true;
-            ImGui::SetWindowFocus("UV Tool###uvpanel");
-            ImGui::SetWindowFocus("Properties###properties");
+            ImGui::SetWindowFocus("UV Tools###uvtools");
             ImGui::SetWindowFocus("UDIM Layout###udim");
-            if (m_propertiesTab == PropertiesTab::Object) m_propertiesTab = PropertiesTab::CutSew;
             m_logEntries.push_back("[Workspace] Switched to UV Cut & Pack View (Split 3D/2D).");
         } else {
             // Switched from UV Cut & Pack to Baking
@@ -1278,7 +1330,9 @@ void UIManager::RenderUI() {
         RenderSettingsPanel();
     } else {
         // UV Cut & Pack Workspace
-        RenderUVCutAndPackPanel();
+        if (m_shellState.showUVTools) {
+            RenderUVToolsPanel();
+        }
     }
 
     // 3. Bottom Panels
@@ -1303,30 +1357,37 @@ bool UIManager::SceneObjectExists(SceneObject obj) const {
     }
 }
 
-// Saved layouts from before the Properties editor have no slot for it: dock it as a tab beside the tool panels once.
+// Saved layouts from before a panel existed have no slot for it: dock it as a tab beside a related panel once.
 // Runs before the dockspace is submitted so the dock tree is never edited mid-frame.
-void UIManager::DockPropertiesWithToolPanels() {
-    if (m_propertiesDockChecked) return;
-    if (ImGui::FindWindowSettingsByID(ImHashStr("Properties###properties"))) {
-        m_propertiesDockChecked = true;
-        return;
-    }
-    if (ImGuiWindow* props = ImGui::FindWindowByName("Properties###properties")) {
-        if (props->DockId != 0) {
-            m_propertiesDockChecked = true;
-            return;
+void UIManager::DockNewPanelsIntoSavedLayout() {
+    struct NewPanel { const char* name; const char* targets[3]; bool* done; };
+    NewPanel panels[] = {
+        { "Properties###properties", { "Bake Parameters###params", "Mesh Ingestion###ingest", "Scene Outliner###outliner" }, &m_propertiesDockChecked },
+        { "UV Tools###uvtools",      { "Bake Parameters###params", "Mesh Ingestion###ingest", "Properties###properties" }, &m_uvToolsDockChecked },
+    };
+    for (NewPanel& panel : panels) {
+        if (*panel.done) continue;
+        if (ImGui::FindWindowSettingsByID(ImHashStr(panel.name))) {
+            *panel.done = true;
+            continue;
         }
-    }
-    ImGuiWindow* target = nullptr;
-    for (const char* name : { "UV Tool###uvpanel", "Bake Parameters###params", "Mesh Ingestion###ingest" }) {
-        ImGuiWindow* w = ImGui::FindWindowByName(name);
-        if (w && w->DockId != 0) { target = w; break; }
-    }
-    if (!target) return; // try again once a tool panel is docked
+        if (ImGuiWindow* w = ImGui::FindWindowByName(panel.name)) {
+            if (w->DockId != 0) {
+                *panel.done = true;
+                continue;
+            }
+        }
+        ImGuiWindow* target = nullptr;
+        for (const char* name : panel.targets) {
+            ImGuiWindow* w = ImGui::FindWindowByName(name);
+            if (w && w->DockId != 0) { target = w; break; }
+        }
+        if (!target) continue; // try again once a related panel is docked
 
-    ImGui::DockBuilderDockWindow("Properties###properties", target->DockId);
-    ImGui::DockBuilderFinish(ImGui::DockNodeGetRootNode(ImGui::DockBuilderGetNode(target->DockId))->ID);
-    m_propertiesDockChecked = true;
+        ImGui::DockBuilderDockWindow(panel.name, target->DockId);
+        ImGui::DockBuilderFinish(ImGui::DockNodeGetRootNode(ImGui::DockBuilderGetNode(target->DockId))->ID);
+        *panel.done = true;
+    }
 }
 
 // Scene Outliner: one row per object (visibility, name, type). Everything else lives in Properties.
@@ -1424,95 +1485,17 @@ void UIManager::RenderOutlinerPanel() {
     ImGui::End();
 }
 
-// Properties editor: a vertical icon tab strip (Object, then the UV pipeline stages in the UV workspace)
-// beside the active tab's subpanels. The UV workspace pins Auto UV, the panel's single primary action (R-3).
+// Properties: details and settings for the object selected in the Scene Outliner.
 void UIManager::RenderPropertiesPanel() {
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
-    bool open = ImGui::Begin("Properties###properties", &m_shellState.showProperties);
-    ImGui::PopStyleVar();
-    if (!open) {
+    if (!ImGui::Begin("Properties###properties", &m_shellState.showProperties)) {
         ImGui::End();
         return;
     }
-
-    struct TabDef { PropertiesTab tab; BakerUI::TabIcon icon; const char* label; };
-    static const TabDef kTabs[] = {
-        { PropertiesTab::Object,       BakerUI::TabIcon::Object,       "Object" },
-        { PropertiesTab::CutSew,       BakerUI::TabIcon::CutSew,       "Cut & Sew" },
-        { PropertiesTab::Unfold,       BakerUI::TabIcon::Unfold,       "Unfold" },
-        { PropertiesTab::Transform,    BakerUI::TabIcon::Transform,    "Transform" },
-        { PropertiesTab::Stack,        BakerUI::TabIcon::Stack,        "Stack & Overlap" },
-        { PropertiesTab::TexelDensity, BakerUI::TabIcon::TexelDensity, "Texel Density" },
-        { PropertiesTab::Pack,         BakerUI::TabIcon::Pack,         "Pack" },
-        { PropertiesTab::Export,       BakerUI::TabIcon::Export,       "Export" },
-    };
-
-    const bool isUV = (m_shellState.activeTab == BakerUI::ShellState::AppTab::UVCutAndPack);
-    const PropertiesTab activeTab = isUV ? m_propertiesTab : PropertiesTab::Object;
-    const float em = ImGui::GetFontSize();
-    const float pad = em * 0.3f;
-
-    // Tab strip
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, BakerUI::Col::Bg());
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(pad, pad));
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0.0f, pad));
-    ImGui::BeginChild("##props_tab_strip", ImVec2(em * 1.9f + pad * 2.0f, 0.0f), ImGuiChildFlags_AlwaysUseWindowPadding,
-                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
-    for (const TabDef& def : kTabs) {
-        if (def.tab != PropertiesTab::Object && !isUV) break;
-        if (BakerUI::IconTab(def.label, def.icon, activeTab == def.tab)) {
-            m_propertiesTab = def.tab;
-        }
-        if (def.tab == PropertiesTab::Object) ImGui::Dummy(ImVec2(0.0f, pad)); // separates the object tab from the tool tabs
-    }
-    ImGui::EndChild();
-    ImGui::PopStyleVar(2);
-    ImGui::PopStyleColor();
-
-    ImGui::SameLine(0.0f, 0.0f);
-
-    // Active tab content, with the pinned footer in the UV workspace
-    const float primaryH = ImGui::GetFrameHeight() * 1.5f;
-    const float footerH = isUV ? primaryH + em * 0.8f : 0.0f;
-    ImGui::BeginGroup();
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(em * 0.6f, em * 0.5f));
-    if (ImGui::BeginChild("##props_content", ImVec2(0.0f, -footerH), ImGuiChildFlags_AlwaysUseWindowPadding)) {
-        const char* title = "Object";
-        for (const TabDef& def : kTabs) {
-            if (def.tab == activeTab) title = def.label;
-        }
-        if (activeTab != PropertiesTab::Object) {
-            if (BakerUI::gFontBold) ImGui::PushFont(BakerUI::gFontBold);
-            ImGui::TextUnformatted(title);
-            if (BakerUI::gFontBold) ImGui::PopFont();
-            if (!m_hasLowPoly) {
-                ImGui::TextDisabled("Load a low-poly mesh to use the UV tools.");
-            }
-            ImGui::Spacing();
-        }
-
-        if (activeTab == PropertiesTab::Object) {
-            RenderObjectProperties();
-        } else {
-            RenderUVToolTab(activeTab);
-        }
-    }
-    ImGui::EndChild();
-
-    if (isUV) {
-        if (ImGui::BeginChild("##props_footer", ImVec2(0.0f, footerH), ImGuiChildFlags_AlwaysUseWindowPadding,
-                              ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
-            BakerUI::DrawCommand(m_commandRegistry, "uv.auto_cut_unwrap_pack", nullptr, ImVec2(-FLT_MIN, primaryH), BakerUI::CommandStyle::Primary);
-        }
-        ImGui::EndChild();
-    }
-    ImGui::PopStyleVar();
-    ImGui::EndGroup();
-
+    RenderObjectProperties();
     ImGui::End();
 }
 
-// Object tab: details and settings for the object selected in the Scene Outliner.
+// Object details and settings, shown in the Properties panel.
 void UIManager::RenderObjectProperties() {
     if (!SceneObjectExists(m_selectedObject)) {
         ImGui::TextDisabled("Select an object in the Scene Outliner.");
@@ -1660,11 +1643,17 @@ void UIManager::RenderObjectProperties() {
     }
 }
 
-// UV tool tabs: one pipeline stage per tab, split into collapsible subpanels.
+// UV Tools: the frequent operations sit in one row at the top, every other stage is a collapsible section
+// below, and Auto UV, the panel's single primary action (R-3), is pinned to the bottom.
 // Every button goes through BakerUI::DrawCommand; parameters stay as plain property rows.
-void UIManager::RenderUVToolTab(PropertiesTab tab) {
+void UIManager::RenderUVToolsPanel() {
     using BakerUI::CommandStyle;
     using BakerUI::DrawCommand;
+
+    if (!ImGui::Begin("UV Tools###uvtools", &m_shellState.showUVTools)) {
+        ImGui::End();
+        return;
+    }
 
     const ImGuiStyle& style = ImGui::GetStyle();
     const ImVec2 fullW(-FLT_MIN, 0.0f);
@@ -1674,23 +1663,39 @@ void UIManager::RenderUVToolTab(PropertiesTab tab) {
         ImGui::SameLine();
         DrawCommand(m_commandRegistry, right, nullptr, fullW);
     };
+    const float primaryH = ImGui::GetFrameHeight() * 1.5f;
+    const float footerH = primaryH + style.ItemSpacing.y * 2.0f + style.WindowPadding.y;
 
-    switch (tab) {
-    case PropertiesTab::CutSew:
-        if (BakerUI::BeginSectionCard("Seams", "##pp_seams", true)) {
-            drawPair("uv.cut", "uv.sew");
-            DrawCommand(m_commandRegistry, "uv.clear_seams", nullptr, fullW, CommandStyle::Destructive);
-            BakerUI::EndSectionCard();
-        }
-        if (BakerUI::BeginSectionCard("Auto Seams", "##pp_auto_seams", true)) {
-            if (BakerUI::BeginProps("##pp_auto_seams_props")) {
+    if (!m_hasLowPoly) {
+        ImGui::TextDisabled("Load a low-poly mesh to use the UV tools.");
+    }
+
+    // Frequent operations, always visible
+    {
+        const float quarterW = (ImGui::GetContentRegionAvail().x - style.ItemSpacing.x * 3.0f) * 0.25f;
+        const float rowH = ImGui::GetFrameHeight() * 1.25f;
+        DrawCommand(m_commandRegistry, "uv.cut", "Cut", ImVec2(quarterW, rowH));
+        ImGui::SameLine();
+        DrawCommand(m_commandRegistry, "uv.sew", "Sew", ImVec2(quarterW, rowH));
+        ImGui::SameLine();
+        DrawCommand(m_commandRegistry, "uv.unwrap", "Unwrap", ImVec2(quarterW, rowH));
+        ImGui::SameLine();
+        DrawCommand(m_commandRegistry, "uv.pack", "Pack", ImVec2(-FLT_MIN, rowH));
+        ImGui::Spacing();
+    }
+
+    if (ImGui::BeginChild("##uvtools_sections", ImVec2(0.0f, -footerH))) {
+        if (BakerUI::BeginSectionCard("Seams", "##uvt_seams", true)) {
+            if (BakerUI::BeginProps("##uvt_auto_seams_props")) {
                 BakerUI::PropFloat("Angle Crease", &m_seamAngleThreshold, 1.0f, 15.0f, 90.0f, "%.1f deg", "Edges sharper than this dihedral angle become seams");
                 BakerUI::EndProps();
             }
-            DrawCommand(m_commandRegistry, "uv.auto_seams", "Mark Seams", fullW);
+            DrawCommand(m_commandRegistry, "uv.auto_seams", "Mark Seams by Angle", fullW);
+            DrawCommand(m_commandRegistry, "uv.clear_seams", nullptr, fullW, CommandStyle::Destructive);
             BakerUI::EndSectionCard();
         }
-        if (BakerUI::BeginSectionCard("Curve Cut", "##pp_curve_cut", false)) {
+
+        if (BakerUI::BeginSectionCard("Curve Cut", "##uvt_curve_cut", false)) {
             std::vector<std::string> curveNames;
             std::vector<const char*> curveNamePtrs;
             for (const auto& curve : m_curveManager.curves) {
@@ -1702,7 +1707,7 @@ void UIManager::RenderUVToolTab(PropertiesTab tab) {
 
             static const char* kCurveMethods[] = { "Snap to Edges", "Cut Topology" };
             int methodIdx = m_curveCutTopology ? 1 : 0;
-            if (BakerUI::BeginProps("##pp_curve_props")) {
+            if (BakerUI::BeginProps("##uvt_curve_props")) {
                 if (!curveNamePtrs.empty()) {
                     int curCurve = m_curveManager.activeCurveIndex;
                     if (BakerUI::PropCombo("Curve", &curCurve, curveNamePtrs.data(), static_cast<int>(curveNamePtrs.size()))) {
@@ -1724,47 +1729,69 @@ void UIManager::RenderUVToolTab(PropertiesTab tab) {
             DrawCommand(m_commandRegistry, "uv.curve_draw_mode", nullptr, fullW);
             drawPair("uv.curve_apply", "uv.curve_apply_all");
             DrawCommand(m_commandRegistry, "uv.curve_clear_all", nullptr, fullW, CommandStyle::Destructive);
+
+            SurfaceCurve* c = m_curveManager.GetActiveCurve();
+            if (c && !c->points.empty() && ImGui::TreeNodeEx("Edit Points##uvt_edit_points", ImGuiTreeNodeFlags_SpanAvailWidth)) {
+                const float rowH = ImGui::GetTextLineHeightWithSpacing();
+                const float listH = rowH * static_cast<float>((std::min)(c->points.size(), static_cast<size_t>(6))) + style.WindowPadding.y * 2.0f;
+                if (ImGui::BeginChild("##uvt_curve_points", ImVec2(0.0f, listH), ImGuiChildFlags_Borders)) {
+                    for (size_t p = 0; p < c->points.size(); ++p) {
+                        char rowLabel[96];
+                        snprintf(rowLabel, sizeof(rowLabel), "P%zu    %.2f, %.2f, %.2f##pt%zu", p,
+                                 c->points[p].position.x, c->points[p].position.y, c->points[p].position.z, p);
+                        bool isStart = (m_curveManager.selectedPointIndex == static_cast<int>(p));
+                        bool isEnd = (m_curveManager.selectedPointEndIndex == static_cast<int>(p));
+                        if (ImGui::Selectable(rowLabel, isStart || isEnd)) {
+                            if (ImGui::GetIO().KeyShift) {
+                                m_curveManager.selectedPointEndIndex = static_cast<int>(p);
+                            } else {
+                                m_curveManager.selectedPointIndex = static_cast<int>(p);
+                                m_curveManager.selectedPointEndIndex = -1;
+                            }
+                        }
+                    }
+                }
+                ImGui::EndChild();
+                ImGui::TextDisabled("Click selects From. Shift+click selects To.");
+                DrawCommand(m_commandRegistry, "uv.curve_delete_point", nullptr, fullW, CommandStyle::Destructive);
+
+                int p0 = 0, p1 = 0;
+                if (GetActiveCurveSegment(p0, p1)) {
+                    int ptMax = static_cast<int>(c->points.size()) - 1;
+                    if (BakerUI::BeginProps("##uvt_curve_edit_props")) {
+                        if (BakerUI::PropInt("From Point", &p0, 0, ptMax, "Start control point of the segment to edit")) m_curveManager.selectedPointIndex = p0;
+                        if (BakerUI::PropInt("To Point", &p1, 0, ptMax, "End control point of the segment to edit")) m_curveManager.selectedPointEndIndex = p1;
+                        BakerUI::PropInt("Smooth Iterations", &m_curveManager.smoothIterations, 1, 50, "Laplacian relaxation passes");
+                        BakerUI::PropFloat("Smooth Strength", &m_curveManager.smoothFactor, 0.01f, 0.05f, 1.0f, "%.2f", "Smoothing blend weight (0.50 recommended)");
+                        BakerUI::EndProps();
+                    }
+                    drawPair("uv.curve_smooth_segment", "uv.curve_straighten_segment");
+                    drawPair("uv.curve_smooth_all", "uv.curve_straighten_all");
+                    DrawCommand(m_commandRegistry, "uv.curve_recalc_path", nullptr, fullW);
+                }
+                ImGui::TreePop();
+            }
             BakerUI::EndSectionCard();
         }
-        break;
 
-    case PropertiesTab::Unfold:
-        if (BakerUI::BeginSectionCard("Unwrap", "##pp_unwrap", true)) {
-            ImGui::PushTextWrapPos(0.0f);
-            ImGui::TextDisabled("Flattens each shell with a conformal solve that includes relaxation, then packs the shells with the Pack settings.");
-            ImGui::PopTextWrapPos();
-            ImGui::Spacing();
-            DrawCommand(m_commandRegistry, "uv.unwrap", nullptr, fullW);
-            BakerUI::EndSectionCard();
-        }
-        break;
-
-    case PropertiesTab::Transform:
-        if (BakerUI::BeginSectionCard("Flip & Rotate", "##pp_flip_rotate", true)) {
+        if (BakerUI::BeginSectionCard("Transform", "##uvt_transform", false)) {
             drawPair("uv.flip_u", "uv.flip_v");
             drawPair("uv.rot_ccw", "uv.rot_cw");
-            BakerUI::EndSectionCard();
-        }
-        if (BakerUI::BeginSectionCard("Align", "##pp_align", true)) {
             drawPair("uv.straighten", "uv.orient");
             BakerUI::EndSectionCard();
         }
-        break;
 
-    case PropertiesTab::Stack:
-        if (BakerUI::BeginSectionCard("Stacking", "##pp_stacking", true)) {
-            if (BakerUI::BeginProps("##pp_stack_props")) {
+        if (BakerUI::BeginSectionCard("Stack & Overlap", "##uvt_stack", false)) {
+            if (BakerUI::BeginProps("##uvt_stack_props")) {
                 BakerUI::PropCheck("Lock Overlaps", &m_lockOverlapping, "Treat stacked identical islands as a single unit during pack");
                 BakerUI::EndProps();
             }
             drawPair("uv.stack_identical", "uv.separate_overlaps");
             BakerUI::EndSectionCard();
         }
-        break;
 
-    case PropertiesTab::TexelDensity:
-        if (BakerUI::BeginSectionCard("Density", "##pp_density", true)) {
-            if (BakerUI::BeginProps("##pp_td_props")) {
+        if (BakerUI::BeginSectionCard("Texel Density", "##uvt_td", false)) {
+            if (BakerUI::BeginProps("##uvt_td_props")) {
                 BakerUI::PropFloat("Target (px/cm)", &m_targetTexelDensity, 0.5f, 0.1f, 100.0f, "%.2f px/cm", "Desired texel density per world centimetre");
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
@@ -1783,11 +1810,9 @@ void UIManager::RenderUVToolTab(PropertiesTab tab) {
             DrawCommand(m_commandRegistry, "uv.td_equalize", nullptr, fullW);
             BakerUI::EndSectionCard();
         }
-        break;
 
-    case PropertiesTab::Pack:
-        if (BakerUI::BeginSectionCard("Layout", "##pp_pack_layout", true)) {
-            if (BakerUI::BeginProps("##pp_pack_props")) {
+        if (BakerUI::BeginSectionCard("Pack Options", "##uvt_pack", false)) {
+            if (BakerUI::BeginProps("##uvt_pack_props")) {
                 BakerUI::PropCheck("Multi-UDIM", &m_packSettings.multiUDIM, "Pack across tiles 1001, 1002, 1003...");
                 if (m_packSettings.multiUDIM) {
                     BakerUI::PropInt("Max Tiles", &m_packSettings.maxUDIMCount, 1, 10, "Maximum number of UDIM tiles to fill");
@@ -1800,43 +1825,44 @@ void UIManager::RenderUVToolTab(PropertiesTab tab) {
                 }
                 BakerUI::EndProps();
             }
-            DrawCommand(m_commandRegistry, "uv.pack", nullptr, fullW);
-            BakerUI::EndSectionCard();
-        }
-        if (BakerUI::BeginSectionCard("Advanced", "##pp_pack_adv", false)) {
-            static const int kResValues[] = { 512, 1024, 2048, 4096, 8192, 16384 };
-            static const char* kResOptions[] = { "512", "1024", "2048", "4096", "8192", "16384" };
-            int resIdx = 2;
-            for (int i = 0; i < IM_ARRAYSIZE(kResValues); ++i) {
-                if (kResValues[i] == m_packSettings.resolution) resIdx = i;
-            }
-            if (BakerUI::BeginProps("##pp_pack_adv_props")) {
-                if (BakerUI::PropCombo("Resolution", &resIdx, kResOptions, IM_ARRAYSIZE(kResOptions))) {
-                    m_packSettings.resolution = kResValues[resIdx];
+            if (ImGui::TreeNodeEx("Advanced##uvt_pack_adv", ImGuiTreeNodeFlags_SpanAvailWidth)) {
+                static const int kResValues[] = { 512, 1024, 2048, 4096, 8192, 16384 };
+                static const char* kResOptions[] = { "512", "1024", "2048", "4096", "8192", "16384" };
+                int resIdx = 2;
+                for (int i = 0; i < IM_ARRAYSIZE(kResValues); ++i) {
+                    if (kResValues[i] == m_packSettings.resolution) resIdx = i;
                 }
-                BakerUI::PropInt("Tile Margin (px)", &m_packSettings.marginPixels, 0, 64, "Margin from the outer UDIM border in pixels");
-                BakerUI::PropCheck("Normalize Texel Density", &m_packSettings.normalizeTexelDensity, "Scale islands by 3D surface area before packing");
-                BakerUI::PropCheck("Group by Polygroup", &m_packSettings.packByPolygroup, "Keep islands of the same polygroup on dedicated tiles");
-                BakerUI::EndProps();
+                if (BakerUI::BeginProps("##uvt_pack_adv_props")) {
+                    if (BakerUI::PropCombo("Resolution", &resIdx, kResOptions, IM_ARRAYSIZE(kResOptions))) {
+                        m_packSettings.resolution = kResValues[resIdx];
+                    }
+                    BakerUI::PropInt("Tile Margin (px)", &m_packSettings.marginPixels, 0, 64, "Margin from the outer UDIM border in pixels");
+                    BakerUI::PropCheck("Normalize Texel Density", &m_packSettings.normalizeTexelDensity, "Scale islands by 3D surface area before packing");
+                    BakerUI::PropCheck("Group by Polygroup", &m_packSettings.packByPolygroup, "Keep islands of the same polygroup on dedicated tiles");
+                    BakerUI::EndProps();
+                }
+                ImGui::TreePop();
+            }
+            if (m_packStats.packedIslands > 0) {
+                ImGui::SeparatorText("Last Pack");
+                ImGui::TextDisabled("%d islands on %d tile(s), %.1f%% efficient",
+                                    m_packStats.packedIslands, m_packStats.udimTilesUsed, m_packStats.packingEfficiency * 100.0f);
+                ImGui::ProgressBar(m_packStats.packingEfficiency, ImVec2(-FLT_MIN, 0.0f), "");
             }
             BakerUI::EndSectionCard();
         }
-        break;
 
-    case PropertiesTab::Export:
-        if (BakerUI::BeginSectionCard("Mesh", "##pp_export_mesh", true)) {
-            ImGui::PushTextWrapPos(0.0f);
-            ImGui::TextDisabled("Writes the low-poly with its new UVs as an OBJ.");
-            ImGui::PopTextWrapPos();
-            ImGui::Spacing();
+        if (BakerUI::BeginSectionCard("Export", "##uvt_export", false)) {
             DrawCommand(m_commandRegistry, "file.export_low_poly", "Export Mesh (OBJ)...", fullW);
             BakerUI::EndSectionCard();
         }
-        break;
-
-    default:
-        break;
     }
+    ImGui::EndChild();
+
+    ImGui::Separator();
+    DrawCommand(m_commandRegistry, "uv.auto_cut_unwrap_pack", nullptr, ImVec2(-FLT_MIN, primaryH), CommandStyle::Primary);
+
+    ImGui::End();
 }
 
 void UIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& size) {
@@ -1871,7 +1897,7 @@ void UIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& size) {
     if (baseTileSize < 120.0f) baseTileSize = 300.0f;
     float currentTileSize = baseTileSize * m_uvZoom;
 
-    float headerH = 58.0f;
+    float headerH = 30.0f;
     bool inCanvas = isHovered && (io.MousePos.y > origin.y + headerH);
 
     // Helper functions for true UV <-> Screen mapping
@@ -2660,9 +2686,8 @@ void UIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& size) {
         }
     }
 
-    // Draw Maya UV Editor Header Toolbar (2-Tier Pinned Header across top of 2D UV Viewport)
+    // Draw UV Editor Header Toolbar (single pinned row across top of 2D UV Viewport)
     drawList->AddRectFilled(origin, ImVec2(origin.x + size.x, origin.y + headerH), IM_COL32(20, 21, 25, 255));
-    drawList->AddLine(ImVec2(origin.x, origin.y + 28.0f), ImVec2(origin.x + size.x, origin.y + 28.0f), IM_COL32(34, 36, 42, 255), 1.0f);
     drawList->AddLine(ImVec2(origin.x, origin.y + headerH), ImVec2(origin.x + size.x, origin.y + headerH), IM_COL32(40, 43, 50, 255), 1.0f);
 
     bool compact = (size.x < 620.0f);
@@ -2782,72 +2807,6 @@ void UIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& size) {
                 m_viewportMode = ViewportMode::SplitBoth;
             }
         }
-    }
-
-    // ==========================================
-    // TIER 2: Quick Transforms, Cut/Sew, Unwrap/Pack & Navigation
-    // ==========================================
-    ImGui::SetCursorScreenPos(ImVec2(origin.x + 6.0f, origin.y + 31.0f));
-
-    auto ActionBtn = [&](const char* labelFull, const char* labelCompact, const char* tip) -> bool {
-        ImGui::PushStyleColor(ImGuiCol_Button, BakerUI::Hex(0x282A2E));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, BakerUI::Hex(0x383C44));
-        ImGui::PushStyleColor(ImGuiCol_Text, BakerUI::Hex(0xD4D8E0));
-        bool clicked = ImGui::Button(compact ? labelCompact : labelFull);
-        ImGui::PopStyleColor(3);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
-        ImGui::SameLine();
-        return clicked;
-    };
-
-    if (ActionBtn("Flip U", "Flip U", "Flip selected UV components horizontally along U-axis")) {
-        FlipSelectedUVs(true);
-    }
-    if (ActionBtn("Flip V", "Flip V", "Flip selected UV components vertically along V-axis")) {
-        FlipSelectedUVs(false);
-    }
-    if (ActionBtn("Rot -90", "-90", "Rotate selected UVs 90 degrees CCW")) {
-        RotateSelectedUVs(-90.0f);
-    }
-    if (ActionBtn("Rot +90", "+90", "Rotate selected UVs 90 degrees CW")) {
-        RotateSelectedUVs(90.0f);
-    }
-    if (ActionBtn("Straighten", "Align", "Straighten and align UV islands to grid axes")) {
-        StraightenIslands();
-    }
-
-    ImGui::TextDisabled("|");
-    ImGui::SameLine();
-
-    if (ActionBtn("Cut", "Cut", "Cut UV seams along selected components (Shift+X)")) {
-        CutCurrentUVSelection();
-    }
-    if (ActionBtn("Sew", "Sew", "Sew/stitch selected seam edges together (Shift+V)")) {
-        SewCurrentUVSelection();
-    }
-
-    ImGui::TextDisabled("|");
-    ImGui::SameLine();
-
-    if (ActionBtn("Unwrap", "Unwrap", "Unwrap all islands partitioned by cut seams and pack neatly (Ctrl+U)")) {
-        AutoCutUnwrapAndPack();
-    }
-    if (ActionBtn("Pack", "Pack", "Pack existing UV islands across UDIM tiles (Ctrl+P)")) {
-        PackUVs();
-    }
-
-    ImGui::TextDisabled("|");
-    ImGui::SameLine();
-
-    if (ActionBtn("Frame (F)", "Frame", "Fit & Frame all UV coordinates in 2D canvas (Shortcut: F)")) {
-        FrameAllUVs();
-    }
-    if (ActionBtn("Reset View", "Reset", "Reset UV Canvas zoom to 1.0x and pan to center")) {
-        m_uvZoom = 1.0f;
-        m_uvPan = ImVec2(0.0f, 0.0f);
-    }
-    if (ActionBtn("Clear Sel", "Clear", "Clear active component selection")) {
-        ClearUVSelection();
     }
 
     ImGui::PopStyleVar(3);
@@ -3709,30 +3668,6 @@ void UIManager::RenderViewportPanel() {
             BakerUI::ToggleChip("Seams", &m_viewportRenderer.showSeams); ImGui::SameLine();
             BakerUI::ToggleChip("Grid", &m_viewportRenderer.showGrid); ImGui::SameLine();
 
-            ImGui::Dummy(ImVec2(6.0f, 0.0f)); ImGui::SameLine();
-            bool canUndo = m_history.CanUndo();
-            if (!canUndo) ImGui::BeginDisabled();
-            if (ImGui::SmallButton("Undo")) {
-                PerformUndo();
-            }
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-                std::string tip = canUndo ? ("Undo: " + m_history.GetUndoDescription() + " (Ctrl+Z)") : "Nothing to undo (Ctrl+Z)";
-                ImGui::SetTooltip("%s", tip.c_str());
-            }
-            if (!canUndo) ImGui::EndDisabled();
-
-            ImGui::SameLine();
-            bool canRedo = m_history.CanRedo();
-            if (!canRedo) ImGui::BeginDisabled();
-            if (ImGui::SmallButton("Redo")) {
-                PerformRedo();
-            }
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-                std::string tip = canRedo ? ("Redo: " + m_history.GetRedoDescription() + " (Ctrl+Shift+Z)") : "Nothing to redo (Ctrl+Shift+Z)";
-                ImGui::SetTooltip("%s", tip.c_str());
-            }
-            if (!canRedo) ImGui::EndDisabled();
-
             ImGui::Dummy(ImVec2(8, 0)); ImGui::SameLine();
 
             bool isNav = (m_toolMode == ToolMode::Navigate);
@@ -3906,7 +3841,7 @@ void UIManager::RenderViewportPanel() {
     // Floating mode toggles (strictly anchored within 3D viewport region)
     if (m_viewportMode == ViewportMode::View3D || m_viewportMode == ViewportMode::SplitBoth) {
         float viewport3DW = (m_viewportMode == ViewportMode::SplitBoth) ? leftW : avail.x;
-        float rightBtnGroupW = 340.0f;
+        float rightBtnGroupW = 215.0f; // 3D View + 2D UV + Split 3D | 2D chips
         if (viewport3DW > 100.0f) {
             float anchorX = (viewport3DW >= rightBtnGroupW + 24.0f)
                 ? (origin.x + viewport3DW - rightBtnGroupW - 12.0f)
@@ -3928,11 +3863,6 @@ void UIManager::RenderViewportPanel() {
             ImGui::SameLine();
             if (BakerUI::ToggleChip("Split 3D | 2D", &isSplit) && isSplit) {
                 m_viewportMode = ViewportMode::SplitBoth;
-            }
-            ImGui::SameLine();
-
-            if (BakerUI::PrimaryButton("Focus (F)", 78, 26)) {
-                m_viewportRenderer.FrameAll();
             }
 
             ImGui::EndGroup();
@@ -4052,7 +3982,7 @@ void UIManager::RenderMarkingMenu() {
     if (!m_markingMenu.active) return;
 
     ImGuiIO& io = ImGui::GetIO();
-    ImDrawList* drawList = ImGui::GetForegroundDrawList();
+    ImDrawList* drawList = ImGui::GetForegroundDrawList(ImGui::GetWindowViewport());
 
     ImVec2 c = m_markingMenu.centerPos;
     float dx = io.MousePos.x - c.x;
@@ -5460,370 +5390,6 @@ void UIManager::RotateSelectedUVs(float angleDeg) {
     m_uvStatusMessage = buf;
 }
 
-void UIManager::RenderUVCutAndPackPanel() {
-    if (!ImGui::Begin("UV Tool###uvpanel", &m_shellState.showUVPanel)) {
-        ImGui::End();
-        return;
-    }
-
-    // 1. Maya UV Workflow Gestures & Status Card (Blender Collapsible Section Card, packed by default)
-    if (BakerUI::BeginSectionCard("MAYA UV CUTTING (GESTURE-DRIVEN)", "##maya_card_zb", false)) {
-        ImGui::TextColored(ImVec4(0.0f, 0.95f, 1.0f, 1.0f), "Viewport & 2D Canvas Gestures:");
-        ImGui::BulletText("Double-Click Edge: Select Edge Loop (Collinear)");
-        ImGui::BulletText("Shift + Click Edge: Select Shortest Path between edges");
-        ImGui::BulletText("Shift + Right-Click: Radial Marking Menu");
-        ImGui::Indent();
-        ImGui::TextDisabled("Wedges: Cut (Up), Sew (Down), Loop (Right), Unwrap (Left)");
-        ImGui::TextDisabled("Ring (NE), Camera Proj (NW), Auto UV (SE), Clear (SW)");
-        ImGui::Unindent();
-        ImGui::BulletText("Click Empty Space: Clear edge selection");
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-        ImGui::Text("Selected Edges: %zu  |  Marked Seams: %zu", m_lowPolyMesh.selectedEdges.size(), m_lowPolyMesh.cutSeams.size());
-        if (!m_uvStatusMessage.empty()) {
-            ImGui::Spacing();
-            BakerUI::StatusPill(m_uvStatusMessage.c_str(), BakerUI::Col::Accent());
-        }
-        BakerUI::EndSectionCard();
-    }
-
-    // 2b. 3D Surface Curves (Interactive Surface Cutting)
-    if (BakerUI::BeginSectionCard("3D SURFACE CURVES", "##curves_card_zb", false)) {
-        ImGui::TextWrapped("Click anywhere on the low-poly mesh in 3D to draw cutting curves. Move control points dynamically or bake curves into seams.");
-        ImGui::Spacing();
-
-        // Curve selection combo
-        std::vector<std::string> curveNames;
-        std::vector<const char*> curveNamePtrs;
-        for (size_t i = 0; i < m_curveManager.curves.size(); ++i) {
-            char nameBuf[128];
-            snprintf(nameBuf, sizeof(nameBuf), "%s (%zu pts)%s",
-                m_curveManager.curves[i].name.c_str(),
-                m_curveManager.curves[i].points.size(),
-                m_curveManager.curves[i].isBaked ? " [Baked]" : "");
-            curveNames.push_back(nameBuf);
-        }
-        for (const auto& s : curveNames) curveNamePtrs.push_back(s.c_str());
-
-        int curCurve = m_curveManager.activeCurveIndex;
-        if (ImGui::Combo("Select Curve", &curCurve, curveNamePtrs.data(), static_cast<int>(curveNamePtrs.size()))) {
-            m_curveManager.activeCurveIndex = curCurve;
-        }
-
-        // Add / Delete / Clear Buttons
-        if (ImGui::Button("+ New Curve")) {
-            m_curveManager.AddCurve();
-            m_toolMode = ToolMode::DrawCurve;
-            m_viewportRenderer.showSeams = true;
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("- Delete")) {
-            m_curveManager.RemoveCurve(m_curveManager.activeCurveIndex);
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Clear All Curves")) {
-            ClearAllCurves();
-        }
-
-        ImGui::Spacing();
-        bool isCurveMode = (m_toolMode == ToolMode::DrawCurve);
-        if (BakerUI::ToggleChip(isCurveMode ? "Drawing Curve in 3D (Click Mesh)" : "Enable 3D Curve Draw Mode", &isCurveMode)) {
-            m_toolMode = isCurveMode ? ToolMode::DrawCurve : ToolMode::Navigate;
-            if (m_toolMode == ToolMode::DrawCurve) {
-                m_viewportRenderer.showSeams = true;
-            }
-        }
-
-        SurfaceCurve* c = m_curveManager.GetActiveCurve();
-        if (c) {
-            ImGui::Checkbox("Close Curve (Loop)", &c->isClosed);
-            ImGui::SameLine();
-            ImGui::TextDisabled("| %zu points", c->points.size());
-
-            // Points table
-            if (!c->points.empty() && ImGui::TreeNodeEx("Control Points List", ImGuiTreeNodeFlags_DefaultOpen)) {
-                if (ImGui::BeginTable("##c_pts_zb", 4, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
-                    ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, 25.0f);
-                    ImGui::TableSetupColumn("Pos (X, Y, Z)", ImGuiTableColumnFlags_WidthStretch);
-                    ImGui::TableSetupColumn("Select", ImGuiTableColumnFlags_WidthFixed, 45.0f);
-                    ImGui::TableSetupColumn("Del", ImGuiTableColumnFlags_WidthFixed, 35.0f);
-                    ImGui::TableHeadersRow();
-
-                    for (size_t p = 0; p < c->points.size(); ++p) {
-                        ImGui::TableNextRow();
-                        ImGui::TableSetColumnIndex(0);
-                        ImGui::Text("%zu", p);
-
-                        ImGui::TableSetColumnIndex(1);
-                        ImGui::Text("%.2f, %.2f, %.2f", c->points[p].position.x, c->points[p].position.y, c->points[p].position.z);
-
-                        ImGui::TableSetColumnIndex(2);
-                        char selId[32]; snprintf(selId, sizeof(selId), "Sel##p%zu", p);
-                        bool isSel = (m_curveManager.selectedPointIndex == static_cast<int>(p));
-                        if (ImGui::SmallButton(selId)) {
-                            m_curveManager.selectedPointIndex = static_cast<int>(p);
-                        }
-
-                        ImGui::TableSetColumnIndex(3);
-                        char delId[32]; snprintf(delId, sizeof(delId), "X##p%zu", p);
-                        if (ImGui::SmallButton(delId)) {
-                            m_curveManager.RemoveActivePoint(static_cast<int>(p));
-                            break;
-                        }
-                    }
-                    ImGui::EndTable();
-                }
-                ImGui::TreePop();
-            }
-        }
-
-        // Edit Curve Controls (Smooth & Straighten between points)
-        if (c && c->points.size() >= 2) {
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Spacing();
-            BakerUI::SectionLabel("EDIT ACTIVE CURVE (SMOOTH & STRAIGHTEN)");
-
-            int ptCountInt = static_cast<int>(c->points.size());
-            int p0 = (m_curveManager.selectedPointIndex >= 0) ? m_curveManager.selectedPointIndex : 0;
-            if (p0 >= ptCountInt) p0 = ptCountInt - 1;
-            int defaultP1 = (p0 + 1 < ptCountInt) ? (p0 + 1) : (c->isClosed ? 0 : p0);
-            int p1 = (m_curveManager.selectedPointEndIndex >= 0) ? m_curveManager.selectedPointEndIndex : defaultP1;
-            if (p1 >= ptCountInt) p1 = ptCountInt - 1;
-
-            if (BakerUI::BeginProps("##curve_edit_props_zb")) {
-                BakerUI::PropInt("From Point (P#)", &p0, 0, ptCountInt - 1, "Start control point of segment to edit");
-                BakerUI::PropInt("To Point (P#)", &p1, 0, ptCountInt - 1, "End control point of segment to edit");
-                BakerUI::PropInt("Smooth Iterations", &m_curveManager.smoothIterations, 1, 50, "Laplacian relaxation passes");
-                BakerUI::PropFloat("Smooth Factor", &m_curveManager.smoothFactor, 0.01f, 0.05f, 1.0f, "%.2f", "Smoothing blend weight (0.50 recommended)");
-                BakerUI::EndProps();
-            }
-            m_curveManager.selectedPointIndex = p0;
-            m_curveManager.selectedPointEndIndex = p1;
-
-            ImGui::Spacing();
-            char straightBtn[64];
-            snprintf(straightBtn, sizeof(straightBtn), "STRAIGHTEN SEGMENT (P%d -> P%d)", p0, p1);
-            if (BakerUI::SecondaryButton(straightBtn)) {
-                PushHistoryState("Straighten Curve Segment");
-                c->StraightenSegment(p0, p1, m_lowPolyMesh);
-                char msg[128];
-                snprintf(msg, sizeof(msg), "Straightened segment between P%d and P%d.", p0, p1);
-                m_uvStatusMessage = msg;
-                m_logEntries.push_back(std::string("[Curve Edit] ") + msg);
-            }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Replaces sampled path between P%d and P%d with a direct straight chord", p0, p1);
-
-            ImGui::Spacing();
-            char smoothBtn[64];
-            snprintf(smoothBtn, sizeof(smoothBtn), "SMOOTH SEGMENT (P%d -> P%d)", p0, p1);
-            if (BakerUI::PrimaryButton(smoothBtn)) {
-                PushHistoryState("Smooth Curve Segment");
-                c->SmoothSegment(p0, p1, m_curveManager.smoothIterations, m_curveManager.smoothFactor, m_lowPolyMesh);
-                char msg[128];
-                snprintf(msg, sizeof(msg), "Smoothed segment between P%d and P%d (%d iterations).", p0, p1, m_curveManager.smoothIterations);
-                m_uvStatusMessage = msg;
-                m_logEntries.push_back(std::string("[Curve Edit] ") + msg);
-            }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Smooths out kinks, bends, and background loops between P%d and P%d using Laplacian relaxation", p0, p1);
-
-            ImGui::Spacing();
-            if (ImGui::Button("Smooth Entire Curve")) {
-                PushHistoryState("Smooth Entire Curve");
-                c->SmoothEntireCurve(m_curveManager.smoothIterations, m_curveManager.smoothFactor, m_lowPolyMesh);
-                m_uvStatusMessage = "Smoothed entire curve.";
-                m_logEntries.push_back("[Curve Edit] Smoothed entire curve.");
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("Straighten All")) {
-                PushHistoryState("Straighten Entire Curve");
-                c->StraightenEntireCurve(m_lowPolyMesh);
-                m_uvStatusMessage = "Straightened all segments on curve.";
-                m_logEntries.push_back("[Curve Edit] Straightened all segments on curve.");
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("Recalculate Camera Path")) {
-                c->ResetSegmentCustomization(0, c->points.size());
-                DirectX::XMMATRIX worldMat = m_viewportRenderer.GetLowPolyWorldMatrix();
-                DirectX::XMMATRIX viewProjMat = m_viewportRenderer.GetViewProjectionMatrix();
-                int vpW = m_viewportRenderer.GetWidth();
-                int vpH = m_viewportRenderer.GetHeight();
-                c->UpdateSampledPath(m_lowPolyMesh, &worldMat, &viewProjMat, vpW, vpH);
-                m_uvStatusMessage = "Recalculated sampled curve path from camera.";
-            }
-        }
-
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-
-        // Convert / Bake Actions
-        if (BakerUI::PrimaryButton("SNAP CURVE TO EDGES & CUT SEAMS")) {
-            SnapActiveCurveToSeams();
-        }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Traces the curve along low-poly mesh edges using Dijkstra shortest surface paths");
-
-        ImGui::Spacing();
-        if (BakerUI::SecondaryButton("CUT CURVE INTO MESH TOPOLOGY")) {
-            CutActiveCurveIntoTopology();
-        }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Bisects and splits triangle faces directly along the curve trajectory, inserting vertices & seams exactly along the line");
-
-        ImGui::Spacing();
-        if (ImGui::Button("Bake All Curves (Snap Edges)")) {
-            BakeAllCurvesToSeams(false);
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Bake All (Cut Topology)")) {
-            BakeAllCurvesToSeams(true);
-        }
-        BakerUI::EndSectionCard();
-    }
-
-    // 3. Unwrap Section (Blender Collapsible Section Card, packed by default)
-    if (BakerUI::BeginSectionCard("CONFORMAL UNWRAP & AUTO-SEAMS", "##unwrap_card_zb", false)) {
-        if (BakerUI::BeginProps("##unwrap_props_zb")) {
-            BakerUI::PropFloat("Seam Angle Crease", &m_seamAngleThreshold, 1.0f, 15.0f, 90.0f, "%.1f deg", "Auto mark seams on sharp angle edges");
-            BakerUI::PropInt("Spring Iterations", &m_relaxIterations, 5, 200, "Relaxation passes to minimize texture distortion");
-            BakerUI::EndProps();
-        }
-        ImGui::Spacing();
-        if (BakerUI::SecondaryButton("Unwrap Islands (Conformal + Relax)")) {
-            UnwrapMesh();
-        }
-        ImGui::SameLine();
-        if (BakerUI::SecondaryButton("Auto Seams & Unwrap")) {
-            UVCutter::MarkSeamsByAngle(m_lowPolyMesh, m_seamAngleThreshold);
-            m_viewportRenderer.UpdateSeams(m_lowPolyMesh);
-            m_viewportRenderer.showSeams = true;
-            UnwrapMesh();
-        }
-        ImGui::Spacing();
-        if (BakerUI::PrimaryButton("1-Click Auto Cut, Unwrap & Pack")) {
-            AutoCutUnwrapAndPack();
-        }
-        ImGui::SameLine();
-        ImGui::TextDisabled("Islands: %zu", m_currentIslands.size());
-        BakerUI::EndSectionCard();
-    }
-
-    // 4. Texel Density Toolkit (ZenUV & UVPackmaster Parity)
-    if (BakerUI::BeginSectionCard("TEXEL DENSITY (ZENUV & UVPM)", "##td_card_zb", false)) {
-        if (BakerUI::BeginProps("##td_props_zb")) {
-            BakerUI::PropFloat("Target TD (px/cm)", &m_targetTexelDensity, 0.5f, 0.1f, 100.0f, "%.2f px/cm", "Desired texel density per world centimetre");
-            if (m_calculatedTexelDensity > 0.0f) {
-                ImGui::TableNextRow();
-                ImGui::TableSetColumnIndex(0);
-                ImGui::TextUnformatted("Current TD");
-                ImGui::TableSetColumnIndex(1);
-                ImGui::TextColored(ImVec4(0.3f, 0.85f, 0.7f, 1.0f), "%.2f px/cm", m_calculatedTexelDensity);
-            }
-            BakerUI::EndProps();
-        }
-        ImGui::Spacing();
-        if (BakerUI::SecondaryButton("Calculate Current TD")) {
-            CalculateTexelDensity();
-        }
-        ImGui::SameLine();
-        if (BakerUI::SecondaryButton("Apply Target TD")) {
-            SetTargetTexelDensity(m_targetTexelDensity);
-        }
-        ImGui::Spacing();
-        if (BakerUI::SecondaryButton("Equalize Island Density")) {
-            EqualizeTexelDensity();
-        }
-        BakerUI::EndSectionCard();
-    }
-
-    // 5. Island Stacking & Alignment (ZenUV Stacks & Reshape)
-    if (BakerUI::BeginSectionCard("STACKING & ALIGNMENT (ZENUV STACKS)", "##stack_card_zb", false)) {
-        if (BakerUI::BeginProps("##stack_props_zb")) {
-            BakerUI::PropCheck("Lock Overlapping", &m_lockOverlapping, "Treat stacked identical islands as a single unit during pack");
-            BakerUI::EndProps();
-        }
-        ImGui::Spacing();
-        if (BakerUI::SecondaryButton("Stack Similar Islands")) {
-            StackIdenticalIslands();
-        }
-        ImGui::SameLine();
-        if (BakerUI::SecondaryButton("Separate Overlaps (+1 Tile)")) {
-            SeparateOverlappingIslands();
-        }
-        ImGui::Spacing();
-        if (BakerUI::SecondaryButton("Straighten Islands (Axes)")) {
-            StraightenIslands();
-        }
-        ImGui::SameLine();
-        if (BakerUI::SecondaryButton("Orient to World Up (+Y)")) {
-            OrientIslandsToWorld();
-        }
-        BakerUI::EndSectionCard();
-    }
-
-    // 6. Advanced Packing Section (UVPackmaster 4 Inspired)
-    if (BakerUI::BeginSectionCard("ADVANCED PACKING (UVPACKMASTER 4)", "##pack_card_zb", false)) {
-        static const char* kResOptions[] = { "512", "1024", "2048", "4096", "8192", "16384" };
-        static int resIdx = 2; // 2048
-        if (BakerUI::BeginProps("##pack_props_zb")) {
-            if (BakerUI::PropCombo("Target Resolution", &resIdx, kResOptions, IM_ARRAYSIZE(kResOptions))) {
-                if (resIdx == 0) m_packSettings.resolution = 512;
-                else if (resIdx == 1) m_packSettings.resolution = 1024;
-                else if (resIdx == 2) m_packSettings.resolution = 2048;
-                else if (resIdx == 3) m_packSettings.resolution = 4096;
-                else if (resIdx == 4) m_packSettings.resolution = 8192;
-                else if (resIdx == 5) m_packSettings.resolution = 16384;
-            }
-
-            BakerUI::PropInt("Island Padding (px)", &m_packSettings.paddingPixels, 0, 64, "Spacing between UV islands in pixels");
-            BakerUI::PropInt("Tile Margin (px)", &m_packSettings.marginPixels, 0, 64, "Margin from the outer UDIM border in pixels");
-
-            static const char* kRotOptions[] = { "None (0 deg)", "90 deg Steps (4x)", "45 deg Steps (8x)", "Free Rotation (32x)" };
-            int rotIdx = (int)m_packSettings.rotation;
-            if (BakerUI::PropCombo("Rotation Search", &rotIdx, kRotOptions, IM_ARRAYSIZE(kRotOptions))) {
-                m_packSettings.rotation = (PackSettings::RotationMode)rotIdx;
-            }
-
-            BakerUI::PropCheck("Normalize Texel Density", &m_packSettings.normalizeTexelDensity, "Equalizes UV area relative to 3D world surface area");
-            BakerUI::PropCheck("Multi-UDIM Packing", &m_packSettings.multiUDIM, "Automatically pack across tiles 1001, 1002, 1003...");
-            if (m_packSettings.multiUDIM) {
-                BakerUI::PropInt("Max UDIM Tiles", &m_packSettings.maxUDIMCount, 1, 10, "Maximum number of UDIM tiles allowed");
-            }
-            BakerUI::PropCheck("Pack by Polygroup", &m_packSettings.packByPolygroup, "Keep islands of the same polygroup grouped on dedicated tiles");
-
-            BakerUI::EndProps();
-        }
-
-        ImGui::Spacing();
-        if (BakerUI::PrimaryButton("PACK UVs (MaxRects BSSF)")) {
-            PackUVs();
-        }
-        BakerUI::EndSectionCard();
-    }
-
-    // 5. Packing Statistics Card
-    if (m_packStats.packedIslands > 0) {
-        if (BakerUI::BeginSectionCard("PACKING METRICS", "##stats_card_zb", false)) {
-            ImGui::Text("Packed Islands: %d", m_packStats.packedIslands);
-            ImGui::Text("UDIM Tiles Used: %d", m_packStats.udimTilesUsed);
-            ImGui::Text("Packing Efficiency: %.1f%%", m_packStats.packingEfficiency * 100.0f);
-            float udimProg = m_packStats.packingEfficiency;
-            ImGui::ProgressBar(udimProg, ImVec2(-FLT_MIN, 0.0f));
-            BakerUI::EndSectionCard();
-        }
-    }
-
-    // 6. Export Card
-    if (BakerUI::BeginSectionCard("EXPORT MESH", "##exp_card_zb", false)) {
-        if (BakerUI::SecondaryButton("Export Low-Poly OBJ (with New UVs)...")) {
-            ExportUnwrappedOBJ();
-        }
-        BakerUI::EndSectionCard();
-    }
-
-    ImGui::End();
-}
-
 void UIManager::RenderHelpWindows() {
     if (m_showShortcutsWindow) {
         const float em = ImGui::GetFontSize();
@@ -5842,6 +5408,34 @@ void UIManager::RenderHelpWindows() {
                     ImGui::TextUnformatted(cmd->label.c_str());
                     ImGui::TableSetColumnIndex(1);
                     ImGui::TextDisabled("%s", cmd->hotkey.c_str());
+                }
+                ImGui::EndTable();
+            }
+        }
+        ImGui::End();
+    }
+
+    if (m_showGesturesWindow) {
+        if (ImGui::Begin("Viewport Gestures###help_gestures", &m_showGesturesWindow, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::SeparatorText("3D Viewport and 2D Canvas");
+            ImGui::BulletText("Double-click edge: select edge loop");
+            ImGui::BulletText("Shift+click edge: select shortest path between edges");
+            ImGui::BulletText("Double-click or L over a shell: select the whole shell");
+            ImGui::BulletText("Click empty space: clear the selection");
+            ImGui::BulletText("Alt+LMB drag: orbit (3D) or pan (2D)");
+            ImGui::SeparatorText("Marking Menu (Shift+Right-Click, then flick)");
+            if (ImGui::BeginTable("##gesture_wedges", 3, ImGuiTableFlags_SizingFixedSame)) {
+                const char* wedges[3][3] = {
+                    { "Camera Proj (NW)", "Cut (Up)",   "Ring (NE)" },
+                    { "Unwrap (Left)",    "",           "Loop (Right)" },
+                    { "Clear (SW)",       "Sew (Down)", "Auto UV (SE)" },
+                };
+                for (auto& row : wedges) {
+                    ImGui::TableNextRow();
+                    for (int col = 0; col < 3; ++col) {
+                        ImGui::TableSetColumnIndex(col);
+                        ImGui::TextUnformatted(row[col]);
+                    }
                 }
                 ImGui::EndTable();
             }

@@ -192,6 +192,12 @@ inline void ApplyTheme(float dpi = 1.f) {
     c[ImGuiCol_NavHighlight]         = Col::Accent();
     c[ImGuiCol_NavWindowingHighlight]= Col::Accent();
     c[ImGuiCol_NavWindowingDimBg]    = Hex(0x000000, 0.50f);
+
+    // Torn-off panels become separate OS windows: square corners and an opaque background read correctly there
+    if (ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
+        s.WindowRounding = 0.0f;
+        c[ImGuiCol_WindowBg].w = 1.0f;
+    }
 }
 
 // ---------------------------------------------------------------- widgets
@@ -591,99 +597,6 @@ inline bool FloatingBakeBar(
     return clicked;
 }
 
-// ---------------------------------------------------------------- icon tabs
-// Vector icons for the Properties editor tab strip, drawn at any DPI from the font size.
-enum class TabIcon { Object, CutSew, Unfold, Transform, Stack, TexelDensity, Pack, Export };
-
-inline void DrawTabIcon(ImDrawList* dl, TabIcon icon, ImVec2 c, float s, ImU32 col) {
-    const float t = (std::max)(1.0f, s * 0.16f);
-    auto P = [&](float x, float y) { return ImVec2(c.x + x * s, c.y + y * s); };
-    switch (icon) {
-    case TabIcon::Object: {
-        ImVec2 hex[6] = { P(0, -1), P(0.87f, -0.5f), P(0.87f, 0.5f), P(0, 1), P(-0.87f, 0.5f), P(-0.87f, -0.5f) };
-        dl->AddPolyline(hex, 6, col, ImDrawFlags_Closed, t);
-        dl->AddLine(P(0, 0), P(-0.87f, -0.5f), col, t);
-        dl->AddLine(P(0, 0), P(0.87f, -0.5f), col, t);
-        dl->AddLine(P(0, 0), P(0, 1), col, t);
-        break;
-    }
-    case TabIcon::CutSew:
-        dl->AddCircle(P(-0.45f, 0.6f), s * 0.3f, col, 12, t);
-        dl->AddCircle(P(0.45f, 0.6f), s * 0.3f, col, 12, t);
-        dl->AddLine(P(-0.28f, 0.36f), P(0.55f, -0.95f), col, t);
-        dl->AddLine(P(0.28f, 0.36f), P(-0.55f, -0.95f), col, t);
-        break;
-    case TabIcon::Unfold:
-        dl->AddRect(P(-0.9f, 0.0f), P(-0.3f, 0.6f), col, 0.0f, 0, t);
-        dl->AddRect(P(-0.3f, 0.0f), P(0.3f, 0.6f), col, 0.0f, 0, t);
-        dl->AddRect(P(0.3f, 0.0f), P(0.9f, 0.6f), col, 0.0f, 0, t);
-        dl->AddRect(P(-0.3f, -0.6f), P(0.3f, 0.0f), col, 0.0f, 0, t);
-        break;
-    case TabIcon::Transform:
-        dl->AddLine(P(-0.7f, 0), P(0.7f, 0), col, t);
-        dl->AddLine(P(0, -0.7f), P(0, 0.7f), col, t);
-        dl->AddTriangleFilled(P(1.0f, 0), P(0.6f, -0.3f), P(0.6f, 0.3f), col);
-        dl->AddTriangleFilled(P(-1.0f, 0), P(-0.6f, 0.3f), P(-0.6f, -0.3f), col);
-        dl->AddTriangleFilled(P(0, -1.0f), P(0.3f, -0.6f), P(-0.3f, -0.6f), col);
-        dl->AddTriangleFilled(P(0, 1.0f), P(-0.3f, 0.6f), P(0.3f, 0.6f), col);
-        break;
-    case TabIcon::Stack:
-        dl->AddRect(P(-0.85f, -0.85f), P(0.35f, 0.35f), col, s * 0.12f, 0, t);
-        dl->AddRectFilled(P(-0.35f, -0.35f), P(0.85f, 0.85f), col, s * 0.12f);
-        break;
-    case TabIcon::TexelDensity: {
-        const float step = 1.7f / 3.0f;
-        for (int i = 0; i < 3; ++i) {
-            for (int j = 0; j < 3; ++j) {
-                if ((i + j) % 2 != 0) continue;
-                float x0 = -0.85f + i * step, y0 = -0.85f + j * step;
-                dl->AddRectFilled(P(x0, y0), P(x0 + step, y0 + step), col);
-            }
-        }
-        dl->AddRect(P(-0.85f, -0.85f), P(0.85f, 0.85f), col, 0.0f, 0, t);
-        break;
-    }
-    case TabIcon::Pack:
-        dl->AddRect(P(-0.95f, -0.95f), P(0.95f, 0.95f), col, s * 0.1f, 0, t);
-        dl->AddRectFilled(P(-0.65f, -0.65f), P(-0.08f, 0.65f), col);
-        dl->AddRectFilled(P(0.08f, -0.65f), P(0.65f, -0.08f), col);
-        dl->AddRect(P(0.08f, 0.08f), P(0.65f, 0.65f), col, 0.0f, 0, t);
-        break;
-    case TabIcon::Export: {
-        ImVec2 tray[4] = { P(-0.85f, 0.1f), P(-0.85f, 0.85f), P(0.85f, 0.85f), P(0.85f, 0.1f) };
-        dl->AddPolyline(tray, 4, col, ImDrawFlags_None, t);
-        dl->AddLine(P(0, 0.45f), P(0, -0.55f), col, t);
-        dl->AddTriangleFilled(P(0, -1.0f), P(0.42f, -0.45f), P(-0.42f, -0.45f), col);
-        break;
-    }
-    }
-}
-
-// One square tab in a vertical icon strip. Active uses the accent; the label shows as a tooltip.
-inline bool IconTab(const char* label, TabIcon icon, bool active) {
-    const float sz = ImGui::GetFontSize() * 1.9f;
-    ImVec2 p = ImGui::GetCursorScreenPos();
-    bool clicked = ImGui::InvisibleButton(label, ImVec2(sz, sz));
-    bool hovered = ImGui::IsItemHovered();
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("%s", label);
-
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    ImVec2 q(p.x + sz, p.y + sz);
-    float rounding = sz * 0.2f;
-    if (active) {
-        ImVec4 fill = Col::Accent(); fill.w = 0.18f;
-        dl->AddRectFilled(p, q, ImGui::GetColorU32(fill), rounding);
-    } else if (hovered) {
-        dl->AddRectFilled(p, q, ImGui::GetColorU32(Col::PanelHi()), rounding);
-    }
-    if (ImGui::IsItemFocused() && ImGui::GetIO().NavVisible) {
-        dl->AddRect(p, q, ImGui::GetColorU32(Col::Accent()), rounding, 0, 1.5f);
-    }
-    ImU32 col = ImGui::GetColorU32(active ? Col::Accent() : (hovered ? Col::Text() : Col::TextDim()));
-    DrawTabIcon(dl, icon, ImVec2(p.x + sz * 0.5f, p.y + sz * 0.5f), sz * 0.27f, col);
-    return clicked;
-}
-
 // ---------------------------------------------------------------- app shell
 struct ShellState {
     enum class AppTab {
@@ -695,7 +608,7 @@ struct ShellState {
     ImVec4      statusColor = Col::Ok();
     float       bakeProgress = -1.f;     // -1 idle
     bool        resetLayout = false;     // View > Reset Layout
-    bool        showLog = true, showUdim = true, showOutliner = true, showUVPanel = true, showProperties = true;
+    bool        showLog = true, showUdim = true, showOutliner = true, showUVPanel = true, showProperties = true, showUVTools = true;
     bool        showMeshPanel = true, showBakeParams = true;
     bool        openLowPoly = false;
     bool        openHighPoly = false;
@@ -728,11 +641,15 @@ inline void BuildDefaultLayout(ImGuiID ds, ImVec2 size) {
     right  = ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.30f, nullptr, &center);
     bottom = ImGui::DockBuilderSplitNode(center, ImGuiDir_Down,  0.26f, nullptr, &center);
 
+    // Right column: Outliner, Properties of the selected object, then the workspace tool panels
     ImGuiID rightTop = right, rightBottom;
-    rightBottom = ImGui::DockBuilderSplitNode(rightTop, ImGuiDir_Down, 0.75f, nullptr, &rightTop);
+    rightBottom = ImGui::DockBuilderSplitNode(rightTop, ImGuiDir_Down, 0.78f, nullptr, &rightTop);
+    ImGuiID rightMid = rightBottom;
+    rightBottom = ImGui::DockBuilderSplitNode(rightMid, ImGuiDir_Down, 0.62f, nullptr, &rightMid);
 
     ImGui::DockBuilderDockWindow("Scene Outliner###outliner", rightTop);
-    ImGui::DockBuilderDockWindow("Properties###properties",   rightBottom);
+    ImGui::DockBuilderDockWindow("Properties###properties",   rightMid);
+    ImGui::DockBuilderDockWindow("UV Tools###uvtools",        rightBottom);
     ImGui::DockBuilderDockWindow("Bake Parameters###params",  rightBottom);
     ImGui::DockBuilderDockWindow("UV Tool###uvpanel",         rightBottom);
     ImGui::DockBuilderDockWindow("Mesh Ingestion###ingest",   rightBottom);
@@ -776,6 +693,7 @@ inline void BeginFrameHost(ShellState& st, CommandRegistry* registry = nullptr) 
 
         // Mode-specific middle menu groups
         if (isBaking) {
+            if (registry && ImGui::BeginMenu("Edit")) { DrawCommandMenuContents(*registry, "Edit", true); ImGui::EndMenu(); }
             if (ImGui::BeginMenu("Bake")) {
                 if (ImGui::MenuItem("Start Bake", "F5")) st.triggerBake = true;
                 ImGui::Separator();
@@ -808,7 +726,7 @@ inline void BeginFrameHost(ShellState& st, CommandRegistry* registry = nullptr) 
         }
 
         if (ImGui::BeginMenu("View")) {
-            if (isUV && registry) {
+            if (registry) {
                 DrawCommandMenuContents(*registry, "View", false);
                 ImGui::SeparatorText("Panels");
             }
@@ -820,7 +738,8 @@ inline void BeginFrameHost(ShellState& st, CommandRegistry* registry = nullptr) 
                 ImGui::MenuItem("Output Log", nullptr, &st.showLog);
                 ImGui::MenuItem("UDIM Layout", nullptr, &st.showUdim);
             } else {
-                ImGui::MenuItem("UV Tool Panel", nullptr, &st.showUVPanel);
+                if (registry) ImGui::MenuItem("UV Tools", nullptr, &st.showUVTools);
+                else ImGui::MenuItem("UV Tool Panel", nullptr, &st.showUVPanel);
                 ImGui::MenuItem("UDIM Layout", nullptr, &st.showUdim);
                 ImGui::MenuItem("Output Log", nullptr, &st.showLog);
             }
@@ -913,6 +832,7 @@ inline void BeginFrameHost(ShellState& st, CommandRegistry* registry = nullptr) 
     ImVec2 size(vp->WorkSize.x, vp->WorkSize.y - sb);
     ImGui::SetNextWindowPos(pos);
     ImGui::SetNextWindowSize(size);
+    ImGui::SetNextWindowViewport(vp->ID);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(4, 4));
@@ -933,6 +853,7 @@ inline void BeginFrameHost(ShellState& st, CommandRegistry* registry = nullptr) 
     // 3) status bar
     ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x, vp->WorkPos.y + vp->WorkSize.y - sb));
     ImGui::SetNextWindowSize(ImVec2(vp->WorkSize.x, sb));
+    ImGui::SetNextWindowViewport(vp->ID);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14, 3));
     ImGui::PushStyleColor(ImGuiCol_WindowBg, Col::Bg());

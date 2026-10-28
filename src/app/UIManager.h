@@ -58,9 +58,9 @@ private:
     void Render2DUVCanvas(const ImVec2& origin, const ImVec2& size);
     void RenderMeshPanel();
     void RenderSettingsPanel();
-    void RenderUVCutAndPackPanel();
     void RenderPropertiesPanel();
-    void DockPropertiesWithToolPanels();
+    void DockNewPanelsIntoSavedLayout();
+    void RenderUVToolsPanel();
     void RenderHelpWindows();
     void RenderUDIMCanvasPanel();
     void RenderBakeProgressPanel();
@@ -272,13 +272,11 @@ private:
     SceneObject m_selectedObject = SceneObject::None;
     bool SceneObjectExists(SceneObject obj) const;
     bool m_propertiesDockChecked = false;
-
-    // Properties editor tabs: Object, then one tab per UV pipeline stage (UV workspace only)
-    enum class PropertiesTab { Object, CutSew, Unfold, Transform, Stack, TexelDensity, Pack, Export };
-    PropertiesTab m_propertiesTab = PropertiesTab::CutSew;
+    bool m_uvToolsDockChecked = false;
     void RenderObjectProperties();
-    void RenderUVToolTab(PropertiesTab tab);
     bool m_showAboutWindow = false;
+    bool m_showGesturesWindow = false;
+    bool GetActiveCurveSegment(int& p0, int& p1);
 };
 
 
