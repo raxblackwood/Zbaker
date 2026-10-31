@@ -259,7 +259,7 @@ Resolved ground grid subdivision popping, implemented genuine UV-space shell sel
 - Dedicated Frame Commands: Split view framing into view.frame_all (entire scene/tiles, Home key) and view.frame_selected (selected components only, F key).
 
 ### 5.10 UV Redesign Phase 1 Step 1: Registry Menus, UV Toolkit, Simple Outliner (2026-10-27)
-Uncommitted on `feature/blender-grid-baked-normals-8k-16k`. Build compiles; TestBaker passes. Not yet deployed or checked on screen.
+Committed locally as `35597a4` on `feature/blender-grid-baked-normals-8k-16k` (not pushed to GitHub; deployed to ZBrush 2026 on 2026-10-28). Build compiles; TestBaker passes.
 - Registry-driven menus: in the UV workspace, Edit, Select, UV, View and Help are generated from `CommandRegistry` by `DrawCommandMenuContents` (menuPath based; `UV/Cut & Sew` renders as a section, deeper paths as submenus). `BeginFrameHost` takes an optional registry; the standalone build keeps the legacy menus.
 - New helpers in `CommandRegistry.h`: `DrawCommandMenuItem`, `DrawCommandTooltip`, `CommandStyle` (Action / Primary / Destructive). Labels get a `##id` suffix for unique ImGui IDs.
 - UV Toolkit panel (`UV Toolkit###uvtoolkit`): Cut & Sew (Auto Seams, collapsed Curve Cut), Unfold, Transform, Stack & Overlap, Texel Density, Pack (Advanced disclosure), Export, pinned primary footer "Auto UV: Cut, Unwrap, Pack". Docked beside the legacy UV Tool panel, which is untouched until Step 2.
@@ -271,7 +271,7 @@ Uncommitted on `feature/blender-grid-baked-normals-8k-16k`. Build compiles; Test
 - Open: V2 keymap preset decision (W/E/R/G/S start gizmo drags, not tool switches); accordion open state not persisted; legacy File menu still shows unbound shortcuts; removal of the legacy duplicates is Phase 1 Step 2.
 
 ### 5.11 UV Redesign Phase 1 Step 2: Duplicate Removal (2026-10-28)
-Uncommitted on `feature/blender-grid-baked-normals-8k-16k`. Build clean; TestBaker passes.
+Committed locally as `5997f2f` on `feature/blender-grid-baked-normals-8k-16k` (not pushed to GitHub; deployed to ZBrush 2026 on 2026-10-28). Build clean; TestBaker passes; reviewed by the user.
 - Removed the UV header second tier; the header is one row (`headerH` 58 to 30). Its "Unwrap" button had silently run Auto Cut, Unwrap & Pack.
 - Removed the 3D Undo/Redo buttons and the filled "Focus (F)" button; Edit and View registry menus now show in both workspaces. Tightened the 3D layout chip group so it no longer overlaps the Shading dropdown.
 - Removed the old UV Tool panel (`RenderUVCutAndPackPanel`) after moving its unique features: Edit Curve subpanel (point list with click / Shift+click From-To selection, segment and whole-curve smooth/straighten, recalculate path), Last Pack readout, and Help > Viewport Gestures.
