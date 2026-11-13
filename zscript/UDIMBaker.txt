@@ -1,5 +1,5 @@
 // ZPlugin: UDIM Baker Plugin for ZBrush 2026
-[ISubPalette, "ZPlugin:UDIM Baker"]
+[ISubPalette, "Zplugin:UDIM Baker"]
 
 [VarDef, g_BridgeDll, ""]
 [VarDef, g_CacheLow, "C:/Users/Public/Documents/ZBrushData2026/ZPluginData/UDIMBaker/UDIM_LowPoly.obj"]
@@ -8,8 +8,8 @@
 [VarDef, g_MaxSDiv, 1]
 [VarDef, g_Res, 0]
 
-// Button 1: One-Click Bake Active (Auto SDiv 1 -> Max)
-[IButton, "ZPlugin:UDIM Baker:Bake Active (SDiv 1 -> Max)", "Auto-export SDiv 1 as Low-Poly and Max SDiv as High-Poly, then launch Baker",
+// Button 1: One-Click Bake Active (Auto SDiv 1 to Max)
+[IButton, "Zplugin:UDIM Baker:Bake Active SDiv 1 to Max", "Auto-export SDiv 1 as Low-Poly and Max SDiv as High-Poly, then launch Baker",
     [VarSet, g_BridgeDll, [FileNameResolvePath, "ZSTARTUP_ZPLUGS64/UDIMBakerData/UDIMBakerBridge.dll"]]
     
     // Check if active SubTool has SDiv levels
@@ -40,7 +40,7 @@
 ]
 
 // Button 2: Set Active SubTool as Low-Poly Target
-[IButton, "ZPlugin:UDIM Baker:Set Active as Low-Poly", "Set the currently active SubTool as the target Low-Poly mesh",
+[IButton, "Zplugin:UDIM Baker:Set Active as Low-Poly", "Set the currently active SubTool as the target Low-Poly mesh",
     [VarSet, g_BridgeDll, [FileNameResolvePath, "ZSTARTUP_ZPLUGS64/UDIMBakerData/UDIMBakerBridge.dll"]]
     [If, [IsEnabled, "Tool:Geometry:SDiv"],
         [VarSet, g_OrigSDiv, [IGet, "Tool:Geometry:SDiv"]]
@@ -57,7 +57,7 @@
 ]
 
 // Button 3: Set Active SubTool as High-Poly Source
-[IButton, "ZPlugin:UDIM Baker:Set Active as High-Poly", "Set the currently active SubTool as the source High-Poly sculpt",
+[IButton, "Zplugin:UDIM Baker:Set Active as High-Poly", "Set the currently active SubTool as the source High-Poly sculpt",
     [VarSet, g_BridgeDll, [FileNameResolvePath, "ZSTARTUP_ZPLUGS64/UDIMBakerData/UDIMBakerBridge.dll"]]
     [If, [IsEnabled, "Tool:Geometry:SDiv"],
         [VarSet, g_OrigSDiv, [IGet, "Tool:Geometry:SDiv"]]
@@ -75,7 +75,7 @@
 ]
 
 // Button 4: Launch Companion Baker Viewport
-[IButton, "ZPlugin:UDIM Baker:Launch Baker Viewport", "Open the companion baking viewport with current session",
+[IButton, "Zplugin:UDIM Baker:Launch Baker Viewport", "Open the companion baking viewport with current session",
     [VarSet, g_BridgeDll, [FileNameResolvePath, "ZSTARTUP_ZPLUGS64/UDIMBakerData/UDIMBakerBridge.dll"]]
     [VarSet, g_Res, [FileExecute, [Var, g_BridgeDll], "LaunchBakerSession", ""]]
 ]

@@ -1,0 +1,38 @@
+Objective: Implement comprehensive UV cutting, unwrapping, and advanced UV packing with a dedicated UV tab in both the Standalone Baker and the ZBrush Companion App.
+
+Work in this repository on the current branch (feature/blender-grid-baked-normals-8k-16k). Treat this as a long-running GNHF overnight task.
+
+Before coding, inspect the reference plugins provided by the user in `docs/refs`:
+1. `docs/refs/uvpackmaster_addon/uvpackmaster4/`: Industry-standard UV packing engine. Inspect `operator.py`, `box.py`, `geom.py`, `tdensity/`, `grouping.py`, `island_params.py`. Replicate its core packing strengths:
+   - Heuristic 2D bin packing (MaxRects BSSF / Best Short Side Fit, Guillotine).
+   - Island rotation optimization (test 90 deg, 45 deg, or free rotation to achieve minimum convex hull area).
+   - Exact pixel padding and tile boundary margin relative to texture resolution.
+   - Texel density normalization (equalizing UV area to 3D surface area across all islands before packing).
+   - Multi-UDIM tile distribution (packing across tiles 1001, 1002, 1003...).
+2. `docs/refs/ZenUV_5_2_0_0/ZenUV/`: Leading UV cutting and seam management toolset. Inspect `ops/`, `utils/`, `prop/`. Replicate its key workflows:
+   - Mark seams by sharp dihedral edge angle (user-configurable angle threshold, e.g. 30, 45, 60 degrees).
+   - Mark seams by Polygroup / SubTool boundaries (essential for ZBrush workflows).
+   - Interactive 3D/2D seam cutting and unwrap (LSCM - Least Squares Conformal Maps or ABF angle-based flattening).
+   - UV island segmentation from marked seams.
+
+Implementation Architecture:
+1. Core UV Engine (`src/uv/`):
+   - `UVIsland.h`: Representation of UV islands, vertices, 2D polygons, bounding boxes, convex hulls, 3D surface area, and rotation transforms.
+   - `UVCutter.h` / `UVCutter.cpp`: Dihedral edge angle detection, polygroup boundary seam extraction, seam tracking.
+   - `UVUnwrapper.h` / `UVUnwrapper.cpp`: Conformal/planar flattening of cut charts into 2D UV coordinates.
+   - `UVPacker.h` / `UVPacker.cpp`: Island segmentation, texel density equalization, rotation optimization, heuristic bin packing (MaxRects), UDIM distribution, non-overlapping placement with exact pixel margins.
+2. UI Integration:
+   - Create a top-level tab switcher in both `UIManager.cpp` and `StandaloneUIManager.cpp`: `[Baking]` and `[UV Cut & Pack]`.
+   - In the `[UV Cut & Pack]` tab:
+     - Left / side panels: Seam Cutting options (Angle threshold, By Polygroup, Clear Seams), Unwrapping controls, Packing options (Resolution, Padding px, Margin px, Rotation Steps [Off, 90 deg, 45 deg, Free], Normalize Texel Density, Target UDIMs count, "Pack UVs" button, and One-Click "Auto Cut & Pack").
+     - Viewport: Display the low-poly mesh with marked cut seams in 3D (highlighted seam lines) and the live 2D UV canvas with packed islands.
+3. Verification & Safety:
+   - Add automated tests in `test/` verifying seam cutting, island extraction, unwrapping, and packing without overlaps.
+   - Build cleanly using MSBuild/CMake in Release configuration (`& "C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" --build build --config Release -j 8`).
+   - Run the test suite (`build/bin/Release/TestBaker.exe`, `build/bin/Release/UserBakeTest.exe`).
+   - Deploy binaries to `E:\CODES\standalone_baker\StandaloneBaker.exe` and `C:\Program Files\Maxon ZBrush 2026\ZStartup\ZPlugs64\UDIMBakerData\UDIMBakerApp.exe`.
+   - Commit working slices cleanly with informative commit messages (never auto-add agent name as co-author, never use em dash, put each sentence on its own line in markdown).
+   - Push to origin on the current branch.
+
+Stop only when:
+The UV Cut & Pack tab is fully operational in both Standalone and ZBrush UI, UV cutting by angle and polygroup is implemented, the advanced UV packing engine (rotation search, texel density normalization, pixel padding, and multi-UDIM support) successfully packs islands without overlaps, all unit and E2E bake tests pass cleanly, and the binaries are deployed and pushed to origin.

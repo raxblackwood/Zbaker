@@ -35,6 +35,16 @@ public:
         std::string& outError
     );
 
+    // Exports the low-poly mesh with explicit vn vertex normals matching the baker exactly
+    static bool SaveLowPolyOBJWithNormals(
+        const std::string& filePath,
+        const LowPolyMesh& mesh,
+        std::string& outError
+    );
+
+    // Deduplicates wireframe lines based on 3D geometric edge positions (eliminates bold/overlapping edges)
+    static void DeduplicateWireframeLines(LowPolyMesh& mesh);
+
     static bool LoadCageOBJ(
         const std::string& filePath,
         LowPolyMesh& lowPoly,

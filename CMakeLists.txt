@@ -55,6 +55,10 @@ set(BAKER_SOURCES
     src/baker/GoZReader.cpp
     src/baker/MikkTSpaceBridge.cpp
     src/baker/ExrWriter.cpp
+    src/uv/UVCutter.cpp
+    src/uv/UVUnwrapper.cpp
+    src/uv/UVPacker.cpp
+    src/uv/UVSurfaceCurve.cpp
     include/mikktspace.c
     include/miniz.c
     include/ufbx.c
@@ -68,6 +72,7 @@ add_executable(UDIMBakerApp WIN32
 target_include_directories(UDIMBakerApp PRIVATE
     src/app
     src/baker
+    src/uv
 )
 
 target_link_libraries(UDIMBakerApp PRIVATE
@@ -105,6 +110,10 @@ set(STANDALONE_SOURCES
     src/baker/GoZReader.cpp
     src/baker/MikkTSpaceBridge.cpp
     src/baker/ExrWriter.cpp
+    src/uv/UVCutter.cpp
+    src/uv/UVUnwrapper.cpp
+    src/uv/UVPacker.cpp
+    src/uv/UVSurfaceCurve.cpp
     include/mikktspace.c
     include/miniz.c
     include/ufbx.c
@@ -118,6 +127,7 @@ add_executable(StandaloneBaker WIN32
 target_include_directories(StandaloneBaker PRIVATE
     src/app
     src/baker
+    src/uv
 )
 
 target_link_libraries(StandaloneBaker PRIVATE
@@ -140,6 +150,10 @@ add_executable(TestBaker
     src/baker/GoZReader.cpp
     src/baker/MikkTSpaceBridge.cpp
     src/baker/ExrWriter.cpp
+    src/uv/UVCutter.cpp
+    src/uv/UVUnwrapper.cpp
+    src/uv/UVPacker.cpp
+    src/uv/UVSurfaceCurve.cpp
     include/mikktspace.c
     include/miniz.c
     include/ufbx.c
@@ -148,6 +162,7 @@ add_executable(TestBaker
 target_include_directories(TestBaker PRIVATE
     src/app
     src/baker
+    src/uv
 )
 
 target_link_libraries(TestBaker PRIVATE
@@ -201,3 +216,7 @@ target_include_directories(TestGoZReader PRIVATE
 
 
 
+
+# UV relax / snap self-check
+add_executable(TestUVRelax test/TestUVRelax.cpp src/uv/UVUnwrapper.cpp)
+target_include_directories(TestUVRelax PRIVATE src/baker src/uv)

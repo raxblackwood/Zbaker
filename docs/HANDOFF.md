@@ -112,17 +112,40 @@ If your low-poly mesh was scaled or translated differently in an external DCC:
 
 ---
 
-## 5. Codebase Maintenance & File Index
+## 5. UI Architecture & Design System Handoff
+
+For redesigning, evaluating, or auditing the user interface without launching the application, refer to the dedicated UI documentation:
+
+1. **[UI Architecture Specification](file:///e:/CODES/zbrush%20plugins/baker/docs/UI_ARCHITECTURE.md)**:
+   - Full overview of the Blender Dark visual identity, theme system, color palettes, and Dear ImGui 1.93.1 docking hierarchy.
+   - Complete application state machine (`Empty`, `Ingesting`, `Loaded`, `Baking`, `Results`, `Error`).
+   - Specification of the Direct3D 11 viewport render target integration and the floating bake bar HUD.
+
+2. **[UI Handoff Package](file:///e:/CODES/zbrush%20plugins/baker/docs/ui_handoff/)**:
+   - [`UI_INVENTORY.md`](file:///e:/CODES/zbrush%20plugins/baker/docs/ui_handoff/UI_INVENTORY.md): Comprehensive inventory of every window, card, button, slider, checkbox, driving variable, callback action, and shortcut.
+   - [`KNOWN_ISSUES.md`](file:///e:/CODES/zbrush%20plugins/baker/docs/ui_handoff/KNOWN_ISSUES.md): Full audit of layout collisions, hard-coded pixel sizing, high-DPI scaling defects, and docking tab glitches.
+   - [`DOCKING_LAYOUT.md`](file:///e:/CODES/zbrush%20plugins/baker/docs/ui_handoff/DOCKING_LAYOUT.md) & [`imgui.ini`](file:///e:/CODES/zbrush%20plugins/baker/docs/ui_handoff/imgui.ini): Exact docking node IDs, split ratios, and persistent window coordinates.
+   - [`SCREENSHOTS/SCREENSHOT_GUIDE.md`](file:///e:/CODES/zbrush%20plugins/baker/docs/ui_handoff/SCREENSHOTS/SCREENSHOT_GUIDE.md): Setup checklist and resolution guide (`1920x1080` and `1280x720`) for capturing all 7 application states.
+   - [`SOURCE/`](file:///e:/CODES/zbrush%20plugins/baker/docs/ui_handoff/SOURCE/): Standalone archive containing all UI source code and viewport rendering implementations.
+
+---
+
+## 6. Codebase Maintenance & File Index
 
 | Directory / File | Description |
 |---|---|
 | [`src/app/Main.cpp`](file:///e:/CODES/zbrush%20plugins/baker/src/app/Main.cpp) | Win32 entry point, Direct3D 11 device creation, Dear ImGui initialization, and message loop. |
 | [`src/app/UIManager.h`](file:///e:/CODES/zbrush%20plugins/baker/src/app/UIManager.h) / [`.cpp`](file:///e:/CODES/zbrush%20plugins/baker/src/app/UIManager.cpp) | Main UI controller: docking panels, transform controls, UDIM selection, progress reporting, and bake dispatching. |
-| [`src/app/BakerUI.h`](file:///e:/CODES/zbrush%20plugins/baker/src/app/BakerUI.h) | Modern Marmoset Ember theme styling, color palettes, custom widgets, cards, and theme switcher. |
+| [`src/app/BakerUI.h`](file:///e:/CODES/zbrush%20plugins/baker/src/app/BakerUI.h) | Blender Dark design system: color palettes, custom widgets (section labels, toggle chips, status pills, cards), and theme switcher. |
 | [`src/app/ViewportRenderer.h`](file:///e:/CODES/zbrush%20plugins/baker/src/app/ViewportRenderer.h) / [`.cpp`](file:///e:/CODES/zbrush%20plugins/baker/src/app/ViewportRenderer.cpp) | Direct3D 11 hardware viewport: Phong lighting, cage visualization, and orbit/pan/zoom camera math. |
 | [`src/app/MeshLoader.h`](file:///e:/CODES/zbrush%20plugins/baker/src/app/MeshLoader.h) / [`.cpp`](file:///e:/CODES/zbrush%20plugins/baker/src/app/MeshLoader.cpp) | High-poly and low-poly mesh import via TinyOBJLoader, OpenFBX, and binary stream caches. |
 | [`src/baker/BakerEngine.h`](file:///e:/CODES/zbrush%20plugins/baker/src/baker/BakerEngine.h) / [`.cpp`](file:///e:/CODES/zbrush%20plugins/baker/src/baker/BakerEngine.cpp) | Hardware ray-tracing core: Intel Embree 3 BVH, multithreaded scanline workers, closest-depth testing, cavity/curvature, and JFA dilation. |
 | [`src/baker/MeshTypes.h`](file:///e:/CODES/zbrush%20plugins/baker/src/baker/MeshTypes.h) | Mathematical types (`Vec3`, `UVCoord`, `Vertex`, `Triangle`, `LowPolyMesh`, `HighPolyMesh`). |
+| [`src/uv/UVUnwrapper.h`](file:///e:/CODES/zbrush%20plugins/baker/src/uv/UVUnwrapper.h) / [`.cpp`](file:///e:/CODES/zbrush%20plugins/baker/src/uv/UVUnwrapper.cpp) | UV operations: `RelaxUVs` (symmetric-Dirichlet spring relaxation), `MeasureDistortion`, and `SnapIslandsToPixels`. |
+| [`src/uv/UVCutter.h`](file:///e:/CODES/zbrush%20plugins/baker/src/uv/UVCutter.h) / [`.cpp`](file:///e:/CODES/zbrush%20plugins/baker/src/uv/UVCutter.cpp) | Seam cutting, edge loop/ring selection, and `SplitMeshAlongSeams`. |
+| [`src/uv/UVPacker.h`](file:///e:/CODES/zbrush%20plugins/baker/src/uv/UVPacker.h) / [`.cpp`](file:///e:/CODES/zbrush%20plugins/baker/src/uv/UVPacker.cpp) | UDIM island packing and texel-density utilities. |
+| [`src/uv/UVSurfaceCurve.h`](file:///e:/CODES/zbrush%20plugins/baker/src/uv/UVSurfaceCurve.h) / [`.cpp`](file:///e:/CODES/zbrush%20plugins/baker/src/uv/UVSurfaceCurve.cpp) | 3D surface curve drawing, snapping to mesh edges, and topology cut. |
+| [`src/uv/UVTypes.h`](file:///e:/CODES/zbrush%20plugins/baker/src/uv/UVTypes.h) | UV-specific types (`UVIsland`, `UVPoint`, `UVEdge`). |
 | [`src/baker/ExrWriter.h`](file:///e:/CODES/zbrush%20plugins/baker/src/baker/ExrWriter.h) / [`.cpp`](file:///e:/CODES/zbrush%20plugins/baker/src/baker/ExrWriter.cpp) | 16-bit / 32-bit float OpenEXR writing via TinyEXR and 8-bit PNG writing via STB Image Write. |
 | [`src/bridge/UDIMBakerBridge.cpp`](file:///e:/CODES/zbrush%20plugins/baker/src/bridge/UDIMBakerBridge.cpp) | ZBrush C-ABI export function `LaunchBakerSession`. |
 | [`zscript/UDIMBaker.txt`](file:///e:/CODES/zbrush%20plugins/baker/zscript/UDIMBaker.txt) | ZScript frontend creating the `ZPlugin:UDIM Baker` palette. |

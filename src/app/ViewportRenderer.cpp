@@ -1,4 +1,5 @@
 #include "ViewportRenderer.h"
+#include "MeshLoader.h"
 #include <d3dcompiler.h>
 #include <algorithm>
 #include <cmath>
@@ -8,6 +9,10 @@ namespace Baker {
 struct ViewportVertex {
     DirectX::XMFLOAT3 pos;
     DirectX::XMFLOAT3 norm;
+    DirectX::XMFLOAT2 uv;
+    DirectX::XMFLOAT3 tangent;
+    DirectX::XMFLOAT3 bitangent;
+    DirectX::XMFLOAT4 color;
 };
 
 struct CBFrame {
@@ -16,9 +21,14 @@ struct CBFrame {
     DirectX::XMFLOAT4 MeshColor;
     DirectX::XMFLOAT4 LightDir;
     DirectX::XMFLOAT4 CameraPos;
-    int ShadingMode; // 0=Clay, 1=Wax, 2=Normal, 3=Flat, 4=Wireframe, 5=Grid
+    int ShadingMode; // 0=Clay, 1=Wax, 2=Normal, 3=Flat, 4=Wireframe, 5=Grid, 6=SkewHeatmap
     float Opacity;
-    float Padding[2];
+    int HasNormalMap; // 1 if previewing normal map, 0 otherwise
+    float GridScale;  // Dynamic grid LOD reference
+    int CheckerOn;
+    int StretchOn;
+    float StretchRange;
+    float UVTexelScale;
 };
 
 static const char* g_ShaderSource = R"(
@@ -30,25 +40,55 @@ cbuffer CBFrame : register(b0) {
     float4 CameraPos;
     int ShadingMode;
     float Opacity;
-    float2 Padding;
+    int HasNormalMap;
+    float GridScale;
+    int CheckerOn;
+    int StretchOn;
+    float StretchRange;
+    float UVTexelScale;
 };
+
+Texture2D NormalMap : register(t0);
+SamplerState SamplerLinear : register(s0);
 
 struct VS_INPUT {
     float3 Pos : POSITION;
     float3 Norm : NORMAL;
+    float2 UV : TEXCOORD0;
+    float3 Tangent : TANGENT;
+    float3 Bitangent : BINORMAL;
+    float4 Color : COLOR0;
 };
 
 struct PS_INPUT {
     float4 PosH : SV_POSITION;
     float3 WorldPos : POSITION0;
     float3 WorldNorm : NORMAL0;
+    float2 UV : TEXCOORD0;
+    float3 WorldTangent : TANGENT0;
+    float3 WorldBitangent : BINORMAL0;
+    float4 Color : COLOR0;
 };
 
 PS_INPUT VSMain(VS_INPUT input) {
     PS_INPUT output;
-    output.PosH = mul(float4(input.Pos, 1.0f), WorldViewProj);
+    float3 pos = input.Pos;
+    // For wireframe / seams (mode 4):
+    // 1. Geometric outward normal offset so line sits directly on the outer mesh boundary
+    if (ShadingMode == 4) {
+        pos += input.Norm * 0.0004f;
+    }
+    output.PosH = mul(float4(pos, 1.0f), WorldViewProj);
+    // 2. Perspective-safe NDC depth bias towards camera (ensures line never fails depth test against solid mesh)
+    if (ShadingMode == 4) {
+        output.PosH.z -= 0.00030f * output.PosH.w;
+    }
     output.WorldPos = mul(float4(input.Pos, 1.0f), World).xyz;
     output.WorldNorm = mul(float4(input.Norm, 0.0f), World).xyz;
+    output.UV = input.UV;
+    output.WorldTangent = mul(float4(input.Tangent, 0.0f), World).xyz;
+    output.WorldBitangent = mul(float4(input.Bitangent, 0.0f), World).xyz;
+    output.Color = input.Color;
     return output;
 }
 
@@ -58,94 +98,186 @@ float4 PSMain(PS_INPUT input) : SV_TARGET {
         return float4(MeshColor.rgb, Opacity);
     }
 
-    // 5: Blender Procedural Anti-Aliased Ground Grid & Colored Axes
+    // 5: Maya / Blender Procedural Continuous Anti-Aliased Ground Grid & Colored Axes
     if (ShadingMode == 5) {
         float2 coord = input.WorldPos.xz;
-        float2 d = fwidth(coord);
-        d = max(d, 0.00001f);
+        float3 viewVec = input.WorldPos - CameraPos.xyz;
+        float distToCam = length(viewVec);
 
-        // 1.0 unit major grid (exact 1px screen-space line anti-aliased via fwidth)
-        float2 grid1 = abs(frac(coord - 0.5f) - 0.5f) / d;
-        float line1 = min(grid1.x, grid1.y);
-        float alpha1 = saturate(1.0f - line1);
+        // Minor grid (1.0 unit spacing - stable constant metric, no abrupt subdivision stepping)
+        float2 uvMinor = coord / 1.0f;
+        float2 fwMinor = max(fwidth(uvMinor), 0.000001f);
+        float2 gMin = abs(frac(uvMinor - 0.5f) - 0.5f) / fwMinor;
+        float lineMinor = 1.0f - saturate(min(gMin.x, gMin.y));
+        float cellPixMin = 1.0f / max(fwMinor.x, fwMinor.y);
+        float lodMin = smoothstep(1.5f, 6.0f, cellPixMin); // Smooth continuous LOD fade, never abrupt
 
-        // Subtle 0.2 unit subdivision grid
-        float2 coordSub = coord * 5.0f;
-        float2 dSub = d * 5.0f;
-        float2 gridSub = abs(frac(coordSub - 0.5f) - 0.5f) / dSub;
-        float lineSub = min(gridSub.x, gridSub.y);
-        float alphaSub = saturate(1.0f - lineSub) * 0.35f;
+        // Major grid (10.0 units spacing - prominent coordinate lines)
+        float2 uvMajor = coord / 10.0f;
+        float2 fwMajor = max(fwidth(uvMajor), 0.000001f);
+        float2 gMaj = abs(frac(uvMajor - 0.5f) - 0.5f) / fwMajor;
+        float lineMajor = 1.0f - saturate(min(gMaj.x, gMaj.y));
+        float cellPixMaj = 1.0f / max(fwMajor.x, fwMajor.y);
+        float lodMaj = smoothstep(1.0f, 4.0f, cellPixMaj);
 
-        // Smoothly fade out grid lines before distant pixel density causes moire
-        float gridFade = saturate(1.0f - max(d.x, d.y));
-        float combinedGridAlpha = max(alpha1 * 0.65f, alphaSub) * gridFade;
+        // Red X Axis (Z == 0) and Green Z Axis (X == 0)
+        float2 dCoord = max(fwidth(coord), 0.000001f);
+        float axisX = 1.0f - saturate(abs(input.WorldPos.z) / dCoord.y);
+        float axisZ = 1.0f - saturate(abs(input.WorldPos.x) / dCoord.x);
 
-        // Red X Ground Axis (at z = 0)
-        float distAxisX = abs(input.WorldPos.z) / d.y;
-        float alphaAxisX = saturate(1.0f - distAxisX);
+        // Stable horizon distance fade: Never collapses in front of camera when zooming in
+        float fadeEnd   = max(GridScale * 3.5f, 450.0f);
+        float fadeStart = fadeEnd * 0.35f;
+        float distFade  = 1.0f - smoothstep(fadeStart, fadeEnd, distToCam);
 
-        // Green Z Ground Axis (at x = 0)
-        float distAxisZ = abs(input.WorldPos.x) / d.x;
-        float alphaAxisZ = saturate(1.0f - distAxisZ);
+        if (distFade <= 0.001f) discard;
 
-        // Distance fog / horizon fade into slate background
-        float distToCam = length(CameraPos.xyz - input.WorldPos);
-        float camHeight = max(abs(CameraPos.y), 1.0f);
-        float fadeDist = max(camHeight * 25.0f, 90.0f);
-        float distFade = 1.0f - smoothstep(fadeDist * 0.35f, fadeDist, distToCam);
+        // Composite grid lines: Minor lines (subtle crisp grey) + Major lines (prominent light grey)
+        float gridLine = max(lineMinor * lodMin * 0.28f, lineMajor * lodMaj * 0.60f);
+        float3 col = float3(0.40f, 0.40f, 0.43f);
+        float lineAlpha = gridLine;
 
-        float3 col = float3(0.42f, 0.425f, 0.44f); // Subtle slate gray grid
-        float alpha = combinedGridAlpha * 0.50f;
-
-        // Blender Red X Axis
-        if (alphaAxisX > 0.001f) {
-            col = lerp(col, float3(0.88f, 0.22f, 0.22f), alphaAxisX);
-            alpha = max(alpha, alphaAxisX * 0.95f);
+        // Red X Axis (along Z = 0 in DX coordinate space)
+        if (axisX > 0.001f) {
+            col = lerp(col, float3(0.85f, 0.28f, 0.28f), axisX);
+            lineAlpha = max(lineAlpha, axisX * 0.85f);
         }
-        // Blender Green Ground Axis
-        if (alphaAxisZ > 0.001f) {
-            col = lerp(col, float3(0.28f, 0.82f, 0.28f), alphaAxisZ);
-            alpha = max(alpha, alphaAxisZ * 0.95f);
+        // Green Z Axis (along X = 0 in DX coordinate space)
+        if (axisZ > 0.001f) {
+            col = lerp(col, float3(0.38f, 0.72f, 0.22f), axisZ);
+            lineAlpha = max(lineAlpha, axisZ * 0.85f);
         }
 
-        alpha *= distFade;
-        if (alpha < 0.003f) {
-            discard;
-        }
+        // Unified distance fade applied to both grid lines and axes
+        float alpha = lineAlpha * distFade;
+        if (alpha < 0.002f) discard;
 
         return float4(col, alpha);
     }
 
     float3 N = normalize(input.WorldNorm);
+
+    // Live Baked Normal Map Perturbation
+    if (HasNormalMap == 1) {
+        float4 nSample = NormalMap.Sample(SamplerLinear, input.UV);
+        float3 ts = nSample.xyz * 2.0f - 1.0f;
+        float3 T = normalize(input.WorldTangent);
+        float3 B = normalize(input.WorldBitangent);
+        // Gram-Schmidt re-orthogonalization in pixel shader:
+        T = normalize(T - N * dot(N, T));
+        B = normalize(B - N * dot(N, B) - T * dot(T, B));
+        N = normalize(ts.x * T + ts.y * B + ts.z * N);
+    }
+
     float3 V = normalize(CameraPos.xyz - input.WorldPos);
     float3 L = normalize(LightDir.xyz);
 
-    // 2: Surface Normals Visualizer
-    if (ShadingMode == 2) {
+    // 3: Surface Normals Visualizer
+    if (ShadingMode == 3) {
         return float4(N * 0.5f + 0.5f, Opacity);
     }
 
-    // Studio Lighting setup
+    // 6: Marmoset-style Skew Heatmap Mode (cool navy to electric amber/orange)
+    if (ShadingMode == 6) {
+        float3 coldCol = float3(0.18f, 0.24f, 0.32f);
+        float3 hotCol = float3(1.0f, 0.65f, 0.05f);
+        float3 skewVis = lerp(coldCol, hotCol, saturate(input.Color.a));
+        float diff = saturate(dot(N, L)) * 0.7f + 0.3f;
+        return float4(skewVis * diff, Opacity);
+    }
+
+    // 8: UV checker and/or stretch heat. Stretch is the Jacobian of UV->world measured per pixel
+    // from screen derivatives, so it needs no CPU data and follows the mesh transform.
+    if (ShadingMode == 8) {
+        float3 base = float3(0.80f, 0.80f, 0.82f);
+        if (CheckerOn == 1) {
+            float2 p = input.UV * 16.0f;
+            float2 cell = floor(p);
+            float chk = abs(fmod(cell.x + cell.y, 2.0f));
+            float fade = saturate((max(fwidth(p.x), fwidth(p.y)) - 0.3f) / 0.7f); // sub-pixel cells blur to mid grey
+            chk = lerp(chk, 0.5f, fade);
+            base = lerp(float3(0.30f, 0.32f, 0.36f), float3(0.90f, 0.90f, 0.92f), chk);
+            // Orientation/tile cue: U ramps red, V ramps green inside each UDIM tile
+            base = lerp(base, float3(frac(input.UV.x), frac(input.UV.y), 0.45f), 0.30f * (1.0f - fade));
+        }
+        if (StretchOn == 1) {
+            float3 heat = float3(0.45f, 0.45f, 0.45f); // no usable UVs: neutral grey
+            float2 uvx = ddx(input.UV);
+            float2 uvy = ddy(input.UV);
+            float det = uvx.x * uvy.y - uvx.y * uvy.x;
+            if (abs(det) > 1e-14f && UVTexelScale > 0.0f) {
+                float3 px = ddx(input.WorldPos);
+                float3 py = ddy(input.WorldPos);
+                float3 Pu = (px * uvy.y - py * uvx.y) / det; // world units per UV unit along U
+                float3 Pv = (py * uvx.x - px * uvy.x) / det;
+                float a = dot(Pu, Pu);
+                float b = dot(Pu, Pv);
+                float c = dot(Pv, Pv);
+                float disc = sqrt(max((a - c) * (a - c) + 4.0f * b * b, 0.0f));
+                float s1 = sqrt(max((a + c + disc) * 0.5f, 1e-20f)) * UVTexelScale; // 1.0 = average density
+                float s2 = sqrt(max((a + c - disc) * 0.5f, 1e-20f)) * UVTexelScale;
+                float l1 = log2(s1);
+                float l2 = log2(s2);
+                float e = (abs(l1) >= abs(l2)) ? l1 : l2;       // worst direction, signed
+                float t = clamp(e / max(StretchRange, 0.05f), -1.0f, 1.0f);
+                float3 ok = float3(0.20f, 0.78f, 0.38f);
+                heat = (t < 0.0f) ? lerp(ok, float3(0.15f, 0.35f, 1.0f), -t) : lerp(ok, float3(0.95f, 0.18f, 0.15f), t);
+            }
+            base = (CheckerOn == 1) ? lerp(base, heat, 0.5f) : heat;
+        }
+        float lit = saturate(dot(N, L)) * 0.35f + 0.65f;
+        return float4(base * lit, Opacity);
+    }
+
+    // 7: Clean Flat Shaded
+    if (ShadingMode == 7) {
+        float3 flatBase = MeshColor.rgb;
+        if (input.Color.a > 0.001f) {
+            flatBase = lerp(flatBase, float3(1.0f, 0.62f, 0.08f), input.Color.a * 0.85f);
+        }
+        float diff = saturate(dot(N, L)) * 0.75f + 0.25f;
+        return float4(flatBase * diff, Opacity);
+    }
+
+    // Studio Lighting setup (Blender 4.x Studio Matcap style)
     float keyDiff = saturate(dot(N, L));
-    float3 fillDir = normalize(float3(-L.x, 0.3f, -L.z));
-    float fillDiff = saturate(dot(N, fillDir)) * 0.3f;
-    float3 topAmb = float3(0.24f, 0.25f, 0.28f);
-    float3 botAmb = float3(0.10f, 0.10f, 0.12f);
+    float3 fillDir = normalize(float3(-L.x, 0.35f, -L.z));
+    float fillDiff = saturate(dot(N, fillDir)) * 0.35f;
+    float3 topAmb = float3(0.30f, 0.31f, 0.33f);
+    float3 botAmb = float3(0.16f, 0.16f, 0.18f);
     float3 ambient = lerp(botAmb, topAmb, N.y * 0.5f + 0.5f);
 
     float3 H = normalize(L + V);
-    float spec = pow(saturate(dot(N, H)), 24.0f) * 0.4f;
-    float rim = pow(1.0f - saturate(dot(N, V)), 3.0f) * 0.25f;
+    float spec = pow(saturate(dot(N, H)), 28.0f) * 0.35f;
+    float rim = pow(1.0f - saturate(dot(N, V)), 3.0f) * 0.20f;
 
     float3 baseAlbedo = MeshColor.rgb;
 
-    // 0: Clay Matcap (Substance Painter Sculpt look)
-    if (ShadingMode == 0) {
-        baseAlbedo = float3(0.76f, 0.70f, 0.63f);
+    // Marmoset-style dynamic highlight on painted skew areas
+    if (input.Color.a > 0.001f) {
+        baseAlbedo = lerp(baseAlbedo, float3(1.0f, 0.62f, 0.08f), input.Color.a * 0.85f);
     }
-    // 1: ZBrush Classic Wax Red
+
+    // 0: Blender Studio White (Default clean crisp studio white)
+    if (ShadingMode == 0) {
+        baseAlbedo = float3(0.92f, 0.92f, 0.94f);
+        if (input.Color.a > 0.001f) {
+            baseAlbedo = lerp(baseAlbedo, float3(1.0f, 0.62f, 0.08f), input.Color.a * 0.85f);
+        }
+    }
+    // 1: Clay Matcap (Substance Painter Sculpt look)
     else if (ShadingMode == 1) {
+        baseAlbedo = float3(0.76f, 0.70f, 0.63f);
+        if (input.Color.a > 0.001f) {
+            baseAlbedo = lerp(baseAlbedo, float3(1.0f, 0.62f, 0.08f), input.Color.a * 0.85f);
+        }
+    }
+    // 2: ZBrush Classic Wax Red
+    else if (ShadingMode == 2) {
         baseAlbedo = float3(0.82f, 0.36f, 0.30f);
+        if (input.Color.a > 0.001f) {
+            baseAlbedo = lerp(baseAlbedo, float3(1.0f, 0.62f, 0.08f), input.Color.a * 0.85f);
+        }
         ambient += float3(0.18f, 0.05f, 0.04f); // Subsurface bleed simulation
     }
 
@@ -167,6 +299,8 @@ void ViewportRenderer::Release() {
     m_lowPolyWireGPU.Release();
     m_cageGPU.Release();
     m_cageWireGPU.Release();
+    m_seamLineGPU.Release();
+    m_selectedEdgeGPU.Release();
     m_groundPlaneGPU.Release();
 
     if (m_colorSRV) { m_colorSRV->Release(); m_colorSRV = nullptr; }
@@ -189,6 +323,8 @@ void ViewportRenderer::Release() {
     if (m_depthBiasState) { m_depthBiasState->Release(); m_depthBiasState = nullptr; }
     if (m_alphaBlendState) { m_alphaBlendState->Release(); m_alphaBlendState = nullptr; }
     if (m_opaqueBlendState) { m_opaqueBlendState->Release(); m_opaqueBlendState = nullptr; }
+    if (m_linearSampler) { m_linearSampler->Release(); m_linearSampler = nullptr; }
+    ClearBakedNormalMap();
 }
 
 bool ViewportRenderer::Initialize(ID3D11Device* device, ID3D11DeviceContext* context) {
@@ -214,24 +350,38 @@ bool ViewportRenderer::CreateShaders() {
     );
 
     if (FAILED(hr)) {
-        if (errorBlob) errorBlob->Release();
+        if (errorBlob) {
+            m_lastError = std::string((const char*)errorBlob->GetBufferPointer(), errorBlob->GetBufferSize());
+            OutputDebugStringA(m_lastError.c_str());
+            errorBlob->Release();
+        } else {
+            m_lastError = "D3DCompile VSMain failed without error blob.";
+        }
         return false;
     }
 
     hr = m_device->CreateVertexShader(vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(), nullptr, &m_vertexShader);
     if (FAILED(hr)) {
+        m_lastError = "CreateVertexShader failed (HRESULT: " + std::to_string(hr) + ")";
         vsBlob->Release();
         return false;
     }
 
     D3D11_INPUT_ELEMENT_DESC layout[] = {
-        { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0,                            D3D11_INPUT_PER_VERTEX_DATA, 0 },
-        { "NORMAL",   0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(ViewportVertex, norm), D3D11_INPUT_PER_VERTEX_DATA, 0 }
+        { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT,    0, offsetof(ViewportVertex, pos),       D3D11_INPUT_PER_VERTEX_DATA, 0 },
+        { "NORMAL",   0, DXGI_FORMAT_R32G32B32_FLOAT,    0, offsetof(ViewportVertex, norm),      D3D11_INPUT_PER_VERTEX_DATA, 0 },
+        { "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT,       0, offsetof(ViewportVertex, uv),        D3D11_INPUT_PER_VERTEX_DATA, 0 },
+        { "TANGENT",  0, DXGI_FORMAT_R32G32B32_FLOAT,    0, offsetof(ViewportVertex, tangent),   D3D11_INPUT_PER_VERTEX_DATA, 0 },
+        { "BINORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT,    0, offsetof(ViewportVertex, bitangent), D3D11_INPUT_PER_VERTEX_DATA, 0 },
+        { "COLOR",    0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, offsetof(ViewportVertex, color),     D3D11_INPUT_PER_VERTEX_DATA, 0 }
     };
 
-    hr = m_device->CreateInputLayout(layout, 2, vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(), &m_inputLayout);
+    hr = m_device->CreateInputLayout(layout, 6, vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(), &m_inputLayout);
     vsBlob->Release();
-    if (FAILED(hr)) return false;
+    if (FAILED(hr)) {
+        m_lastError = "CreateInputLayout failed (HRESULT: " + std::to_string(hr) + ")";
+        return false;
+    }
 
     ID3DBlob* psBlob = nullptr;
     hr = D3DCompile(
@@ -241,13 +391,22 @@ bool ViewportRenderer::CreateShaders() {
     );
 
     if (FAILED(hr)) {
-        if (errorBlob) errorBlob->Release();
+        if (errorBlob) {
+            m_lastError = std::string((const char*)errorBlob->GetBufferPointer(), errorBlob->GetBufferSize());
+            OutputDebugStringA(m_lastError.c_str());
+            errorBlob->Release();
+        } else {
+            m_lastError = "D3DCompile PSMain failed without error blob.";
+        }
         return false;
     }
 
     hr = m_device->CreatePixelShader(psBlob->GetBufferPointer(), psBlob->GetBufferSize(), nullptr, &m_pixelShader);
     psBlob->Release();
-    if (FAILED(hr)) return false;
+    if (FAILED(hr)) {
+        m_lastError = "CreatePixelShader failed (HRESULT: " + std::to_string(hr) + ")";
+        return false;
+    }
 
     // Constant buffer
     D3D11_BUFFER_DESC cbDesc = {};
@@ -257,7 +416,11 @@ bool ViewportRenderer::CreateShaders() {
     cbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
 
     hr = m_device->CreateBuffer(&cbDesc, nullptr, &m_constantBuffer);
-    return SUCCEEDED(hr);
+    if (FAILED(hr)) {
+        m_lastError = "CreateBuffer ConstantBuffer failed (HRESULT: " + std::to_string(hr) + ")";
+        return false;
+    }
+    return true;
 }
 
 bool ViewportRenderer::CreateRasterizerAndBlendStates() {
@@ -273,11 +436,14 @@ bool ViewportRenderer::CreateRasterizerAndBlendStates() {
     rd.CullMode = D3D11_CULL_NONE;
     m_device->CreateRasterizerState(&rd, &m_solidNoCullRS);
 
-    // 3. Wireframe with Depth Bias to prevent z-fighting on low-poly
-    rd.FillMode = D3D11_FILL_WIREFRAME;
+    // 3. Wireframe / Line rasterizer state (Antialiased lines)
+    rd.FillMode = D3D11_FILL_SOLID;
     rd.CullMode = D3D11_CULL_NONE;
-    rd.DepthBias = -500;
-    rd.SlopeScaledDepthBias = -1.0f;
+    rd.DepthClipEnable = TRUE;
+    rd.AntialiasedLineEnable = TRUE;
+    rd.MultisampleEnable = TRUE;
+    rd.DepthBias = -1000;
+    rd.SlopeScaledDepthBias = 0.0f;
     m_device->CreateRasterizerState(&rd, &m_wireframeRS);
 
     // Depth Stencil State
@@ -291,14 +457,14 @@ bool ViewportRenderer::CreateRasterizerAndBlendStates() {
     dsd.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO;
     m_device->CreateDepthStencilState(&dsd, &m_depthNoWriteState);
 
-    // Alpha Blend State (for semi-transparent cage)
+    // Alpha Blend State (for semi-transparent cage & grid, preserving render target alpha)
     D3D11_BLEND_DESC bd = {};
     bd.RenderTarget[0].BlendEnable = TRUE;
     bd.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC_ALPHA;
     bd.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
     bd.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
-    bd.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
-    bd.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ZERO;
+    bd.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ZERO;
+    bd.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ONE;
     bd.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
     bd.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
     m_device->CreateBlendState(&bd, &m_alphaBlendState);
@@ -307,41 +473,73 @@ bool ViewportRenderer::CreateRasterizerAndBlendStates() {
     bd.RenderTarget[0].BlendEnable = FALSE;
     m_device->CreateBlendState(&bd, &m_opaqueBlendState);
 
+    // Linear Texture Sampler for Normal Map Preview
+    D3D11_SAMPLER_DESC sampDesc = {};
+    sampDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+    sampDesc.AddressU = D3D11_TEXTURE_ADDRESS_WRAP;
+    sampDesc.AddressV = D3D11_TEXTURE_ADDRESS_WRAP;
+    sampDesc.AddressW = D3D11_TEXTURE_ADDRESS_WRAP;
+    sampDesc.ComparisonFunc = D3D11_COMPARISON_NEVER;
+    sampDesc.MinLOD = 0;
+    sampDesc.MaxLOD = D3D11_FLOAT32_MAX;
+    m_device->CreateSamplerState(&sampDesc, &m_linearSampler);
+
     return true;
 }
 
 void ViewportRenderer::CreateGridBuffers() {
     m_groundPlaneGPU.Release();
 
-    // Large horizontal ground plane at y=0 for procedural anti-aliased shader
-    ViewportVertex groundVerts[4] = {
-        { { -10000.0f, 0.0f, -10000.0f }, { 0.0f, 1.0f, 0.0f } },
-        { {  10000.0f, 0.0f, -10000.0f }, { 0.0f, 1.0f, 0.0f } },
-        { {  10000.0f, 0.0f,  10000.0f }, { 0.0f, 1.0f, 0.0f } },
-        { { -10000.0f, 0.0f,  10000.0f }, { 0.0f, 1.0f, 0.0f } }
-    };
+    // 48x48 subdivided ground mesh covering [-5000, 5000] for infinite horizon feel without clipping
+    const int GRID_RES = 48;
+    const float GRID_SIZE = 5000.0f;
+    const float STEP = (GRID_SIZE * 2.0f) / GRID_RES;
 
-    uint32_t groundIndices[6] = {
-        0, 1, 2,
-        0, 2, 3
-    };
+    std::vector<ViewportVertex> groundVerts;
+    groundVerts.reserve((GRID_RES + 1) * (GRID_RES + 1));
+    for (int z = 0; z <= GRID_RES; ++z) {
+        float pz = -GRID_SIZE + z * STEP;
+        for (int x = 0; x <= GRID_RES; ++x) {
+            float px = -GRID_SIZE + x * STEP;
+            groundVerts.push_back({ { px, 0.0f, pz }, { 0.0f, 1.0f, 0.0f }, { 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f }, { 1.0f, 1.0f, 1.0f, 0.0f } });
+        }
+    }
+
+    std::vector<uint32_t> groundIndices;
+    groundIndices.reserve(GRID_RES * GRID_RES * 6);
+    for (int z = 0; z < GRID_RES; ++z) {
+        for (int x = 0; x < GRID_RES; ++x) {
+            uint32_t i00 = z * (GRID_RES + 1) + x;
+            uint32_t i10 = i00 + 1;
+            uint32_t i01 = (z + 1) * (GRID_RES + 1) + x;
+            uint32_t i11 = i01 + 1;
+
+            groundIndices.push_back(i00);
+            groundIndices.push_back(i10);
+            groundIndices.push_back(i11);
+
+            groundIndices.push_back(i00);
+            groundIndices.push_back(i11);
+            groundIndices.push_back(i01);
+        }
+    }
 
     D3D11_BUFFER_DESC vbd = {};
-    vbd.ByteWidth = sizeof(groundVerts);
+    vbd.ByteWidth = static_cast<UINT>(groundVerts.size() * sizeof(ViewportVertex));
     vbd.Usage = D3D11_USAGE_IMMUTABLE;
     vbd.BindFlags = D3D11_BIND_VERTEX_BUFFER;
-    D3D11_SUBRESOURCE_DATA vInit = { groundVerts };
+    D3D11_SUBRESOURCE_DATA vInit = { groundVerts.data() };
     m_device->CreateBuffer(&vbd, &vInit, &m_groundPlaneGPU.vertexBuffer);
 
     D3D11_BUFFER_DESC ibd = {};
-    ibd.ByteWidth = sizeof(groundIndices);
+    ibd.ByteWidth = static_cast<UINT>(groundIndices.size() * sizeof(uint32_t));
     ibd.Usage = D3D11_USAGE_IMMUTABLE;
     ibd.BindFlags = D3D11_BIND_INDEX_BUFFER;
-    D3D11_SUBRESOURCE_DATA iInit = { groundIndices };
+    D3D11_SUBRESOURCE_DATA iInit = { groundIndices.data() };
     m_device->CreateBuffer(&ibd, &iInit, &m_groundPlaneGPU.indexBuffer);
 
-    m_groundPlaneGPU.indexCount = 6;
-    m_groundPlaneGPU.vertexCount = 4;
+    m_groundPlaneGPU.indexCount = static_cast<UINT>(groundIndices.size());
+    m_groundPlaneGPU.vertexCount = static_cast<UINT>(groundVerts.size());
 }
 
 void ViewportRenderer::Resize(int width, int height) {
@@ -381,6 +579,8 @@ void ViewportRenderer::Resize(int width, int height) {
 void ViewportRenderer::SetLowPolyMesh(const LowPolyMesh& mesh, float scaleMultiplier) {
     m_lowPolyGPU.Release();
     m_lowPolyWireGPU.Release();
+    m_seamLineGPU.Release();
+    m_selectedEdgeGPU.Release();
     if (mesh.vertices.empty() || mesh.triangles.empty()) return;
 
     float s = scaleMultiplier > 1e-5f ? scaleMultiplier : 1.0f;
@@ -389,12 +589,23 @@ void ViewportRenderer::SetLowPolyMesh(const LowPolyMesh& mesh, float scaleMultip
     m_lowPolyMin = { 1e9f, 1e9f, 1e9f };
     m_lowPolyMax = { -1e9f, -1e9f, -1e9f };
 
+    bool hasSkew = mesh.HasVertexSkew();
     for (size_t i = 0; i < mesh.vertices.size(); ++i) {
         float px = mesh.vertices[i].position.x * s;
         float py = mesh.vertices[i].position.y * s;
         float pz = mesh.vertices[i].position.z * s;
         verts[i].pos = { px, py, pz };
         verts[i].norm = { mesh.vertices[i].normal.x, mesh.vertices[i].normal.y, mesh.vertices[i].normal.z };
+        verts[i].uv = { mesh.vertices[i].uv.u, mesh.vertices[i].uv.v };
+
+        Vec3 n = mesh.vertices[i].normal;
+        Vec3 t(mesh.vertices[i].tangent.x, mesh.vertices[i].tangent.y, mesh.vertices[i].tangent.z);
+        Vec3 b = n.Cross(t) * mesh.vertices[i].tangent.w;
+        verts[i].tangent = { t.x, t.y, t.z };
+        verts[i].bitangent = { b.x, b.y, b.z };
+
+        float sk = hasSkew ? mesh.vertexSkew[i] : 0.0f;
+        verts[i].color = { 1.0f, 0.62f, 0.08f, sk };
 
         m_lowPolyMin.x = (std::min)(m_lowPolyMin.x, px);
         m_lowPolyMin.y = (std::min)(m_lowPolyMin.y, py);
@@ -406,16 +617,24 @@ void ViewportRenderer::SetLowPolyMesh(const LowPolyMesh& mesh, float scaleMultip
 
     std::vector<uint32_t> indices;
     indices.reserve(mesh.triangles.size() * 3);
+    double sumUV = 0.0, sum3D = 0.0;
     for (const auto& tri : mesh.triangles) {
         indices.push_back(tri.indices[0]);
         indices.push_back(tri.indices[1]);
         indices.push_back(tri.indices[2]);
+
+        const auto& a = verts[tri.indices[0]]; const auto& b = verts[tri.indices[1]]; const auto& c = verts[tri.indices[2]];
+        DirectX::XMVECTOR e1 = DirectX::XMVectorSubtract(DirectX::XMLoadFloat3(&b.pos), DirectX::XMLoadFloat3(&a.pos));
+        DirectX::XMVECTOR e2 = DirectX::XMVectorSubtract(DirectX::XMLoadFloat3(&c.pos), DirectX::XMLoadFloat3(&a.pos));
+        sum3D += 0.5 * DirectX::XMVectorGetX(DirectX::XMVector3Length(DirectX::XMVector3Cross(e1, e2)));
+        sumUV += 0.5 * std::abs((b.uv.x - a.uv.x) * (c.uv.y - a.uv.y) - (c.uv.x - a.uv.x) * (b.uv.y - a.uv.y));
     }
+    m_uvTexelScale = (sum3D > 1e-12 && sumUV > 1e-12) ? (float)std::sqrt(sumUV / sum3D) : 0.0f;
 
     // 1. Shaded mesh triangles
     D3D11_BUFFER_DESC vbd = {};
     vbd.ByteWidth = (UINT)(verts.size() * sizeof(ViewportVertex));
-    vbd.Usage = D3D11_USAGE_IMMUTABLE;
+    vbd.Usage = D3D11_USAGE_DEFAULT;
     vbd.BindFlags = D3D11_BIND_VERTEX_BUFFER;
     D3D11_SUBRESOURCE_DATA vInit = { verts.data() };
     m_device->CreateBuffer(&vbd, &vInit, &m_lowPolyGPU.vertexBuffer);
@@ -440,8 +659,6 @@ void ViewportRenderer::SetLowPolyMesh(const LowPolyMesh& mesh, float scaleMultip
         m_device->CreateBuffer(&wibd, &wiInit, &m_lowPolyWireGPU.indexBuffer);
         m_lowPolyWireGPU.indexCount = (uint32_t)mesh.wireframeLineIndices.size();
     }
-
-    FrameAll();
 }
 
 void ViewportRenderer::SetHighPolyMesh(const HighPolyMesh& mesh) {
@@ -465,6 +682,10 @@ void ViewportRenderer::SetHighPolyMesh(const HighPolyMesh& mesh) {
         } else {
             verts[i].norm = { 0.0f, 1.0f, 0.0f };
         }
+        verts[i].uv = { 0.0f, 0.0f };
+        verts[i].tangent = { 0.0f, 0.0f, 0.0f };
+        verts[i].bitangent = { 0.0f, 0.0f, 0.0f };
+        verts[i].color = { 1.0f, 1.0f, 1.0f, 0.0f };
 
         m_highPolyMin.x = (std::min)(m_highPolyMin.x, px);
         m_highPolyMin.y = (std::min)(m_highPolyMin.y, py);
@@ -518,7 +739,19 @@ void ViewportRenderer::UpdateCage(const LowPolyMesh& mesh, float cageDistance, f
             };
         }
         verts[i].norm = { mesh.vertices[i].normal.x, mesh.vertices[i].normal.y, mesh.vertices[i].normal.z };
+        verts[i].uv = { mesh.vertices[i].uv.u, mesh.vertices[i].uv.v };
+        verts[i].tangent = { 0.0f, 0.0f, 0.0f };
+        verts[i].bitangent = { 0.0f, 0.0f, 0.0f };
+        verts[i].color = { 0.2f, 0.7f, 1.0f, 0.5f };
     }
+
+    if (m_cageGPU.vertexBuffer && m_cageGPU.vertexCount == verts.size() && m_context) {
+        m_context->UpdateSubresource(m_cageGPU.vertexBuffer, 0, nullptr, verts.data(), 0, 0);
+        return;
+    }
+
+    m_cageGPU.Release();
+    m_cageWireGPU.Release();
 
     std::vector<uint32_t> indices;
     indices.reserve(mesh.triangles.size() * 3);
@@ -530,7 +763,7 @@ void ViewportRenderer::UpdateCage(const LowPolyMesh& mesh, float cageDistance, f
 
     D3D11_BUFFER_DESC vbd = {};
     vbd.ByteWidth = (UINT)(verts.size() * sizeof(ViewportVertex));
-    vbd.Usage = D3D11_USAGE_IMMUTABLE;
+    vbd.Usage = D3D11_USAGE_DEFAULT;
     vbd.BindFlags = D3D11_BIND_VERTEX_BUFFER;
     D3D11_SUBRESOURCE_DATA vInit = { verts.data() };
     m_device->CreateBuffer(&vbd, &vInit, &m_cageGPU.vertexBuffer);
@@ -617,51 +850,63 @@ void ViewportRenderer::FrameAll() {
 }
 
 void ViewportRenderer::HandleMouseInput(float deltaX, float deltaY, int buttonState, float wheelDelta) {
-    // buttonState: 1 = Left (Orbit), 2 = Middle/Right (Pan), 3 = Alt+Right (Dolly Zoom)
+    // buttonState: 1 = Left (Maya Tumble/Orbit), 2 = Middle (Maya Track/Pan), 3 = Right (Maya Dolly/Zoom)
     if (buttonState == 1) {
-        // Orbit
-        m_cameraYaw += deltaX * 0.007f;
-        m_cameraPitch += deltaY * 0.007f;
-        m_cameraPitch = std::clamp(m_cameraPitch, -1.50f, 1.50f);
+        // Maya Orbit (Tumble): Alt + LMB
+        m_cameraYaw += deltaX * 0.005f;
+        m_cameraPitch += deltaY * 0.005f;
+        m_cameraPitch = std::clamp(m_cameraPitch, -1.55f, 1.55f);
     } else if (buttonState == 2) {
-        // Pan: dynamically scaled by distance so it feels effortless at any zoom
-        float panSpeed = m_cameraDistance * 0.0016f;
+        // Maya Track (Pan): Alt + MMB - True Screen-Plane tracking without perspective distortion
+        float cosP = std::cos(m_cameraPitch);
+        float sinP = std::sin(m_cameraPitch);
         float cosY = std::cos(m_cameraYaw);
         float sinY = std::sin(m_cameraYaw);
 
-        DirectX::XMVECTOR right = DirectX::XMVectorSet(cosY, 0.0f, -sinY, 0.0f);
-        DirectX::XMVECTOR up = DirectX::XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
+        DirectX::XMFLOAT3 eye = {
+            m_cameraTarget.x + m_cameraDistance * cosP * sinY,
+            m_cameraTarget.y + m_cameraDistance * sinP,
+            m_cameraTarget.z + m_cameraDistance * cosP * cosY
+        };
 
+        DirectX::XMVECTOR vEye = DirectX::XMLoadFloat3(&eye);
+        DirectX::XMVECTOR vTarget = DirectX::XMLoadFloat3(&m_cameraTarget);
+        DirectX::XMVECTOR vFwd = DirectX::XMVector3Normalize(DirectX::XMVectorSubtract(vTarget, vEye));
+
+        DirectX::XMVECTOR vWorldUp = DirectX::XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
+        DirectX::XMVECTOR vRight = DirectX::XMVector3Normalize(DirectX::XMVector3Cross(vFwd, vWorldUp));
+        DirectX::XMVECTOR vCameraUp = DirectX::XMVector3Normalize(DirectX::XMVector3Cross(vRight, vFwd));
+
+        float panSpeed = m_cameraDistance * 0.0013f;
         DirectX::XMVECTOR offset = DirectX::XMVectorAdd(
-            DirectX::XMVectorScale(right, -deltaX * panSpeed),
-            DirectX::XMVectorScale(up, deltaY * panSpeed)
+            DirectX::XMVectorScale(vRight, deltaX * panSpeed),
+            DirectX::XMVectorScale(vCameraUp, deltaY * panSpeed)
         );
 
         m_cameraTarget.x += DirectX::XMVectorGetX(offset);
         m_cameraTarget.y += DirectX::XMVectorGetY(offset);
         m_cameraTarget.z += DirectX::XMVectorGetZ(offset);
     } else if (buttonState == 3) {
-        // Smooth Drag Zoom (Alt + RMB)
-        float zoomSpeed = 0.015f;
-        m_cameraDistance *= (1.0f - deltaY * zoomSpeed);
-        float minDist = std::max(0.001f, m_sceneRadius * 0.005f);
-        float maxDist = std::max(500.0f, m_sceneRadius * 50.0f);
+        // Maya Dolly (Zoom): Alt + RMB drag
+        float delta = deltaX - deltaY;
+        float zoomFactor = 1.0f - delta * 0.007f;
+        m_cameraDistance *= zoomFactor;
+        float minDist = std::max(0.001f, m_sceneRadius * 0.002f);
+        float maxDist = std::max(1000.0f, m_sceneRadius * 100.0f);
         m_cameraDistance = std::clamp(m_cameraDistance, minDist, maxDist);
     }
 
-    // Scroll Wheel Zoom: Fast, responsive exponential zoom
+    // Scroll Wheel Zoom: Smooth exponential dolly
     if (wheelDelta != 0.0f) {
-        // ~20% zoom change per scroll notch
-        float zoomFactor = std::pow(0.80f, wheelDelta);
+        float zoomFactor = std::pow(0.85f, wheelDelta);
         m_cameraDistance *= zoomFactor;
-
-        float minDist = std::max(0.001f, m_sceneRadius * 0.005f);
-        float maxDist = std::max(500.0f, m_sceneRadius * 50.0f);
+        float minDist = std::max(0.001f, m_sceneRadius * 0.002f);
+        float maxDist = std::max(1000.0f, m_sceneRadius * 100.0f);
         m_cameraDistance = std::clamp(m_cameraDistance, minDist, maxDist);
     }
 }
 
-void ViewportRenderer::UpdateConstantBuffer(const DirectX::XMMATRIX& world, const DirectX::XMFLOAT4& color, int mode) {
+void ViewportRenderer::UpdateConstantBuffer(const DirectX::XMMATRIX& world, const DirectX::XMFLOAT4& color, int mode, int hasNormalMap) {
     // Camera Eye calculation
     float cosP = std::cos(m_cameraPitch);
     float sinP = std::sin(m_cameraPitch);
@@ -699,6 +944,13 @@ void ViewportRenderer::UpdateConstantBuffer(const DirectX::XMMATRIX& world, cons
         cb->CameraPos = { eyePos.x, eyePos.y, eyePos.z, 1.0f };
         cb->ShadingMode = mode;
         cb->Opacity = (mode == 4 ? 0.9f : (mode == 5 ? 0.35f : color.w));
+        cb->HasNormalMap = hasNormalMap;
+        cb->GridScale = (std::max)(m_cameraDistance, 1.0f);
+        cb->CheckerOn = showUVChecker ? 1 : 0;
+        cb->StretchOn = showUVStretch ? 1 : 0;
+        cb->StretchRange = uvStretchRange;
+        // World = mesh * lpScale, so UV-per-world shrinks as the mesh grows (uniform scale assumed)
+        cb->UVTexelScale = m_uvTexelScale / (std::max)(m_lpScale.x, 1e-6f);
         m_context->Unmap(m_constantBuffer, 0);
     }
 }
@@ -752,8 +1004,8 @@ void ViewportRenderer::Render() {
     vp.MaxDepth = 1.0f;
     m_context->RSSetViewports(1, &vp);
 
-    // Blender 4.x/5.x open medium slate viewport background
-    const float clearColor[4] = { 0.30f, 0.305f, 0.315f, 1.0f };
+    // 3D viewport background: mid-dark gray so meshes, grid and wire read clearly
+    const float clearColor[4] = { 48.0f / 255.0f, 48.0f / 255.0f, 51.0f / 255.0f, 1.0f };
     m_context->ClearRenderTargetView(m_colorRTV, clearColor);
     m_context->ClearDepthStencilView(m_depthDSV, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
 
@@ -804,7 +1056,7 @@ void ViewportRenderer::Render() {
         m_context->RSSetState(m_solidRS);
 
         int mode = (int)highPolyShading;
-        DirectX::XMFLOAT4 hpColor = { 0.82f, 0.77f, 0.70f, highPolyOpacity };
+        DirectX::XMFLOAT4 hpColor = { 0.92f, 0.92f, 0.94f, highPolyOpacity };
         UpdateConstantBuffer(identity, hpColor, mode);
 
         m_context->IASetVertexBuffers(0, 1, &m_highPolyGPU.vertexBuffer, &stride, &offset);
@@ -815,22 +1067,35 @@ void ViewportRenderer::Render() {
     // 3. Render Low-Poly Mesh
     if (showLowPoly && m_lowPolyGPU.vertexBuffer) {
         // Shaded surface
-        m_context->OMSetBlendState(showHighPoly ? m_alphaBlendState : m_opaqueBlendState, nullptr, 0xFFFFFFFF);
-        m_context->RSSetState(m_solidNoCullRS);
+        bool isTransparent = (lowPolyOpacity < 0.999f) || (showHighPoly && m_highPolyGPU.vertexBuffer != nullptr && lowPolyOpacity < 0.999f);
+        m_context->OMSetBlendState(isTransparent ? m_alphaBlendState : m_opaqueBlendState, nullptr, 0xFFFFFFFF);
+        m_context->RSSetState(m_solidRS);
 
-        DirectX::XMFLOAT4 lpColor = { 0.65f, 0.63f, 0.58f, lowPolyOpacity };
-        UpdateConstantBuffer(worldLP, lpColor, 3); // Warm graphite/clay
+        bool useNormalMap = (showBakedNormals && m_bakedNormalSRV != nullptr);
+        if (useNormalMap) {
+            m_context->PSSetShaderResources(0, 1, &m_bakedNormalSRV);
+            m_context->PSSetSamplers(0, 1, &m_linearSampler);
+        }
+
+        DirectX::XMFLOAT4 lpColor = { 0.92f, 0.92f, 0.94f, lowPolyOpacity };
+        int lpMode = showSkew ? 6 : ((showUVChecker || showUVStretch) ? 8 : (int)highPolyShading);
+        UpdateConstantBuffer(worldLP, lpColor, lpMode, useNormalMap ? 1 : 0);
 
         m_context->IASetVertexBuffers(0, 1, &m_lowPolyGPU.vertexBuffer, &stride, &offset);
         m_context->IASetIndexBuffer(m_lowPolyGPU.indexBuffer, DXGI_FORMAT_R32_UINT, 0);
         m_context->DrawIndexed(m_lowPolyGPU.indexCount, 0, 0);
+
+        if (useNormalMap) {
+            ID3D11ShaderResourceView* nullSRV = nullptr;
+            m_context->PSSetShaderResources(0, 1, &nullSRV);
+        }
 
         // Wireframe overlay (Pure polygon edges, NO diagonal triangulation splits!)
         if (showLowPolyWireframe) {
             m_context->OMSetBlendState(m_alphaBlendState, nullptr, 0xFFFFFFFF);
             m_context->RSSetState(m_wireframeRS);
 
-            DirectX::XMFLOAT4 wireColor = { 0.10f, 0.12f, 0.15f, 0.90f };
+            DirectX::XMFLOAT4 wireColor = { 0.26f, 0.26f, 0.26f, 0.85f };
             UpdateConstantBuffer(worldLP, wireColor, 4);
 
             if (m_lowPolyWireGPU.indexBuffer && m_lowPolyWireGPU.indexCount > 0) {
@@ -845,6 +1110,36 @@ void ViewportRenderer::Render() {
                 m_context->DrawIndexed(m_lowPolyGPU.indexCount, 0, 0);
             }
         }
+
+        // 3b. Marked Cut Seams (Vivid Neon Cyan)
+        if (showSeams && m_seamLineGPU.indexBuffer && m_seamLineGPU.indexCount > 0) {
+            m_context->OMSetBlendState(m_alphaBlendState, nullptr, 0xFFFFFFFF);
+            m_context->RSSetState(m_wireframeRS);
+
+            DirectX::XMFLOAT4 seamColor = { 0.12f, 0.90f, 1.0f, 1.0f }; // Neon Cyan
+            UpdateConstantBuffer(worldLP, seamColor, 4);
+
+            m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_LINELIST);
+            m_context->IASetVertexBuffers(0, 1, &m_lowPolyGPU.vertexBuffer, &stride, &offset);
+            m_context->IASetIndexBuffer(m_seamLineGPU.indexBuffer, DXGI_FORMAT_R32_UINT, 0);
+            m_context->DrawIndexed(m_seamLineGPU.indexCount, 0, 0);
+            m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        }
+
+        // 3c. Selected Edges (Bright Glowing Golden Yellow)
+        if (m_selectedEdgeGPU.indexBuffer && m_selectedEdgeGPU.indexCount > 0) {
+            m_context->OMSetBlendState(m_alphaBlendState, nullptr, 0xFFFFFFFF);
+            m_context->RSSetState(m_wireframeRS);
+
+            DirectX::XMFLOAT4 selColor = { 1.0f, 0.85f, 0.12f, 1.0f }; // Bright Golden Yellow
+            UpdateConstantBuffer(worldLP, selColor, 4);
+
+            m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_LINELIST);
+            m_context->IASetVertexBuffers(0, 1, &m_lowPolyGPU.vertexBuffer, &stride, &offset);
+            m_context->IASetIndexBuffer(m_selectedEdgeGPU.indexBuffer, DXGI_FORMAT_R32_UINT, 0);
+            m_context->DrawIndexed(m_selectedEdgeGPU.indexCount, 0, 0);
+            m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        }
     }
 
     // 4. Render Cage Shell (Marmoset Toolbag Warm Amber Cage)
@@ -853,7 +1148,7 @@ void ViewportRenderer::Render() {
         m_context->OMSetBlendState(m_alphaBlendState, nullptr, 0xFFFFFFFF);
         m_context->RSSetState(m_solidNoCullRS);
 
-        DirectX::XMFLOAT4 cageColor = { 1.0f, 0.52f, 0.12f, cageOpacity };
+        DirectX::XMFLOAT4 cageColor = { 0.30f, 0.88f, 0.72f, cageOpacity * 0.35f };
         UpdateConstantBuffer(worldLP, cageColor, 3);
 
         m_context->IASetVertexBuffers(0, 1, &m_cageGPU.vertexBuffer, &stride, &offset);
@@ -862,7 +1157,7 @@ void ViewportRenderer::Render() {
 
         // Cage wireframe (Pure polygon edges)
         m_context->RSSetState(m_wireframeRS);
-        DirectX::XMFLOAT4 cageWire = { 1.0f, 0.68f, 0.22f, 0.92f };
+        DirectX::XMFLOAT4 cageWire = { 0.30f, 0.88f, 0.72f, 0.85f };
         UpdateConstantBuffer(worldLP, cageWire, 4);
 
         if (m_cageWireGPU.indexBuffer && m_cageWireGPU.indexCount > 0) {
@@ -875,6 +1170,267 @@ void ViewportRenderer::Render() {
             m_context->DrawIndexed(m_cageGPU.indexCount, 0, 0);
         }
     }
+
+    // Unbind render targets to prevent D3D11 pipeline hazard when ImGui samples color SRV
+    ID3D11RenderTargetView* nullRTV = nullptr;
+    m_context->OMSetRenderTargets(1, &nullRTV, nullptr);
+}
+
+void ViewportRenderer::ClearBakedNormalMap() {
+    if (m_bakedNormalSRV) {
+        m_bakedNormalSRV->Release();
+        m_bakedNormalSRV = nullptr;
+    }
+    if (m_bakedNormalTex) {
+        m_bakedNormalTex->Release();
+        m_bakedNormalTex = nullptr;
+    }
+    m_bakedNormalWidth = 0;
+    m_bakedNormalHeight = 0;
+    m_hasBakedNormalMap = false;
+}
+
+void ViewportRenderer::SetBakedNormalMap(const float* r, const float* g, const float* b, int width, int height) {
+    if (!r || !g || !b || width <= 0 || height <= 0 || !m_device) return;
+
+    size_t totalPixels = static_cast<size_t>(width) * height;
+    std::vector<uint8_t> rgba(totalPixels * 4);
+
+    for (size_t i = 0; i < totalPixels; ++i) {
+        float rf = std::clamp(r[i], 0.0f, 1.0f);
+        float gf = std::clamp(g[i], 0.0f, 1.0f);
+        float bf = std::clamp(b[i], 0.0f, 1.0f);
+
+        rgba[i * 4 + 0] = static_cast<uint8_t>(rf * 255.0f + 0.5f);
+        rgba[i * 4 + 1] = static_cast<uint8_t>(gf * 255.0f + 0.5f);
+        rgba[i * 4 + 2] = static_cast<uint8_t>(bf * 255.0f + 0.5f);
+        rgba[i * 4 + 3] = 255;
+    }
+
+    // Dynamic streaming update if dimensions match existing GPU texture
+    if (m_bakedNormalTex && m_bakedNormalSRV && m_bakedNormalWidth == width && m_bakedNormalHeight == height && m_context) {
+        m_context->UpdateSubresource(m_bakedNormalTex, 0, nullptr, rgba.data(), static_cast<UINT>(width * 4), 0);
+        m_hasBakedNormalMap = true;
+        showBakedNormals = true;
+        return;
+    }
+
+    ClearBakedNormalMap();
+
+    D3D11_TEXTURE2D_DESC desc = {};
+    desc.Width = static_cast<UINT>(width);
+    desc.Height = static_cast<UINT>(height);
+    desc.MipLevels = 1;
+    desc.ArraySize = 1;
+    desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    desc.SampleDesc.Count = 1;
+    desc.SampleDesc.Quality = 0;
+    desc.Usage = D3D11_USAGE_DEFAULT; // D3D11_USAGE_DEFAULT allows UpdateSubresource for live progressive streaming
+    desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+
+    D3D11_SUBRESOURCE_DATA initData = {};
+    initData.pSysMem = rgba.data();
+    initData.SysMemPitch = static_cast<UINT>(width * 4);
+    initData.SysMemSlicePitch = static_cast<UINT>(totalPixels * 4);
+
+    HRESULT hr = m_device->CreateTexture2D(&desc, &initData, &m_bakedNormalTex);
+    if (FAILED(hr)) return;
+
+    D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+    srvDesc.Format = desc.Format;
+    srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+    srvDesc.Texture2D.MostDetailedMip = 0;
+    srvDesc.Texture2D.MipLevels = 1;
+
+    hr = m_device->CreateShaderResourceView(m_bakedNormalTex, &srvDesc, &m_bakedNormalSRV);
+    if (SUCCEEDED(hr)) {
+        m_bakedNormalWidth = width;
+        m_bakedNormalHeight = height;
+        m_hasBakedNormalMap = true;
+        showBakedNormals = true;
+    }
+}
+
+void ViewportRenderer::UpdateSkew(const LowPolyMesh& mesh, float scaleMultiplier) {
+    if (!m_lowPolyGPU.vertexBuffer || mesh.vertices.empty()) return;
+
+    float s = scaleMultiplier > 1e-5f ? scaleMultiplier : 1.0f;
+    bool hasSkew = mesh.HasVertexSkew();
+
+    std::vector<ViewportVertex> verts(mesh.vertices.size());
+    for (size_t i = 0; i < mesh.vertices.size(); ++i) {
+        float px = mesh.vertices[i].position.x * s;
+        float py = mesh.vertices[i].position.y * s;
+        float pz = mesh.vertices[i].position.z * s;
+        verts[i].pos = { px, py, pz };
+        verts[i].norm = { mesh.vertices[i].normal.x, mesh.vertices[i].normal.y, mesh.vertices[i].normal.z };
+        verts[i].uv = { mesh.vertices[i].uv.u, mesh.vertices[i].uv.v };
+
+        Vec3 n = mesh.vertices[i].normal;
+        Vec3 t(mesh.vertices[i].tangent.x, mesh.vertices[i].tangent.y, mesh.vertices[i].tangent.z);
+        Vec3 b = n.Cross(t) * mesh.vertices[i].tangent.w;
+        verts[i].tangent = { t.x, t.y, t.z };
+        verts[i].bitangent = { b.x, b.y, b.z };
+
+        float sk = hasSkew ? mesh.vertexSkew[i] : 0.0f;
+        verts[i].color = { 1.0f, 0.62f, 0.08f, sk };
+    }
+
+    if (m_context && m_lowPolyGPU.vertexBuffer && m_lowPolyGPU.vertexCount == verts.size()) {
+        m_context->UpdateSubresource(m_lowPolyGPU.vertexBuffer, 0, nullptr, verts.data(), 0, 0);
+    }
+}
+
+void ViewportRenderer::UpdateSeams(const LowPolyMesh& mesh) {
+    m_seamLineGPU.Release();
+    if (mesh.seamLineIndices.empty() || !m_device) return;
+
+    D3D11_BUFFER_DESC sibd = {};
+    sibd.ByteWidth = static_cast<UINT>(mesh.seamLineIndices.size() * sizeof(uint32_t));
+    sibd.Usage = D3D11_USAGE_DEFAULT;
+    sibd.BindFlags = D3D11_BIND_INDEX_BUFFER;
+    D3D11_SUBRESOURCE_DATA siInit = { mesh.seamLineIndices.data() };
+    m_device->CreateBuffer(&sibd, &siInit, &m_seamLineGPU.indexBuffer);
+    m_seamLineGPU.indexCount = static_cast<uint32_t>(mesh.seamLineIndices.size());
+}
+
+void ViewportRenderer::UpdateSelectedEdges(const LowPolyMesh& mesh) {
+    m_selectedEdgeGPU.Release();
+    if (mesh.selectedEdgeLineIndices.empty() || !m_device) return;
+
+    D3D11_BUFFER_DESC sibd = {};
+    sibd.ByteWidth = static_cast<UINT>(mesh.selectedEdgeLineIndices.size() * sizeof(uint32_t));
+    sibd.Usage = D3D11_USAGE_DEFAULT;
+    sibd.BindFlags = D3D11_BIND_INDEX_BUFFER;
+    D3D11_SUBRESOURCE_DATA siInit = { mesh.selectedEdgeLineIndices.data() };
+    m_device->CreateBuffer(&sibd, &siInit, &m_selectedEdgeGPU.indexBuffer);
+    m_selectedEdgeGPU.indexCount = static_cast<uint32_t>(mesh.selectedEdgeLineIndices.size());
+}
+
+DirectX::XMMATRIX ViewportRenderer::GetLowPolyWorldMatrix() const {
+    return DirectX::XMMatrixMultiply(
+        DirectX::XMMatrixMultiply(
+            DirectX::XMMatrixScaling(m_lpScale.x, m_lpScale.y, m_lpScale.z),
+            DirectX::XMMatrixRotationRollPitchYaw(
+                DirectX::XMConvertToRadians(m_lpRotation.x),
+                DirectX::XMConvertToRadians(m_lpRotation.y),
+                DirectX::XMConvertToRadians(m_lpRotation.z)
+            )
+        ),
+        DirectX::XMMatrixTranslation(m_lpTranslation.x, m_lpTranslation.y, m_lpTranslation.z)
+    );
+}
+
+DirectX::XMMATRIX ViewportRenderer::GetViewProjectionMatrix() const {
+    float cosP = std::cos(m_cameraPitch);
+    float sinP = std::sin(m_cameraPitch);
+    float cosY = std::cos(m_cameraYaw);
+    float sinY = std::sin(m_cameraYaw);
+
+    DirectX::XMFLOAT3 eyePos = {
+        m_cameraTarget.x + m_cameraDistance * cosP * sinY,
+        m_cameraTarget.y + m_cameraDistance * sinP,
+        m_cameraTarget.z + m_cameraDistance * cosP * cosY
+    };
+
+    DirectX::XMVECTOR eye = DirectX::XMLoadFloat3(&eyePos);
+    DirectX::XMVECTOR target = DirectX::XMLoadFloat3(&m_cameraTarget);
+    DirectX::XMVECTOR up = DirectX::XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
+    DirectX::XMMATRIX view = DirectX::XMMatrixLookAtLH(eye, target, up);
+    float aspect = (m_vpHeight > 0) ? ((float)m_vpWidth / (float)m_vpHeight) : 1.0f;
+    DirectX::XMMATRIX proj = DirectX::XMMatrixPerspectiveFovLH(
+        DirectX::XMConvertToRadians(45.0f),
+        aspect,
+        0.05f,
+        10000.0f
+    );
+    return DirectX::XMMatrixMultiply(view, proj);
+}
+
+bool ViewportRenderer::UnprojectRay(float screenX, float screenY, DirectX::XMFLOAT3& outRayOrg, DirectX::XMFLOAT3& outRayDir) const {
+    if (m_vpWidth <= 0 || m_vpHeight <= 0) return false;
+
+    float cosP = std::cos(m_cameraPitch);
+    float sinP = std::sin(m_cameraPitch);
+    float cosY = std::cos(m_cameraYaw);
+    float sinY = std::sin(m_cameraYaw);
+
+    DirectX::XMFLOAT3 eyePos = {
+        m_cameraTarget.x + m_cameraDistance * cosP * sinY,
+        m_cameraTarget.y + m_cameraDistance * sinP,
+        m_cameraTarget.z + m_cameraDistance * cosP * cosY
+    };
+
+    DirectX::XMVECTOR eye = DirectX::XMLoadFloat3(&eyePos);
+    DirectX::XMVECTOR target = DirectX::XMLoadFloat3(&m_cameraTarget);
+    DirectX::XMVECTOR up = DirectX::XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
+
+    DirectX::XMMATRIX view = DirectX::XMMatrixLookAtLH(eye, target, up);
+    float aspect = (float)m_vpWidth / (float)m_vpHeight;
+    DirectX::XMMATRIX proj = DirectX::XMMatrixPerspectiveFovLH(
+        DirectX::XMConvertToRadians(45.0f),
+        aspect,
+        0.05f,
+        10000.0f
+    );
+
+    DirectX::XMMATRIX invViewProj = DirectX::XMMatrixInverse(nullptr, DirectX::XMMatrixMultiply(view, proj));
+
+    float ndcX = (2.0f * screenX) / (float)m_vpWidth - 1.0f;
+    float ndcY = 1.0f - (2.0f * screenY) / (float)m_vpHeight;
+
+    DirectX::XMVECTOR nearPointNDC = DirectX::XMVectorSet(ndcX, ndcY, 0.0f, 1.0f);
+    DirectX::XMVECTOR farPointNDC  = DirectX::XMVectorSet(ndcX, ndcY, 1.0f, 1.0f);
+
+    DirectX::XMVECTOR nearWorld = DirectX::XMVector3TransformCoord(nearPointNDC, invViewProj);
+    DirectX::XMVECTOR farWorld  = DirectX::XMVector3TransformCoord(farPointNDC, invViewProj);
+
+    DirectX::XMVECTOR dir = DirectX::XMVector3Normalize(DirectX::XMVectorSubtract(farWorld, nearWorld));
+
+    DirectX::XMStoreFloat3(&outRayOrg, nearWorld);
+    DirectX::XMStoreFloat3(&outRayDir, dir);
+    return true;
+}
+
+bool ViewportRenderer::ProjectToScreen(const DirectX::XMFLOAT3& worldPos, float& outScreenX, float& outScreenY) const {
+    if (m_vpWidth <= 0 || m_vpHeight <= 0) return false;
+
+    float cosP = std::cos(m_cameraPitch);
+    float sinP = std::sin(m_cameraPitch);
+    float cosY = std::cos(m_cameraYaw);
+    float sinY = std::sin(m_cameraYaw);
+
+    DirectX::XMFLOAT3 eyePos = {
+        m_cameraTarget.x + m_cameraDistance * cosP * sinY,
+        m_cameraTarget.y + m_cameraDistance * sinP,
+        m_cameraTarget.z + m_cameraDistance * cosP * cosY
+    };
+
+    DirectX::XMVECTOR eye = DirectX::XMLoadFloat3(&eyePos);
+    DirectX::XMVECTOR target = DirectX::XMLoadFloat3(&m_cameraTarget);
+    DirectX::XMVECTOR up = DirectX::XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
+
+    DirectX::XMMATRIX view = DirectX::XMMatrixLookAtLH(eye, target, up);
+    float aspect = (float)m_vpWidth / (float)m_vpHeight;
+    DirectX::XMMATRIX proj = DirectX::XMMatrixPerspectiveFovLH(
+        DirectX::XMConvertToRadians(45.0f),
+        aspect,
+        0.05f,
+        10000.0f
+    );
+
+    DirectX::XMVECTOR pW = DirectX::XMLoadFloat3(&worldPos);
+    DirectX::XMVECTOR pView = DirectX::XMVector3Transform(pW, view);
+    if (DirectX::XMVectorGetZ(pView) <= 0.05f) return false;
+
+    DirectX::XMVECTOR pClip = DirectX::XMVector3TransformCoord(pW, DirectX::XMMatrixMultiply(view, proj));
+
+    float ndcX = DirectX::XMVectorGetX(pClip);
+    float ndcY = DirectX::XMVectorGetY(pClip);
+
+    outScreenX = (ndcX + 1.0f) * 0.5f * (float)m_vpWidth;
+    outScreenY = (1.0f - ndcY) * 0.5f * (float)m_vpHeight;
+    return true;
 }
 
 } // namespace Baker

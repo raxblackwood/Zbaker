@@ -9,10 +9,12 @@
 namespace Baker {
 
 enum class ShadingMode {
-    ClayMatcap = 0,     // Substance/ZBrush warm clay
-    WaxRed = 1,         // ZBrush classic wax preview
-    NormalColor = 2,    // Visualized surface normals
-    FlatShaded = 3      // Clean flat shaded
+    StudioWhite = 0,    // Clean Blender Studio White (Default)
+    ClayMatcap = 1,     // Substance/ZBrush warm clay
+    WaxRed = 2,         // ZBrush classic wax preview
+    NormalColor = 3,    // Visualized surface normals
+    FlatShaded = 7,     // Clean flat shaded
+    SkewHeatmap = 6     // Marmoset-style skew correction visualization
 };
 
 class ViewportRenderer {
@@ -30,6 +32,15 @@ public:
     void SetLowPolyMesh(const LowPolyMesh& mesh, float scaleMultiplier);
     void SetHighPolyMesh(const HighPolyMesh& mesh);
     void UpdateCage(const LowPolyMesh& mesh, float cageDistance, float scaleMultiplier);
+    void UpdateSkew(const LowPolyMesh& mesh, float scaleMultiplier = 1.0f);
+    void UpdateSeams(const LowPolyMesh& mesh);
+    void UpdateSelectedEdges(const LowPolyMesh& mesh);
+
+    // Marmoset 3D interactive brush ray-casting
+    bool UnprojectRay(float screenX, float screenY, DirectX::XMFLOAT3& outRayOrg, DirectX::XMFLOAT3& outRayDir) const;
+    bool ProjectToScreen(const DirectX::XMFLOAT3& worldPos, float& outScreenX, float& outScreenY) const;
+    DirectX::XMMATRIX GetLowPolyWorldMatrix() const;
+    DirectX::XMMATRIX GetViewProjectionMatrix() const;
 
     // Render 3D scene to offscreen texture
     void Render();
@@ -38,6 +49,7 @@ public:
     ID3D11ShaderResourceView* GetViewportSRV() const { return m_colorSRV; }
     int GetWidth() const { return m_vpWidth; }
     int GetHeight() const { return m_vpHeight; }
+    const std::string& GetLastError() const { return m_lastError; }
 
     // Camera control
     void HandleMouseInput(float deltaX, float deltaY, int buttonState, float wheelDelta);
@@ -50,15 +62,27 @@ public:
     DirectX::XMFLOAT3 GetHighPolyExtents() const;
     DirectX::XMFLOAT3 GetLowPolyExtents() const;
 
+    // Normal Map Preview
+    void SetBakedNormalMap(const float* r, const float* g, const float* b, int width, int height);
+    void ClearBakedNormalMap();
+    bool HasBakedNormalMap() const { return m_hasBakedNormalMap; }
+    ID3D11ShaderResourceView* GetBakedNormalSRV() const { return m_bakedNormalSRV; }
+
     // Display Toggles & Settings
     bool showHighPoly = true;
     bool showLowPoly = true;
     bool showLowPolyWireframe = true;
     bool showCage = false;
+    bool showSkew = false;
+    bool showSeams = true;
     bool showGrid = true;
-    ShadingMode highPolyShading = ShadingMode::ClayMatcap;
+    bool showUVChecker = false;  // procedural UV checker on the low-poly mesh
+    bool showUVStretch = false;  // per-pixel stretch/compression heat (blue = compressed, green = ok, red = stretched)
+    float uvStretchRange = 1.0f; // +/- log2 texel-density deviation mapped to full blue/red (1 = 2x)
+    bool showBakedNormals = true;
+    ShadingMode highPolyShading = ShadingMode::StudioWhite;
     float highPolyOpacity = 1.0f;
-    float lowPolyOpacity = 0.85f;
+    float lowPolyOpacity = 1.0f;
     float cageOpacity = 0.4f;
 
     DirectX::XMFLOAT3 m_lpTranslation = { 0.0f, 0.0f, 0.0f };
@@ -69,7 +93,7 @@ private:
     bool CreateShaders();
     bool CreateRasterizerAndBlendStates();
     void CreateGridBuffers();
-    void UpdateConstantBuffer(const DirectX::XMMATRIX& world, const DirectX::XMFLOAT4& color, int mode);
+    void UpdateConstantBuffer(const DirectX::XMMATRIX& world, const DirectX::XMFLOAT4& color, int mode, int hasNormalMap = 0);
 
     ID3D11Device* m_device = nullptr;
     ID3D11DeviceContext* m_context = nullptr;
@@ -96,6 +120,15 @@ private:
     ID3D11DepthStencilState* m_depthBiasState = nullptr;
     ID3D11BlendState* m_alphaBlendState = nullptr;
     ID3D11BlendState* m_opaqueBlendState = nullptr;
+    ID3D11SamplerState* m_linearSampler = nullptr;
+
+    // Normal map preview resource
+    ID3D11Texture2D* m_bakedNormalTex = nullptr;
+    ID3D11ShaderResourceView* m_bakedNormalSRV = nullptr;
+    int m_bakedNormalWidth = 0;
+    int m_bakedNormalHeight = 0;
+    bool m_hasBakedNormalMap = false;
+    float m_uvTexelScale = 0.0f; // UV units per world unit (area-weighted mean), 0 when the mesh has no UVs
 
     // Mesh GPU Buffers
     struct MeshGPUBuffer {
@@ -117,6 +150,8 @@ private:
     MeshGPUBuffer m_lowPolyWireGPU; // Pure polygon edges (no internal triangulation diagonals!)
     MeshGPUBuffer m_cageGPU;
     MeshGPUBuffer m_cageWireGPU;
+    MeshGPUBuffer m_seamLineGPU;
+    MeshGPUBuffer m_selectedEdgeGPU;
     MeshGPUBuffer m_groundPlaneGPU; // Blender-style procedural anti-aliased ground plane
 
     // Camera State
@@ -135,6 +170,8 @@ private:
     DirectX::XMFLOAT3 m_lowPolyMax = { 10.0f, 10.0f, 10.0f };
     DirectX::XMFLOAT3 m_highPolyMin = { -10.0f, -10.0f, -10.0f };
     DirectX::XMFLOAT3 m_highPolyMax = { 10.0f, 10.0f, 10.0f };
+
+    std::string m_lastError;
 
     void FrameBounds(const DirectX::XMFLOAT3& minB, const DirectX::XMFLOAT3& maxB);
     void RecalculateSceneBounds();

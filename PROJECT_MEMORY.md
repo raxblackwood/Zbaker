@@ -1,0 +1,342 @@
+# Project Memory: ZBrush UDIM Baker
+
+**Project Code Name**: `zbrush-udim-baker`  
+**Root Repository**: `e:\CODES\zbrush plugins\baker`  
+**Standalone Directory**: `E:\CODES\standalone_baker`  
+**ZBrush Plugin Directory**: `C:\Program Files\Maxon ZBrush 2026\ZStartup\ZPlugs64\UDIMBakerData`  
+**Last Updated**: `2026-10-24T19:30:00+05:30`  
+**Status**: `Active | ZBrush Plugin Priority Focus | Standalone Paused | Production Ready`
+
+---
+
+## 1. Executive Summary & Purpose
+Maxon ZBrush handles 100M+ polygon digital sculpts via an implicit-quad CPU rasterizer, but lacks native support for modern **UDIM multi-tile UV layouts** (e.g. 1001, 1002, 1003...).
+Exporting 50M-100M polygon OBJs to external baking tools (Substance Painter, Marmoset Toolbag) creates prohibitive 10-30 GB files and halts production.
+
+**ZBrush UDIM Baker** is an enterprise hardware-accelerated baking companion:
+1. **Host ZPlugin**: A one-click button in ZBrush (`ZPlugin:UDIM Baker -> Launch UDIM Baker`).
+2. **Native C-ABI Bridge**: `UDIMBakerBridge.dll` streams high-poly cache data non-blocking via `DETACHED_PROCESS`.
+3. **Companion Viewport**: `UDIMBakerApp.exe` featuring a Direct3D 11 3D viewport, 2D UDIM canvas, and a Blender Dark docking interface.
+4. **Hardware Ray-Tracing Core**: Intel Embree 3.13.5 multithreaded ray tracer with MikkTSpace tangent basis, bidirectional ray casting, closest-distance depth arbitration, and Jump Flooding dilation (JFA).
+
+### 1.1 Development Focus Directive (MANDATORY)
+Standalone application development is temporarily paused per user directive.
+All ongoing engineering, debugging, and feature development is strictly focused on the ZBrush plugin.
+Do not work on the standalone application until the user explicitly requests to resume standalone work.
+Once the plugin workflow and architecture are completely finalized, necessary adaptations will be applied back to the standalone application.
+
+---
+
+## 2.0 UI Redesign - Workflow Layout (2026-11-11, supersedes 2.2 and 2.5 below)
+The companion app is now one linear flow: **Import -> UV -> Bake**, picked from a stepper in the header bar.
+Layout: Viewport (centre), a **Scene** window (left: outliner of meshes on top, details of the selected mesh below) and an **Actions** window (right, UV tools or bake settings per step), no dock or menu bar; log is an overlay.
+The step's primary action is pinned at the bottom of the Inspector (Continue to UV / Auto UV / START BAKE).
+Removed because they duplicated each other: Scene Outliner, Properties, Mesh Ingestion, Bake Parameters panels, UDIM Layout panel, floating bake bar, Bake/Edit/UV menus.
+Header right: one 3D | 2D | Split layout control plus Undo / Redo. Menus left: File, Select (UV step only), View, Help.
+Code: `UIManager::RenderScenePanel/RenderActionPanel/RenderUVStep/RenderBakeStep`, `BakerUI::BeginStageHost/BeginSidePanel/StepTab`.
+The standalone app still uses the old `BeginFrameHost` (paused per 1.1).
+Invariant: `BakerUI::BeginCard` closes its child itself when clipped, so callers call `EndCard()` only when it returned true.
+Visual pass (2026-11-11): UI grays, 3D viewport clear colour (#303033) and UV canvas lifted one step for legibility. UV wire draws faint triangulation under bright polygon edges.
+Cage is a property of the game mesh, not a scene object: the Cage card (show toggle, custom cage open/remove) lives in the Game mesh details. Outliner rows have a right-click menu (Replace/Add, Toggle Visibility, Delete) using the same registry commands.
+Next: confirm on screen after rebuild (exe was locked by the running companion at last build); optional row info popup if the user still wants an "i" menu.
+
+## 2.0b UV Navigation Gap Pass (2026-11-12)
+Audit of the UV step against the Maya UV Editor found the marking menu hard-coded (duplicated logic, overlapping labels), no right-click menu, and curve tools with no way to hide or apply a curve separately.
+Marking menu (`UIManager::RenderMarkingMenu`, `kMarkingWedges`) is now driven by the CommandRegistry: Cut, Edge ring, Edge loop, Auto UV, Sew, Clear selection, Unwrap, Camera projection.
+Shift+RMB and flick runs a wedge on release; releasing without a flick leaves it open (sticky) so labels can be clicked; Esc closes it. Disabled wedges are dimmed and show the reason.
+Right-click without dragging opens a registry-built context menu (`UpdateContextMenuTrigger`, `RenderContextMenu`). RMB drag still dollies (3D) or pans (2D).
+New registry commands: `select.seams`, `uv.camera_project`, `uv.project_x/y/z`, `uv.align_*` (6), `uv.mark_seams_polygroup`, `uv.mark_seams_uv_borders`, plus the curve set below.
+Curves: `SurfaceCurve::visible`, a curve list with eye toggles, Mark as Seam (keeps topology), Cut Mesh (splits polygons), Mark All / Cut All (skip hidden curves), Show / Hide All.
+Behaviour changes: Enter now only finishes the curve and starts the next (it no longer cuts the mesh); right-click no longer commits a curve; Esc leaves the curve tool; Delete removes the selected point.
+Still open vs Maya: grow / shrink / invert / convert selection, select all, move and sew, cylindrical and spherical projection, relax brush, pin, isolate, snap to grid, normalize / unitize, distribute, hotkeys for Cut / Sew / Unwrap / Pack, Frame Selected hotkey.
+Verified by launching the build and driving it (marking menu, context menu, curve draw, Mark as Seam, Hide All). The Standalone app was not touched.
+
+## 2. Complete UI Design & Viewport Overview
+
+### 2.1 Visual Design Identity
+- **Visual Language**: Modeled on Blender 4.x/5.1 and Marmoset Toolbag 4.
+- **Color Palette (`BakerUI.h`)**:
+  - Background Canvas: Deep Slate Charcoal (`#1D1D1D`).
+  - Panel Body: Neutral Dark Gray (`#282828`).
+  - Cards & Inset Surfaces: (`#323232`).
+  - Signature Accent: Blender Warm Orange (`#E87D0D`), Hover (`#F68E28`), Active (`#B85F00`).
+  - Crisp Borders: Subtle Slate (`#1A1A1A`).
+- **Selectable Themes**: `Blender Dark` (Default), `Marmoset Ember` (`#FF7A18`), `Cyber Teal` (`#00D2B4`), `Studio Slate` (`#4E92F9`).
+- **Typography**: Inter (14px base, 14px SemiBold headings) with JetBrains Mono (13.3px monospace log).
+- **Rounding**: Subtle 4px radius on cards, buttons, tabs, and frames.
+
+### 2.2 Screen Layout & Docking Tree
+The window uses Dear ImGui `1.93.1 WIP` (docking branch) with DirectX 11 + Win32 backends:
+```text
++---------------------------------------------------------------------------------------------+
+| Main Menu Bar (File, View, Theme, Help)                                                     |
++----------------------------------------------------+----------------------------------------+
+|                                                    | Scene Outliner (ID: 0x05, 30% width)   |
+| Viewport (ID: 0x03, Central Node, No Tab Bar)      | - High-poly sculpt, Low-poly, Cage     |
+| - 3D Direct3D 11 Hardware Render Target            +----------------------------------------+
+| - Top Overlay Toolbar (Wireframe, Cage, Normals...) | Bake Parameters (ID: 0x06, Tab 1)      |
+| - Floating Bake Bar (Bottom Center)                | Mesh Ingestion  (ID: 0x06, Tab 2)      |
+|                                                    |                                        |
++----------------------------------------------------+                                        |
+| UDIM Layout (ID: 0x04, Tab 1, 26% height)          |                                        |
+| Output Log  (ID: 0x04, Tab 2, 26% height)          |                                        |
++----------------------------------------------------+----------------------------------------+
+| Status Bar (Status bullet, active message, live FPS monitor)                                |
++---------------------------------------------------------------------------------------------+
+```
+
+### 2.3 Window-by-Window Functions
+1. **3D Viewport (`Viewport###viewport`)**:
+   - Central D3D11 offscreen render target (`ID3D11ShaderResourceView*`) passed to `ImGui::Image`.
+   - **Top Overlay Chips**: `Wireframe` (quad-preserving lines without diagonal splits), `Cage`, `Normals`, `High-Poly`, `Low-Poly`, `Grid`, `MatCap`, `Reset Cam`.
+   - **Floating Bake Bar HUD**: Centered at bottom canvas. Shows tile count, resolution, and orange `"START BAKE"` button in idle state; morphs into animated progress bar during baking.
+2. **Scene Outliner (`Scene Outliner###outliner`)**:
+   - Tree hierarchy of scene assets with visibility eye icons and status pills (`"BVH Ready"`, `"Watertight"`).
+3. **Mesh Ingestion (`Mesh Ingestion###ingest`)**:
+   - Rounded cards for High-Poly sculpt, Low-Poly UV target, Auto-Alignment/Scale transforms, and Cage definition.
+4. **Bake Parameters (`Bake Parameters###params`)**:
+   - Projection heuristics: Resolution (`1024` to `8192`), AA (`1x` to `4x4`), Skew factor, Cage offset, Max ray length, Seam padding (32px), Discard Backface, Bidirectional rays.
+   - Marmoset Output Map Suite: Tangent Normal (MikkTSpace), World Normal, Displacement (32f EXR), AO, Cavity, Curvature, Thickness, World Position, Material ID, Base Color, Diagnostic Map.
+5. **UDIM Layout (`UDIM Layout###udim`)**:
+   - 2D UV coordinate visualizer displaying tile boxes (`[1001]`, `[1002]`, etc.) with wireframe overlays and toggle selection buttons.
+6. **Output Log (`Output Log###log`)**:
+   - Real-time timestamped console for BVH build times, ray-tracing statistics, and file save locations.
+7. **Status Bar (`##statusbar`)**:
+   - Bottom status indicator bullet, descriptive status string, and live FPS readout.
+
+### 2.4 UI State Machine
+The UI transitions through 6 distinct operational states:
+1. **Empty**: Cold start; ground grid rendered; floating bar disabled with prompt `"Load meshes in Mesh Ingestion tab"`.
+2. **Ingesting**: Mesh files reading; Intel Embree BVH building on background worker threads; amber status pills active.
+3. **Loaded**: Meshes in memory; watertight normals computed; floating bar enabled with bright orange button.
+4. **Baking**: Scanline ray casting active across CPU cores; floating bar morphs into progress fill; modal dialog active.
+5. **Results**: Maps saved to disk; viewport updates with normal map preview; green logs displayed.
+6. **Error**: Missing UVs or read errors; red status pills and warning tooltips displayed.
+
+### 2.5 Context-Aware Workspace Segregation
+The interface strictly partitions tools, menus, panels, and floating HUD elements between two primary operational workspaces.
+
+#### Shared Persistent Outliner
+- **Scene Outliner (`Scene Outliner###outliner`)**: Docked into `rightTop` and persistent across both workspaces.
+- In Bake Project mode, it displays the full scene hierarchy including Bake Groups, High-Poly sculpt, Low-Poly mesh, and Cage envelopes with visibility toggles and opacity controls.
+- In UV Cut & Pack mode, it displays the active Low-Poly target mesh, detected UDIM tiles checklist, marked seams count, selected edges count, and reference sculpt toggle.
+
+#### Bake Project Workspace
+- **Top Main Menus**: `File`, `Bake` (Start Bake, Clear Normal Preview), `View` (Outliner, Mesh Ingestion, Bake Parameters, Output Log, UDIM Layout), and `Help`.
+- **Viewport Overlay Toolbar**: Displays mesh visibility chips (`High`, `Low`, `Wire`, `Cage`, `Grid`, `Baked Normals`), interactive tools (`Navigate`, `Paint Cage`, `Paint Skew`), and studio shading mode combo.
+- **Right Panels**: Shows `Mesh Ingestion` and `Bake Parameters`.
+- **Bottom HUD**: Prominent `FloatingBakeBar` with tile count, resolution, and orange `[START BAKE]` button / animated progress bar.
+- **Focus**: Defaults viewport to `View3D` with focus on `Output Log`.
+
+#### UV Cut & Pack Workspace
+- **Top Main Menus**: `File`, `Edit` (Undo, Redo, Select Loop, Select Ring), `UV` (Auto Seams, Cut Seams, Sew Seams, Clear Seams, Conformal Unwrap, Pack UDIMs), `View`, and `Help`.
+- **Viewport Overlay Toolbar**: Displays geometry chips (`Low`, `Wire`, `Seams`, `Grid`), history buttons (`Undo`, `Redo`), interactive UV tools (`Navigate`, `Cut Seam`, `Curve Cut`), and studio shading mode combo.
+- **Right Panels**: Shows `UV Tool` with Maya gesture cutting, 3D surface curves, conformal unwrap, ZenUV texel density system, island stacking/alignment, and UVPackmaster 4 packing.
+- **Bottom HUD**: Sleek `FloatingUVBar` displaying live seam count, island count, `[Unwrap (Ctrl+U)]`, `[Pack (Ctrl+P)]`, and `[Export OBJ]`.
+- **Focus**: Defaults viewport to `Split 3D | 2D` with focus on `UDIM Layout`.
+
+### 2.6 ImGui Window Stack Invariant & Section Card Lifecycle
+- **Problem**: When switching dock tabs to `Bake Parameters`, an inactive `Mesh Ingestion` child window caused Dear ImGui assertions (`Must call EndChild() and not End()!`, `Missing PopStyleColor()`, `Missing PopStyleVar()`) that followed the mouse cursor.
+- **Root Cause**: In Dear ImGui, `BeginChild` returns false if the child or parent window is clipped or inactive.
+- The previous implementation returned `false` on early clipping without calling `EndChild()`, causing the caller to skip `EndSectionCard()` while the child remained unclosed on ImGui's stack.
+- Additionally, panel rendering methods (`RenderMeshPanel`, `RenderSettingsPanel`, `RenderOutlinerPanel`, `RenderUVCutAndPackPanel`, `RenderUDIMCanvasPanel`, `RenderBakeProgressPanel`) did not guard against `!ImGui::Begin()`.
+- **Resolution**:
+  1. `BeginSectionCard` now guarantees immediate cleanup (`EndChild()`, `PopStyleColor(2)`, `PopStyleVar(2)`) if `BeginChild` returns false, ensuring zero unclosed child windows on stack.
+  2. All panel rendering functions now cleanly early-exit with `if (!ImGui::Begin(...)) { ImGui::End(); return; }`.
+
+### 2.7 ZenUV and UVPackmaster 4 DCC Feature Parity
+- **Texel Density Toolkit**:
+  - Live calculation of 3D world area versus 2D UV area.
+  - Target Texel Density in px/cm with one-click uniform scaling across all UV shells.
+  - Equalize Texel Density button to eliminate texture stretching across multi-UDIM assets.
+- **Island Stacking & Overlap Arbitration**:
+  - Topological isomorphism detection to stack identical UV shells at identical UV coordinates for shared texture budget.
+  - Overlap separation mode to offset duplicate shells by +1 along U axis into isolated bake tiles.
+  - Straighten Islands (ZenUV Quadrify/Reshape) via 2D covariance principal axis alignment.
+  - Orient Islands to 3D World Up (+Y) vector.
+- **Advanced Heuristic Packing**:
+  - Configurable rotation search (0°, 90°, 45°, Free 1°).
+  - Lock overlapping islands option to preserve stacked symmetry shells during repack.
+  - Fixed scale packing mode to strictly preserve author-specified Texel Density.
+  - Multi-UDIM packing across tiles 1001-1010 with MaxRects BSSF heuristic search.
+
+---
+
+## 3. Normal Map Seam Resolution & Marmoset Alignment
+- **Problem Resolved**: Raw low-poly OBJs exported from ZBrush contain 0 `vn` directives. Marmoset Toolbag defaults to 100% smooth shading across all edges when importing meshes lacking normals.
+- **Solution Implemented**:
+  1. Default low-poly shading normal calculation updated to 180° crease angle (`SmoothNormalsIfMissing(180.0f)` in `MeshLoader.cpp` and `MeshTypes.h`), matching Marmoset and DCC standards.
+  2. Cage normals decoupled from shading normals (`ComputeWatertightCageNormals(180.0f)`) to guarantee watertight envelope ray casting without diagonal cross-over.
+  3. Default seam dilation increased to 32 pixels at 2K (64 pixels at 4K) via Jump Flooding Dilation (JFA) to eliminate mipmap background color bleeding.
+- **Verification Metrics**:
+  - Seam normal median error across all 189 seam vertices dropped from **28.01° down to 8.22°** (matching Marmoset's **6.71°**).
+  - Material shaded viewport comparison in Blender 5.1 demonstrates an average pixel difference of only **1.69 out of 255 levels** (less than 0.7% total difference).
+  - Exported low-poly mesh [`UDIM_LowPoly_LowPoly_Baked.obj`](file:///C:/Users/raman/Downloads/temp/bb/UDIM_LowPoly_LowPoly_Baked.obj) preserves 1,044 unique geometric vertices with explicit 100% smooth `vn` normals.
+
+---
+
+## 4. UI Handoff Package & Documentation Map
+All UI specifications, layout configs, and source codes are organized in [`docs/`](file:///e:/CODES/zbrush%20plugins/baker/docs/):
+- **UI Architecture Specification**: [`docs/UI_ARCHITECTURE.md`](file:///e:/CODES/zbrush%20plugins/baker/docs/UI_ARCHITECTURE.md) (Master UI architecture document).
+- **Full Widget Inventory**: [`docs/ui_handoff/UI_INVENTORY.md`](file:///e:/CODES/zbrush%20plugins/baker/docs/ui_handoff/UI_INVENTORY.md) (Every widget, label, state variable, callback, and shortcut).
+- **Known Layout Issues**: [`docs/ui_handoff/KNOWN_ISSUES.md`](file:///e:/CODES/zbrush%20plugins/baker/docs/ui_handoff/KNOWN_ISSUES.md) (Catalog of hard-coded pixel sizing, high-DPI scaling defects, and docking collisions).
+- **Docking Configuration**: [`docs/ui_handoff/DOCKING_LAYOUT.md`](file:///e:/CODES/zbrush%20plugins/baker/docs/ui_handoff/DOCKING_LAYOUT.md) and [`docs/ui_handoff/imgui.ini`](file:///e:/CODES/zbrush%20plugins/baker/docs/ui_handoff/imgui.ini).
+- **Screenshot Capture Guide**: [`docs/ui_handoff/SCREENSHOTS/SCREENSHOT_GUIDE.md`](file:///e:/CODES/zbrush%20plugins/baker/docs/ui_handoff/SCREENSHOTS/SCREENSHOT_GUIDE.md) (Visual checklist for capturing all 7 states at 1080p and 720p).
+- **UI Source Code Archive**: [`docs/ui_handoff/SOURCE/`](file:///e:/CODES/zbrush%20plugins/baker/docs/ui_handoff/SOURCE/) (Standalone copy of all ImGui and D3D11 viewport files).
+
+---
+
+## 5. Viewport Advancements & Ultra-Resolution Support
+
+### 5.1 Blender Dynamic Anti-Aliased Ground Grid
+The 3D ground plane has been completely upgraded from coarse pixelated line primitives to Blender's procedural multi-scale grid shader.
+- Evaluated entirely within the pixel shader using screen-space screen derivatives (`fwidth`).
+- Computes dual hierarchical subdivision scales (`s0` and `s1`) based on camera distance log-LOD.
+- Fine grid lines smoothly cross-fade into primary major grid units as the camera pulls back.
+- Colored primary coordinate axes: Red X axis (`z = 0`) and Green Z axis (`x = 0`).
+- Features smooth radial horizon fade (`1.0 - smoothstep(maxRadius * 0.45, maxRadius, dist)`), eliminating harsh edge clipping.
+
+### 5.2 Real-Time Baked Normal Map Viewport Preview
+The 3D viewport now supports immediate in-situ inspection of baked normal maps directly on the low-poly mesh.
+- Low-poly mesh vertices supply full tangent space frames (`pos`, `norm`, `uv`, `tangent`, `bitangent`).
+- Upon completion of a bake, the normal map buffer is staged to the Direct3D 11 render thread via `SetBakedNormalMap`.
+- The pixel shader samples the normal map texture at `input.UV` and re-orthogonalizes the basis via Gram-Schmidt math.
+- The perturbed surface normal is illuminated by three-point studio lighting with Blinn-Phong specularity.
+- Viewport toggle chip `[Baked Normals]` allows instant A/B toggling against the unperturbed low-poly mesh.
+
+### 5.3 8K and 16K Extreme-Resolution Baking
+The baking engine now supports both `8192 (8K)` and `16384 (16K)` texture resolutions.
+- Memory indexing and vector buffer allocations updated to 64-bit `size_t` math across scanline loops and Jump Flooding Dilation passes.
+- Jump Flooding coordinate tracking (`SeedPoint`) utilizes signed 16-bit integers with a range up to 32,767, natively accommodating 16K grids.
+- Multi-threaded scanline rasterization scales seamlessly across all available hardware CPU cores.
+
+---
+
+### 5.4 Design System Spec Polish & Tactile Affordances (2026-10-26)
+Following a comprehensive 5-axis design reference interpretation audit against Design System Spec and Dark Pro Tool principles:
+- Keyboard Navigation Focus Ring: Explicitly mapped ImGuiCol_NavHighlight and ImGuiCol_NavWindowingHighlight to Col::Accent() (#4CC3A6) with dimmed background (#000000, 50% opacity) for high-contrast accessibility across all interactive widgets.
+- Radial Marking Menu Readability: Added a 1px dark drop shadow (IM_COL32(0, 0, 0, 220)) beneath radial wedge text labels and the central hub MAYA brand text, ensuring clear legibility even over bright, high-key clay sculpt surfaces.
+- Splitter Hover and Drag Affordance: Enhanced the 3D/2D vertical sliding divider with smooth hover color transitions (#4CC3A6), active dragging feedback, and a tactile rounded center pill grab handle.
+
+---
+
+### 5.5 Solid Opaque Low-Poly Shading, Quad UVs, and Cursor Polish (2026-10-26)
+Addressed rendering artifacts and UI visual clarity:
+- Low-Poly Solid Opaque Shading: Fixed low-poly mesh transparency and missing face holes by setting default lowPolyOpacity to 1.0f (100% opaque), enforcing m_solidRS (D3D11_CULL_BACK), and utilizing m_opaqueBlendState when opacity is 1.0f. This completely eliminates depth-buffer write conflicts and backface penetration.
+- Pure Quad UV Wireframe: Updated 2D UV canvas to render perimeter outlines directly from polygonFaces (and wireframeLineIndices) rather than triangle edges, eliminating internal diagonal splits. Removed distracting vertex dot circles for clean Blender-identical UV shells.
+- Circular Reticle Removal: Completely removed the screen-space circular cursor reticle from the 3D viewport, restoring standard OS mouse navigation across all modes.
+
+---
+
+### 5.6 Maya UV Viewport Header, Marquee Box Selection, Seam Partitioning, Curve Snapping, and Camera Undo Lock (2026-10-26)
+Implemented Maya-style UV viewport workflows and interactive mesh editing features:
+- Maya UV Viewport Header Bar: Docked a 34px toolbar above the 2D canvas featuring selection mode buttons (VERT, EDGE, FACE, SHELL), operation triggers (CUT, SEW, UNWRAP, PACK, CAMERA PROJ, FRAME, CHECKER, CLEAR), and live component counters.
+- 2D Canvas Marquee Box Selection: Added drag-to-box marquee selection for UV vertices, edges, faces, and shells with Shift/Ctrl modifier key support.
+- Component Visual Highlighting: Implemented responsive component highlighting with gold vertex dots, gold wireframe edges, and translucent amber fills for selected faces and islands.
+- Seam-Partitioned Camera Projection: Enhanced camera projection to partition geometry along existing cut seams into distinct UV islands and pack them across UDIM tiles using UVPacker instead of collapsing into a single overlapping shell.
+- Preserved 3D Camera on Undo/Redo: Removed FrameAll() from ViewportRenderer::SetLowPolyMesh() so undo/redo history operations retain camera pitch, yaw, and distance without resetting the view.
+- 3D Curve Endpoint Magnetic Snapping: Added screen-space proximity detection (18px tolerance) to curve endpoints with a visual cyan [SNAP TO END] badge for seamless, watertight curve joining.
+
+---
+
+### 5.7 Blender 1/2/3 Component Selection Keys Across 2D UV & 3D Viewport (2026-10-26)
+Implemented Blender standard 1, 2, 3 component selection hotkeys and synchronized 3D component picking:
+- Blender Hotkey Integration: Configured top-row and numeric keypad keys 1, 2, 3 (and 4 for UV Shells) to switch between Vertex (1), Edge (2), Face (3), and Shell (4) selection modes whenever text input fields are not active.
+- 3D Viewport Component Selection: Extended 3D raycast picking to support Vertex picking (with glowing cyan hover dots and gold selected vertices) and Face/Shell picking (with glowing cyan face outlines and translucent gold selected face fills) alongside edge picking.
+- Synchronized Viewport Feedback: Updated Maya UV header buttons to display shortcut indicators VERT (1), EDGE (2), FACE (3), and SHELL (4), and integrated active mode badges into the 3D viewport bottom toolbar.
+
+---
+
+### 5.8 2D UV Transform Gizmo, Double-Click/L Shell Selection, and Smart UV Seams (2026-10-26)
+Resolved UV unwrapping artifacts and added full 2D UV manipulation tools:
+- 2D UV Transform Gizmo: Implemented an interactive 2D transform gizmo in the UV canvas with a free-move center square, coral U axis arrow, emerald V axis arrow, blue rotate ring, uniform scale box, and Blender G (Grab), R (Rotate), and S (Scale) shortcuts.
+- Double-Click & 'L' Key Connected Shell Selection: Added double-click and 'L' hotkey support in both the 2D canvas and 3D viewport to instantly select all connected components in a UV island/shell.
+- Smart UV Chart Seams: Replaced noisy dihedral angle seam cutting with normal-clustering chart generation, ensuring all seams form continuous closed loops without dead-end cuts.
+- Seam Vertex Splitting: Implemented UVCutter::SplitMeshAlongSeams to duplicate vertices along cut seams, guaranteeing each UV island has independent vertex coordinates and completely eliminating cross-canvas stretching and origin spikes.
+
+---
+
+### 5.9 Maya UV Editor Toolbar Parity, Reliable Shell Selection & Stable Ground Grid (2026-10-27)
+Resolved ground grid subdivision popping, implemented genuine UV-space shell selection, and built the full Maya UV Editor Top Toolbar:
+- Stable Viewport Ground Grid: Replaced abrupt step-based LOD scaling with continuous dual-metric grid lines (1.0 unit minor lines, 10.0 units major lines) and smooth continuous LOD fading.
+- Preserved Ground Horizon: Fixed grid distance fading to adapt smoothly to camera distance without collapsing in front of the camera when zooming in.
+- Smooth UV Subgrid Fade: Updated the 2D UV tile subgrid to smoothly fade its opacity based on zoom level instead of popping abruptly at 80 pixels.
+- Reliable Double-Click & L-Key Island Selection: Moved double-click detection directly to the mouse-down click event frame, ensuring 100% responsive triggering.
+- Topological UV Island Connectivity: Implemented UIManager::GetConnectedUVIsland using shared UV-space edge adjacency, isolating exact UV islands without leaking across the 3D mesh.
+- Maya UV Editor Header Toolbar: Replaced divided, conflicting toolbars with a single, sleek, unified Maya-style top bar spanning the 2D UV canvas.
+- Maya Display Toggles: Added toggles for Maya Texture Borders (cyan seam lines), UV Shell Shading (multi-colored pastel islands), UV Checker grid, Stretch/Compression Heatmap, and Wireframe.
+- Maya Quick Transforms: Built Flip U, Flip V, Rot -90, Rot +90, and Straighten actions operating directly on selected UV components.
+- Workspace De-cluttering: Removed the redundant floating bottom UV bar, leaving the 2D UV workspace clean and spacious.
+- Responsive 2-Tier Maya UV Toolbar: Restructured the 25+ tool single-line chain into a compact two-tier header layout.
+- Tier 1 contains component modes (Vert 1, Edge 2, Face 3, Shell 4), gizmos (W, E, R), display toggles (Borders, Shells, Checker, Distort, Wire), stats, and mode switcher chips.
+- Tier 2 provides quick transforms (Flip U, Flip V, Rot -90, Rot +90, Straighten), cut and sew operations (Cut, Sew), layout tools (Unwrap, Pack), and canvas navigation (Frame, Reset, Clear).
+- Zero Collision Architecture: Anchored floating 3D mode toggles strictly inside the 3D viewport region, eliminating collisions with the 2D UV canvas.
+- Isolated Child Clipping: Wrapped the 2D UV Canvas in an isolated ImGui child window, preventing buttons and geometry from leaking or rendering behind the docked right panels.
+- Central Command Registry (Phase 0): Implemented BakerUI::CommandRegistry in src/app/CommandRegistry.h as a single source of truth for all commands and actions.
+- Debug Invariant Enforcement: Enforced Rule R-1 through assertion checks guaranteeing no command is registered to both Tool Header and UV Toolkit simultaneously.
+- Control Inventory & Mapping: Cataloged and registered 38 distinct application commands across File, Edit, Select, View, and UV modules with proper hotkeys, tooltips, and enabled state callbacks.
+- Duplicate Audit: Documented all command duplications across toolbars, panel buttons, and menus for phased extraction and clean single-home unification.
+- Phase 0 Amendments Approved: Swapped Phase 1 and 2 sequence so complete menus and reorganized UV Toolkit are built first before removing duplicate buttons.
+- Authoritative DrawCommand Engine: Added BakerUI::DrawCommand helper in src/app/CommandRegistry.h with debug assertions enforcing that all buttons route through registered command IDs.
+- Target Surface Declarations: Configured CommandRegistry to declare strictly target destinations while keeping legacy locations in the inventory catalog only.
+- Command Inventory Documented: Authored docs/ui_handoff/COMMAND_INVENTORY.md providing an exhaustive widget-by-widget registry mapping.
+- Dedicated Frame Commands: Split view framing into view.frame_all (entire scene/tiles, Home key) and view.frame_selected (selected components only, F key).
+
+### 5.10 UV Redesign Phase 1 Step 1: Registry Menus, UV Toolkit, Simple Outliner (2026-10-27)
+Committed locally as `35597a4` on `feature/blender-grid-baked-normals-8k-16k` (not pushed to GitHub; deployed to ZBrush 2026 on 2026-10-28). Build compiles; TestBaker passes.
+- Registry-driven menus: in the UV workspace, Edit, Select, UV, View and Help are generated from `CommandRegistry` by `DrawCommandMenuContents` (menuPath based; `UV/Cut & Sew` renders as a section, deeper paths as submenus). `BeginFrameHost` takes an optional registry; the standalone build keeps the legacy menus.
+- New helpers in `CommandRegistry.h`: `DrawCommandMenuItem`, `DrawCommandTooltip`, `CommandStyle` (Action / Primary / Destructive). Labels get a `##id` suffix for unique ImGui IDs.
+- UV Toolkit panel (`UV Toolkit###uvtoolkit`): Cut & Sew (Auto Seams, collapsed Curve Cut), Unfold, Transform, Stack & Overlap, Texel Density, Pack (Advanced disclosure), Export, pinned primary footer "Auto UV: Cut, Unwrap, Pack". Docked beside the legacy UV Tool panel, which is untouched until Step 2.
+- New commands: `uv.curve_*` (6), `uv.td_get/set/equalize`, `view.3d_high_poly`, `view.3d_cage`, `scene.remove_*` (3), `help.shortcuts`, `help.about`.
+- Hotkeys corrected to the real keymap (R7): Ctrl+N/O/E/U/P, Shift+X/V, Esc, Home and the Q/W/E/R tool keys were never bound and are now blank. F = Frame All (hovered view); edge loop = double-click edge.
+- Scene Outliner simplified (Apple Purpose / Simplicity review): one row per object (eye toggle, name, dim type), right-click to remove. Header "Clear" removed (File > New Session covers it).
+- New Properties panel (`Properties###properties`), docked under the outliner, shows the selected object's counts, polypaint/polygroups, opacity, shading, UDIM tiles to bake, cage offset, and a destructive "Remove from Scene". Old saved layouts get it split under the outliner once (`DockPropertiesUnderOutliner`).
+- Tabbed Properties editor (follow-up review, Blender-inspired, Apple principles first): the separate UV Toolkit window is gone. `Properties###properties` now has a vertical strip of vector icon tabs (`BakerUI::IconTab`, `DrawTabIcon`, scaled from font size): Object, then in the UV workspace Cut & Sew, Unfold, Transform, Stack & Overlap, Texel Density, Pack, Export. Each tab shows collapsible subpanels; Auto UV stays pinned at the bottom of every UV tab. Default layout: Outliner top 25 percent, Properties first tab in the large right-bottom node with the legacy panels. Layouts without a Properties entry get it docked beside the tool panels once (`DockPropertiesWithToolPanels`); layouts from the earlier split need View > Reset Layout.
+- Open: V2 keymap preset decision (W/E/R/G/S start gizmo drags, not tool switches); accordion open state not persisted; legacy File menu still shows unbound shortcuts; removal of the legacy duplicates is Phase 1 Step 2.
+
+### 5.11 UV Redesign Phase 1 Step 2: Duplicate Removal (2026-10-28)
+Committed locally as `5997f2f` on `feature/blender-grid-baked-normals-8k-16k` (not pushed to GitHub; deployed to ZBrush 2026 on 2026-10-28). Build clean; TestBaker passes; reviewed by the user.
+- Removed the UV header second tier; the header is one row (`headerH` 58 to 30). Its "Unwrap" button had silently run Auto Cut, Unwrap & Pack.
+- Removed the 3D Undo/Redo buttons and the filled "Focus (F)" button; Edit and View registry menus now show in both workspaces. Tightened the 3D layout chip group so it no longer overlaps the Shading dropdown.
+- Removed the old UV Tool panel (`RenderUVCutAndPackPanel`) after moving its unique features: Edit Curve subpanel (point list with click / Shift+click From-To selection, segment and whole-curve smooth/straighten, recalculate path), Last Pack readout, and Help > Viewport Gestures.
+- Deleted the dead handlers for the legacy Edit/UV menu flags; the standalone build keeps its legacy menus.
+- Remaining duplicates: 3D curve-draw tool bar and 3D hint strip (Phase 3/4).
+- Review follow-up (2026-10-28): the icon tab strip was a suggestion, not a mandate. Replaced with one scrolling `UV Tools###uvtools` panel: Cut, Sew, Unwrap, Pack in a top row that is always visible; collapsible Seams, Curve Cut (Edit Points inside), Transform, Stack & Overlap, Texel Density, Pack Options (Last Pack inside), Export; Auto UV pinned. Properties is plain object settings again. Default right column: Outliner, Properties, tool panels. `DockNewPanelsIntoSavedLayout` docks new panels into old saved layouts once.
+- Tear-off panels: `ImGuiConfigFlags_ViewportsEnable` in `Main.cpp` with `UpdatePlatformWindows` / `RenderPlatformWindowsDefault`; host windows pinned to the main viewport; theme uses square corners and opaque window backgrounds when viewports are on; marking menu draws on its own window's viewport.
+
+
+---
+
+## 6. Marmoset Paint Cage & Paint Skew Architecture (Phase 2 Roadmap)
+To achieve full parity with Marmoset Toolbag's interactive 3D brush toolset:
+1. **Interactive 3D Ray-Mesh Picking**:
+   - Direct screen-space mouse ray casting against low-poly mesh triangles using Embree RTCIntersect.
+2. **Paint Cage Brush**:
+   - A 3D spherical falloff brush allowing artists to push or pull cage offsets per-vertex.
+   - Vertices store custom displacement vectors `cagePositions[i] = v[i].pos + v[i].norm * (cageDist + brushOffset[i])`.
+   - Real-time cage vertex buffer updating on mouse drag.
+3. **Paint Skew Brush**:
+   - Per-vertex skew direction averaging.
+   - Smooths ray casting directions across hard mechanical corners and angled bevels to prevent skewed details.
+
+---
+
+## 7. Toolchain & Build Environment
+- **Compiler**: Microsoft Visual C++ (`MSVC v143` / `v144`, Hostx64/x64).
+- **CMake**: `C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe`.
+- **MSBuild**: `C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\MSBuild\Current\Bin\MSBuild.exe`.
+- **Build Command**:
+  ```powershell
+  & "C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" --build build --config Release
+  ```
+- **Deployment Script**:
+  ```powershell
+  powershell -ExecutionPolicy Bypass -File .\deploy_plugin.ps1
+  ```
+
+## 2.0c 3D UV Checker + Stretch (2026-11-13)
+Low-poly shading mode 8 in `ViewportRenderer` draws a procedural 16x16 UV checker (U red / V green tint per UDIM tile) and/or a stretch heat.
+Stretch is computed per pixel in the shader from ddx/ddy of UV and world position (singular values of the UV-to-world Jacobian), normalised by `m_uvTexelScale` (area-weighted mean). Blue = compressed, green = even, red = stretched; the worst of the two directions wins.
+Commands `view.3d_uv_checker`, `view.3d_uv_stretch` (View > 3D Display) plus Checker / Stretch chips and a range slider in the UV step toolbar. The 2D canvas already had its own checker and area heatmap.
+Known limits: uniform lpScale assumed; 1px noise on seam edges (derivatives straddle triangles). Not yet verified on screen.
+Next from the EZ UV comparison: stretch-aware relax (Optimize), texel density match, pixel snap, pin, island stacking, hotspot - none exist yet.

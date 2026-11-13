@@ -208,7 +208,7 @@ void BakerEngine::ApplyJumpFloodingDilation(
     // 1. Seed initialization: pixels inside the UV mask point to themselves
     for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
-            int idx = y * width + x;
+            size_t idx = static_cast<size_t>(y) * width + x;
             if (mask[idx]) {
                 ping[idx] = SeedPoint{ static_cast<int16_t>(x), static_cast<int16_t>(y) };
             }
@@ -230,7 +230,7 @@ void BakerEngine::ApplyJumpFloodingDilation(
 
         for (int y = 0; y < height; ++y) {
             for (int x = 0; x < width; ++x) {
-                int currIdx = y * width + x;
+                size_t currIdx = static_cast<size_t>(y) * width + x;
                 SeedPoint bestSeed = srcGrid[currIdx];
                 int bestDistSq = 0x7FFFFFFF;
 
@@ -249,7 +249,7 @@ void BakerEngine::ApplyJumpFloodingDilation(
                         int nx = x + dx * step;
                         if (nx < 0 || nx >= width) continue;
 
-                        int nIdx = ny * width + nx;
+                        size_t nIdx = static_cast<size_t>(ny) * width + nx;
                         SeedPoint nSeed = srcGrid[nIdx];
                         if (nSeed.x >= 0) {
                             int dX = x - nSeed.x;
@@ -276,7 +276,7 @@ void BakerEngine::ApplyJumpFloodingDilation(
     // 3. Final Dilation & Renormalization Pass for all map channels
     for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
-            int idx = y * width + x;
+            size_t idx = static_cast<size_t>(y) * width + x;
             if (mask[idx]) continue; // Already valid
 
             SeedPoint seed = finalGrid[idx];
@@ -286,7 +286,7 @@ void BakerEngine::ApplyJumpFloodingDilation(
                 int distSq = dx * dx + dy * dy;
 
                 if (distSq <= maxDistSq) {
-                    int srcIdx = seed.y * width + seed.x;
+                    size_t srcIdx = static_cast<size_t>(seed.y) * width + seed.x;
 
                     if (!res.displacementMap.empty()) res.displacementMap[idx] = res.displacementMap[srcIdx];
                     if (!res.aoMap.empty()) res.aoMap[idx] = res.aoMap[srcIdx];
@@ -394,7 +394,8 @@ bool BakerEngine::ExecuteBake(
     const BakeSettings& settings,
     std::vector<BakeResult>& outResults,
     std::function<void(float progress, const std::string& status)> progressCallback,
-    std::string& outError
+    std::string& outError,
+    IntermediateCallback livePreviewCallback
 ) {
     if (!m_bvhReady || !m_embreeScene) {
         outError = "High-poly BVH is not initialized";
@@ -466,30 +467,31 @@ bool BakerEngine::ExecuteBake(
         res.udimTile = tile;
         res.width = W;
         res.height = H;
-        res.displacementMap.resize(W * H, 0.0f);
-        res.normalMapR.resize(W * H, 0.5f);
-        res.normalMapG.resize(W * H, 0.5f);
-        res.normalMapB.resize(W * H, 1.0f);
-        res.worldNormalR.resize(W * H, 0.5f);
-        res.worldNormalG.resize(W * H, 0.5f);
-        res.worldNormalB.resize(W * H, 1.0f);
-        res.aoMap.resize(W * H, 1.0f);
-        res.cavityMap.resize(W * H, 1.0f);
-        res.curvatureMap.resize(W * H, 0.5f);
-        res.thicknessMap.resize(W * H, 0.0f);
-        res.positionMapR.resize(W * H, 0.0f);
-        res.positionMapG.resize(W * H, 0.0f);
-        res.positionMapB.resize(W * H, 0.0f);
-        res.materialIdMapR.resize(W * H, 0.5f);
-        res.materialIdMapG.resize(W * H, 0.5f);
-        res.materialIdMapB.resize(W * H, 0.5f);
-        res.baseColorMapR.resize(W * H, 1.0f);
-        res.baseColorMapG.resize(W * H, 1.0f);
-        res.baseColorMapB.resize(W * H, 1.0f);
-        res.diagnosticMapR.resize(W * H, 0.0f);
-        res.diagnosticMapG.resize(W * H, 0.0f);
-        res.diagnosticMapB.resize(W * H, 0.0f);
-        res.hitMask.resize(W * H, 0);
+        size_t totalPixels = static_cast<size_t>(W) * H;
+        res.displacementMap.resize(totalPixels, 0.0f);
+        res.normalMapR.resize(totalPixels, 0.5f);
+        res.normalMapG.resize(totalPixels, 0.5f);
+        res.normalMapB.resize(totalPixels, 1.0f);
+        res.worldNormalR.resize(totalPixels, 0.5f);
+        res.worldNormalG.resize(totalPixels, 0.5f);
+        res.worldNormalB.resize(totalPixels, 1.0f);
+        res.aoMap.resize(totalPixels, 1.0f);
+        res.cavityMap.resize(totalPixels, 1.0f);
+        res.curvatureMap.resize(totalPixels, 0.5f);
+        res.thicknessMap.resize(totalPixels, 0.0f);
+        res.positionMapR.resize(totalPixels, 0.0f);
+        res.positionMapG.resize(totalPixels, 0.0f);
+        res.positionMapB.resize(totalPixels, 0.0f);
+        res.materialIdMapR.resize(totalPixels, 0.5f);
+        res.materialIdMapG.resize(totalPixels, 0.5f);
+        res.materialIdMapB.resize(totalPixels, 0.5f);
+        res.baseColorMapR.resize(totalPixels, 1.0f);
+        res.baseColorMapG.resize(totalPixels, 1.0f);
+        res.baseColorMapB.resize(totalPixels, 1.0f);
+        res.diagnosticMapR.resize(totalPixels, 0.0f);
+        res.diagnosticMapG.resize(totalPixels, 0.0f);
+        res.diagnosticMapB.resize(totalPixels, 0.0f);
+        res.hitMask.resize(totalPixels, 0);
 
         int tileUOffset = (tile - 1001) % 10;
         int tileVOffset = (tile - 1001) / 10;
@@ -572,7 +574,14 @@ bool BakerEngine::ExecuteBake(
 
                     const auto& trisInRow = rowTriangles[y];
                     if (trisInRow.empty()) {
-                        completedRows.fetch_add(1);
+                        int c = completedRows.fetch_add(1) + 1;
+                        if (c % 16 == 0 || c == H) {
+                            float tileProg = static_cast<float>(c) / static_cast<float>(H);
+                            float overallProg = (static_cast<float>(tileIdx) + tileProg) / static_cast<float>(totalTiles);
+                            char pbuf[128];
+                            snprintf(pbuf, sizeof(pbuf), "Baking UDIM %d: %d/%d (%d%%)", tile, c, H, static_cast<int>(tileProg * 100.0f));
+                            if (progressCallback) progressCallback(overallProg, pbuf);
+                        }
                         continue;
                     }
 
@@ -649,6 +658,12 @@ bool BakerEngine::ExecuteBake(
                                 Vec3 rawFaceNorm = (v1.position - v0.position).Cross(v2.position - v0.position).Normalized();
                                 Vec3 geomFaceNormal = TransformDirection(rawFaceNorm, lpRot, lpScaleVec);
                                 float skew = std::clamp(settings.skewFactor, 0.0f, 1.0f);
+                                if (!lowPoly.vertexSkew.empty() && lowPoly.vertexSkew.size() == lowPoly.vertices.size()) {
+                                    float paintedSkew = lowPoly.vertexSkew[tri.indices[0]] * w0 +
+                                                        lowPoly.vertexSkew[tri.indices[1]] * w1 +
+                                                        lowPoly.vertexSkew[tri.indices[2]] * w2;
+                                    skew = std::clamp(skew + paintedSkew, 0.0f, 1.0f);
+                                }
                                 Vec3 rayNormal = (n * (1.0f - skew) + geomFaceNormal * skew).Normalized();
 
                                 // Watertight cage normal across UV seams and hard edges
@@ -960,7 +975,7 @@ bool BakerEngine::ExecuteBake(
 
                         // Flush row pixels into result buffers
                     for (int x = 0; x < W; ++x) {
-                        int pixelIdx = y * W + x;
+                        size_t pixelIdx = static_cast<size_t>(y) * W + x;
                         const auto& p = rowAccum[x];
 
                         Vec3 accumNorm(0, 0, 0);
@@ -1034,13 +1049,28 @@ bool BakerEngine::ExecuteBake(
                         }
                     }
 
-                    completedRows.fetch_add(1);
+                    int c = completedRows.fetch_add(1) + 1;
+                    if (c % 16 == 0 || c == H) {
+                        float tileProg = static_cast<float>(c) / static_cast<float>(H);
+                        float overallProg = (static_cast<float>(tileIdx) + tileProg) / static_cast<float>(totalTiles);
+                        char pbuf[128];
+                        snprintf(pbuf, sizeof(pbuf), "Baking UDIM %d: %d/%d (%d%%)", tile, c, H, static_cast<int>(tileProg * 100.0f));
+                        if (progressCallback) progressCallback(overallProg, pbuf);
+
+                        if (livePreviewCallback && settings.bakeNormal && (c % 32 == 0 || c == H)) {
+                            livePreviewCallback(tile, W, H, res.normalMapR.data(), res.normalMapG.data(), res.normalMapB.data());
+                        }
+                    }
                 }
             });
         }
 
         for (auto& w : workers) {
             w.join();
+        }
+
+        if (livePreviewCallback && settings.bakeNormal) {
+            livePreviewCallback(tile, W, H, res.normalMapR.data(), res.normalMapG.data(), res.normalMapB.data());
         }
 
         // Compute Cavity and Curvature maps from multi-scale tangent normal divergence & AO modulation
@@ -1122,6 +1152,10 @@ bool BakerEngine::ExecuteBake(
         // Apply Jump Flooding Algorithm nearest-texel dilation across tile boundaries
         if (settings.seamPadding > 0) {
             ApplyJumpFloodingDilation(res, settings.seamPadding);
+        }
+
+        if (livePreviewCallback && settings.bakeNormal) {
+            livePreviewCallback(tile, W, H, res.normalMapR.data(), res.normalMapG.data(), res.normalMapB.data());
         }
 
         outResults.push_back(std::move(res));

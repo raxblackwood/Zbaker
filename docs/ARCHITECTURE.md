@@ -103,13 +103,17 @@ flowchart TD
   ```
 * **Process Spawning**: Uses `CreateProcessA` with `DETACHED_PROCESS` to spawn `UDIMBakerApp.exe` non-blocking so ZBrush remains responsive.
 
-### 3.3 Standalone Companion Application (`UDIMBakerApp.exe`)
-* **Framework**: Native Win32 + Direct3D 11 + Dear ImGui Docking Branch.
-* **Palette Theme**: Marmoset Ember (`0x0E1014` dark slate background, `0x151922` panel body, `0xFF9E3B` amber accents).
+### 3.3 Standalone Companion Application (`UDIMBakerApp.exe` & `StandaloneBaker.exe`)
+* **Framework**: Native Win32 + Direct3D 11 + Dear ImGui Docking Branch (v1.93.1 WIP).
+* **Palette Theme**: Blender Dark default (`0x1D1D1D` background, `0x282828` panel surface, `0xE87D0D` signature warm orange accent) with selectable themes for Marmoset Ember, Cyber Teal, and Studio Slate.
 * **Key Architecture Classes**:
-  * [`UIManager`](file:///e:/CODES/zbrush%20plugins/baker/src/app/UIManager.h): Coordinates application state, dock layout, mesh ingestion, settings synchronization, and bake thread dispatching.
-  * [`ViewportRenderer`](file:///e:/CODES/zbrush%20plugins/baker/src/app/ViewportRenderer.h): Manages D3D11 render targets, shaders, high-poly wire/shaded mesh display, low-poly cage visualization, and Orbit/Pan/Zoom camera math.
-  * [`MeshLoader`](file:///e:/CODES/zbrush%20plugins/baker/src/app/MeshLoader.h): Universal parser supporting Wavefront OBJ (`tiny_obj_loader`), Autodesk FBX (`OpenFBX`), and binary vertex dumps. Preserves multi-tile UV coordinates, vertex colors (Polypaint), and face group IDs (Polygroups).
+  * [`UIManager`](file:///e:/CODES/zbrush%20plugins/baker/src/app/UIManager.h): Coordinates application state, docking layout, mesh ingestion, settings synchronization, and bake thread dispatching.
+  * [`ViewportRenderer`](file:///e:/CODES/zbrush%20plugins/baker/src/app/ViewportRenderer.h): Manages D3D11 render targets, shaders, high-poly wire/shaded mesh display, low-poly cage visualization, procedural ground grid, and Orbit/Pan/Zoom camera math.
+  * [`MeshLoader`](file:///e:/CODES/zbrush%20plugins/baker/src/app/MeshLoader.h): Universal parser supporting Wavefront OBJ (`tiny_obj_loader`), Autodesk FBX (`ufbx`), GoZ binary streams, and binary vertex dumps. Preserves multi-tile UV coordinates, vertex colors (Polypaint), and face group IDs (Polygroups).
+  * [`BakerUI`](file:///e:/CODES/zbrush%20plugins/baker/src/app/BakerUI.h): The custom widget design system (section labels, toggle chips, status pills, floating bake bar, and responsive parameter tables).
+* **Detailed UI Documentation**:
+  * See [UI Architecture Specification](file:///e:/CODES/zbrush%20plugins/baker/docs/UI_ARCHITECTURE.md) for full design system and state machine details.
+  * See [UI Handoff Package](file:///e:/CODES/zbrush%20plugins/baker/docs/ui_handoff/) for the complete widget inventory, known layout issues, and docking coordinates.
 
 ---
 
