@@ -583,9 +583,6 @@ void ViewportRenderer::SetLowPolyMesh(const LowPolyMesh& mesh, float scaleMultip
     m_selectedEdgeGPU.Release();
     if (mesh.vertices.empty() || mesh.triangles.empty()) return;
 
-    // Ensure wireframe lines are deduplicated per geometric edge
-    MeshLoader::DeduplicateWireframeLines(const_cast<LowPolyMesh&>(mesh));
-
     float s = scaleMultiplier > 1e-5f ? scaleMultiplier : 1.0f;
 
     std::vector<ViewportVertex> verts(mesh.vertices.size());

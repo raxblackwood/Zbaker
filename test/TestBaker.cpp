@@ -328,7 +328,7 @@ int main(int argc, char** argv) {
             return 1;
         }
         std::string saveErr;
-        std::string verifiedObjPath = "C:/Users/raman/Downloads/temp/bb/Verified_LowPoly_Baked.obj";
+        std::string verifiedObjPath = "Verified_LowPoly_Baked.obj";
         bool saveOk = MeshLoader::SaveLowPolyOBJWithNormals(verifiedObjPath, userLp, saveErr);
         if (!saveOk) {
             std::cerr << "Failed to save LP: " << saveErr << std::endl;

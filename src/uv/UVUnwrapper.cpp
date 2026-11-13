@@ -164,13 +164,14 @@ namespace {
 struct RestTri { float a, b, c; float area; bool ok; };
 
 struct RelaxCtx {
-    LowPolyMesh& mesh;
+    const LowPolyMesh& mesh;
     std::vector<RestTri> rest;
     std::vector<int> comp;              // component id per vertex
     std::vector<float> k;               // per-component UV->3D scale (sqrt(A3D / AUV))
     std::vector<float> sign;            // per-component orientation (+1 or -1)
     std::vector<std::vector<int>> ring; // triangles around each vertex
     explicit RelaxCtx(LowPolyMesh& m) : mesh(m) {}
+    explicit RelaxCtx(const LowPolyMesh& m) : mesh(m) {}
 
     // Area-weighted symmetric Dirichlet energy of one triangle (4 * area at isometry).
     float TriEnergy(int t) const {
@@ -203,7 +204,7 @@ struct RelaxCtx {
 };
 
 bool BuildCtx(RelaxCtx& c) {
-    LowPolyMesh& m = c.mesh;
+    const LowPolyMesh& m = c.mesh;
     const size_t nV = m.vertices.size(), nT = m.triangles.size();
     if (nV == 0 || nT == 0) return false;
 
@@ -275,7 +276,7 @@ float MeanDistortion(const RelaxCtx& c) {
 } // namespace
 
 float UVUnwrapper::MeasureDistortion(const LowPolyMesh& mesh) {
-    RelaxCtx c(const_cast<LowPolyMesh&>(mesh)); // read-only use
+    RelaxCtx c(mesh);
     return BuildCtx(c) ? MeanDistortion(c) : 0.0f;
 }
 

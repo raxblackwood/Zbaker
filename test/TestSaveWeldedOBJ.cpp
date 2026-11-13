@@ -14,7 +14,7 @@ int main() {
     }
     std::cout << "Loaded LP: " << lp.vertices.size() << " corner vertices, " << lp.triangles.size() << " triangles.\n";
 
-    std::string outPath = "C:/Users/raman/Downloads/temp/bb/Verified_LowPoly_Baked.obj";
+    std::string outPath = "Verified_LowPoly_Baked.obj";
     if (!MeshLoader::SaveLowPolyOBJWithNormals(outPath, lp, err)) {
         std::cerr << "Failed to save LP: " << err << std::endl;
         return 1;

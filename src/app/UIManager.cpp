@@ -4759,7 +4759,7 @@ void UIManager::RelaxUVs() {
         m_uvStatusMessage = "Nothing to relax: unwrap the mesh first.";
         return;
     }
-    const float after = UVUnwrapper::RelaxUVs(m_lowPolyMesh, 30);
+    const float after = UVUnwrapper::RelaxUVs(m_lowPolyMesh, m_relaxIterations);
     SyncIslandsFromMesh();
     m_viewportRenderer.SetLowPolyMesh(m_lowPolyMesh, m_settings.lowPolyScale);
     PushHistoryState("Relax UVs");

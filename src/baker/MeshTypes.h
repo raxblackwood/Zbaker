@@ -223,12 +223,14 @@ struct LowPolyMesh {
             posToTriangles[Quantize(p2)].push_back(static_cast<uint32_t>(t));
         }
 
+        std::vector<bool> written(vertices.size(), false);
         for (size_t t = 0; t < triangles.size(); ++t) {
             const auto& tri = triangles[t];
             const Vec3& myUnitNorm = triFaces[t].unitNormal;
 
             for (int c = 0; c < 3; ++c) {
                 uint32_t vIdx = tri.indices[c];
+                if (written[vIdx]) continue;
                 PosKey k = Quantize(vertices[vIdx].position);
 
                 Vec3 accum(0, 0, 0);
@@ -247,6 +249,7 @@ struct LowPolyMesh {
                 } else if (myUnitNorm.Length() > 1e-20f) {
                     vertices[vIdx].normal = myUnitNorm;
                 }
+                written[vIdx] = true;
             }
         }
     }
@@ -333,12 +336,14 @@ struct LowPolyMesh {
             posToTriangles[Quantize(p2)].push_back(static_cast<uint32_t>(t));
         }
 
+        std::vector<bool> written(vertices.size(), false);
         for (size_t t = 0; t < triangles.size(); ++t) {
             const auto& tri = triangles[t];
             const Vec3& myUnitNorm = triFaces[t].unitNormal;
 
             for (int c = 0; c < 3; ++c) {
                 uint32_t vIdx = tri.indices[c];
+                if (written[vIdx]) continue;
                 PosKey k = Quantize(vertices[vIdx].position);
 
                 Vec3 accum(0, 0, 0);
@@ -359,6 +364,7 @@ struct LowPolyMesh {
                 } else {
                     cageNormals[vIdx] = myUnitNorm;
                 }
+                written[vIdx] = true;
             }
         }
     }
