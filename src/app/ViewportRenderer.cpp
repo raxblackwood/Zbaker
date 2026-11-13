@@ -25,6 +25,10 @@ struct CBFrame {
     float Opacity;
     int HasNormalMap; // 1 if previewing normal map, 0 otherwise
     float GridScale;  // Dynamic grid LOD reference
+    int CheckerOn;
+    int StretchOn;
+    float StretchRange;
+    float UVTexelScale;
 };
 
 static const char* g_ShaderSource = R"(
@@ -38,6 +42,10 @@ cbuffer CBFrame : register(b0) {
     float Opacity;
     int HasNormalMap;
     float GridScale;
+    int CheckerOn;
+    int StretchOn;
+    float StretchRange;
+    float UVTexelScale;
 };
 
 Texture2D NormalMap : register(t0);
@@ -176,6 +184,49 @@ float4 PSMain(PS_INPUT input) : SV_TARGET {
         float3 skewVis = lerp(coldCol, hotCol, saturate(input.Color.a));
         float diff = saturate(dot(N, L)) * 0.7f + 0.3f;
         return float4(skewVis * diff, Opacity);
+    }
+
+    // 8: UV checker and/or stretch heat. Stretch is the Jacobian of UV->world measured per pixel
+    // from screen derivatives, so it needs no CPU data and follows the mesh transform.
+    if (ShadingMode == 8) {
+        float3 base = float3(0.80f, 0.80f, 0.82f);
+        if (CheckerOn == 1) {
+            float2 p = input.UV * 16.0f;
+            float2 cell = floor(p);
+            float chk = abs(fmod(cell.x + cell.y, 2.0f));
+            float fade = saturate((max(fwidth(p.x), fwidth(p.y)) - 0.3f) / 0.7f); // sub-pixel cells blur to mid grey
+            chk = lerp(chk, 0.5f, fade);
+            base = lerp(float3(0.30f, 0.32f, 0.36f), float3(0.90f, 0.90f, 0.92f), chk);
+            // Orientation/tile cue: U ramps red, V ramps green inside each UDIM tile
+            base = lerp(base, float3(frac(input.UV.x), frac(input.UV.y), 0.45f), 0.30f * (1.0f - fade));
+        }
+        if (StretchOn == 1) {
+            float3 heat = float3(0.45f, 0.45f, 0.45f); // no usable UVs: neutral grey
+            float2 uvx = ddx(input.UV);
+            float2 uvy = ddy(input.UV);
+            float det = uvx.x * uvy.y - uvx.y * uvy.x;
+            if (abs(det) > 1e-14f && UVTexelScale > 0.0f) {
+                float3 px = ddx(input.WorldPos);
+                float3 py = ddy(input.WorldPos);
+                float3 Pu = (px * uvy.y - py * uvx.y) / det; // world units per UV unit along U
+                float3 Pv = (py * uvx.x - px * uvy.x) / det;
+                float a = dot(Pu, Pu);
+                float b = dot(Pu, Pv);
+                float c = dot(Pv, Pv);
+                float disc = sqrt(max((a - c) * (a - c) + 4.0f * b * b, 0.0f));
+                float s1 = sqrt(max((a + c + disc) * 0.5f, 1e-20f)) * UVTexelScale; // 1.0 = average density
+                float s2 = sqrt(max((a + c - disc) * 0.5f, 1e-20f)) * UVTexelScale;
+                float l1 = log2(s1);
+                float l2 = log2(s2);
+                float e = (abs(l1) >= abs(l2)) ? l1 : l2;       // worst direction, signed
+                float t = clamp(e / max(StretchRange, 0.05f), -1.0f, 1.0f);
+                float3 ok = float3(0.20f, 0.78f, 0.38f);
+                heat = (t < 0.0f) ? lerp(ok, float3(0.15f, 0.35f, 1.0f), -t) : lerp(ok, float3(0.95f, 0.18f, 0.15f), t);
+            }
+            base = (CheckerOn == 1) ? lerp(base, heat, 0.5f) : heat;
+        }
+        float lit = saturate(dot(N, L)) * 0.35f + 0.65f;
+        return float4(base * lit, Opacity);
     }
 
     // 7: Clean Flat Shaded
@@ -569,11 +620,19 @@ void ViewportRenderer::SetLowPolyMesh(const LowPolyMesh& mesh, float scaleMultip
 
     std::vector<uint32_t> indices;
     indices.reserve(mesh.triangles.size() * 3);
+    double sumUV = 0.0, sum3D = 0.0;
     for (const auto& tri : mesh.triangles) {
         indices.push_back(tri.indices[0]);
         indices.push_back(tri.indices[1]);
         indices.push_back(tri.indices[2]);
+
+        const auto& a = verts[tri.indices[0]]; const auto& b = verts[tri.indices[1]]; const auto& c = verts[tri.indices[2]];
+        DirectX::XMVECTOR e1 = DirectX::XMVectorSubtract(DirectX::XMLoadFloat3(&b.pos), DirectX::XMLoadFloat3(&a.pos));
+        DirectX::XMVECTOR e2 = DirectX::XMVectorSubtract(DirectX::XMLoadFloat3(&c.pos), DirectX::XMLoadFloat3(&a.pos));
+        sum3D += 0.5 * DirectX::XMVectorGetX(DirectX::XMVector3Length(DirectX::XMVector3Cross(e1, e2)));
+        sumUV += 0.5 * std::abs((b.uv.x - a.uv.x) * (c.uv.y - a.uv.y) - (c.uv.x - a.uv.x) * (b.uv.y - a.uv.y));
     }
+    m_uvTexelScale = (sum3D > 1e-12 && sumUV > 1e-12) ? (float)std::sqrt(sumUV / sum3D) : 0.0f;
 
     // 1. Shaded mesh triangles
     D3D11_BUFFER_DESC vbd = {};
@@ -890,6 +949,11 @@ void ViewportRenderer::UpdateConstantBuffer(const DirectX::XMMATRIX& world, cons
         cb->Opacity = (mode == 4 ? 0.9f : (mode == 5 ? 0.35f : color.w));
         cb->HasNormalMap = hasNormalMap;
         cb->GridScale = (std::max)(m_cameraDistance, 1.0f);
+        cb->CheckerOn = showUVChecker ? 1 : 0;
+        cb->StretchOn = showUVStretch ? 1 : 0;
+        cb->StretchRange = uvStretchRange;
+        // World = mesh * lpScale, so UV-per-world shrinks as the mesh grows (uniform scale assumed)
+        cb->UVTexelScale = m_uvTexelScale / (std::max)(m_lpScale.x, 1e-6f);
         m_context->Unmap(m_constantBuffer, 0);
     }
 }
@@ -943,8 +1007,8 @@ void ViewportRenderer::Render() {
     vp.MaxDepth = 1.0f;
     m_context->RSSetViewports(1, &vp);
 
-    // Blender Dark 3D Viewport background: deep dark gray RGB(24, 24, 26) Hex(#18181A)
-    const float clearColor[4] = { 24.0f / 255.0f, 24.0f / 255.0f, 26.0f / 255.0f, 1.0f };
+    // 3D viewport background: mid-dark gray so meshes, grid and wire read clearly
+    const float clearColor[4] = { 48.0f / 255.0f, 48.0f / 255.0f, 51.0f / 255.0f, 1.0f };
     m_context->ClearRenderTargetView(m_colorRTV, clearColor);
     m_context->ClearDepthStencilView(m_depthDSV, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
 
@@ -1017,7 +1081,7 @@ void ViewportRenderer::Render() {
         }
 
         DirectX::XMFLOAT4 lpColor = { 0.92f, 0.92f, 0.94f, lowPolyOpacity };
-        int lpMode = showSkew ? 6 : (int)highPolyShading;
+        int lpMode = showSkew ? 6 : ((showUVChecker || showUVStretch) ? 8 : (int)highPolyShading);
         UpdateConstantBuffer(worldLP, lpColor, lpMode, useNormalMap ? 1 : 0);
 
         m_context->IASetVertexBuffers(0, 1, &m_lowPolyGPU.vertexBuffer, &stride, &offset);

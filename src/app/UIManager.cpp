@@ -125,6 +125,7 @@ UIManager::~UIManager() {
 }
 
 void UIManager::Initialize(ID3D11Device* device, ID3D11DeviceContext* context) {
+    m_shellState.showLog = false; // the log is an overlay the user opens from the status bar
     InitCommandRegistry();
     m_logEntries.push_back("[System] ZBrush UDIM Baker initialized.");
     if (device && context) {
@@ -140,6 +141,19 @@ void UIManager::Initialize(ID3D11Device* device, ID3D11DeviceContext* context) {
         }
     }
 }
+
+// Marking menu layout. Each wedge is a registry command; angle is screen-space degrees (0 = east, -90 = north).
+struct MarkingWedge { const char* commandId; const char* label; float angleDeg; };
+static const MarkingWedge kMarkingWedges[8] = {
+    { "uv.cut",                  "Cut",               -90.0f  },
+    { "select.edge_ring",        "Edge ring",         -45.0f  },
+    { "select.edge_loop",        "Edge loop",           0.0f  },
+    { "uv.auto_cut_unwrap_pack", "Auto UV",            45.0f  },
+    { "uv.sew",                  "Sew",                90.0f  },
+    { "select.clear",            "Clear selection",   135.0f  },
+    { "uv.unwrap",               "Unwrap",            180.0f  },
+    { "uv.camera_project",       "Camera projection", -135.0f  },
+};
 
 void UIManager::InitCommandRegistry() {
     using BakerUI::Surface;
@@ -242,37 +256,48 @@ void UIManager::InitCommandRegistry() {
         "select.edge_loop", "Select Edge Loop", "Select continuous loop through connected quads", "Double-Click Edge",
         static_cast<uint32_t>(Surface::Menu | Surface::Marking), "Select", "",
         [this]() {
-            if (m_hasLastSelectedEdge) {
-                UVCutter::SelectEdgeLoop(m_lowPolyMesh, m_lastSelectedEdge.first, m_lastSelectedEdge.second, true);
-                m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
-                PushHistoryState("Select Edge Loop");
-            }
+            auto edges = m_lowPolyMesh.selectedEdges;
+            for (const auto& e : edges) UVCutter::SelectEdgeLoop(m_lowPolyMesh, e.first, e.second, true);
+            m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
+            PushHistoryState("Select Edge Loop");
         },
-        [this]() { return m_hasLastSelectedEdge; },
+        [this]() { return !m_lowPolyMesh.selectedEdges.empty(); },
         nullptr,
-        []() { return "Requires an active edge selection"; }
+        []() { return "Select an edge first"; }
     });
     m_commandRegistry.Register(Command{
         "select.edge_ring", "Select Edge Ring", "Select parallel edge ring across quads", "",
         static_cast<uint32_t>(Surface::Menu | Surface::Marking), "Select", "",
         [this]() {
-            if (m_hasLastSelectedEdge) {
-                UVCutter::SelectEdgeRing(m_lowPolyMesh, m_lastSelectedEdge.first, m_lastSelectedEdge.second, true);
-                m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
-                PushHistoryState("Select Edge Ring");
-            }
+            auto edges = m_lowPolyMesh.selectedEdges;
+            for (const auto& e : edges) UVCutter::SelectEdgeRing(m_lowPolyMesh, e.first, e.second, true);
+            m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
+            PushHistoryState("Select Edge Ring");
         },
-        [this]() { return m_hasLastSelectedEdge; },
+        [this]() { return !m_lowPolyMesh.selectedEdges.empty(); },
         nullptr,
-        []() { return "Requires an active edge selection"; }
+        []() { return "Select an edge first"; }
+    });
+    m_commandRegistry.Register(Command{
+        "select.seams", "Select Seams", "Select every marked seam edge", "",
+        static_cast<uint32_t>(Surface::Menu), "Select", "",
+        [this]() {
+            UVCutter::SelectAllSeams(m_lowPolyMesh);
+            m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
+            SetUVSelectionMode(UVSelectionMode::Edge, "Selected all seam edges");
+            PushHistoryState("Select Seams");
+        },
+        [this]() { return !m_lowPolyMesh.cutSeams.empty(); },
+        nullptr,
+        []() { return "No seams marked yet"; }
     });
     m_commandRegistry.Register(Command{
         "select.clear", "Clear Selection", "Deselect all components", "",
-        static_cast<uint32_t>(Surface::Menu), "Select", "",
-        [this]() { ClearUVSelection(); },
+        static_cast<uint32_t>(Surface::Menu | Surface::Marking), "Select", "",
+        [this]() { ClearUVSelection(); PushHistoryState("Clear Selection"); },
         [this]() { return HasUVComponentSelection(); },
         nullptr,
-        []() { return "No selection active"; }
+        []() { return "Nothing is selected"; }
     });
 
     // 4. Transform Tools (Gizmo)
@@ -392,6 +417,22 @@ void UIManager::InitCommandRegistry() {
         nullptr
     });
     m_commandRegistry.Register(Command{
+        "view.3d_uv_checker", "UV Checker", "Show a UV checker pattern on the low-poly mesh", "",
+        static_cast<uint32_t>(Surface::Menu | Surface::Header), "View/3D Display", "",
+        [this]() { m_viewportRenderer.showUVChecker = !m_viewportRenderer.showUVChecker; },
+        nullptr,
+        [this]() { return m_viewportRenderer.showUVChecker; },
+        nullptr
+    });
+    m_commandRegistry.Register(Command{
+        "view.3d_uv_stretch", "UV Stretch", "Color the low-poly mesh by UV stretch: blue compressed, green even, red stretched", "",
+        static_cast<uint32_t>(Surface::Menu | Surface::Header), "View/3D Display", "",
+        [this]() { m_viewportRenderer.showUVStretch = !m_viewportRenderer.showUVStretch; },
+        nullptr,
+        [this]() { return m_viewportRenderer.showUVStretch; },
+        nullptr
+    });
+    m_commandRegistry.Register(Command{
         "view.uv_borders", "Texture Borders", "Toggle UV texture border / seam highlighting", "",
         static_cast<uint32_t>(Surface::Menu | Surface::Header), "View/UV Display", "",
         [this]() { m_showTextureBorders = !m_showTextureBorders; },
@@ -466,6 +507,22 @@ void UIManager::InitCommandRegistry() {
         []() { return "Requires low-poly mesh"; }
     });
     m_commandRegistry.Register(Command{
+        "uv.mark_seams_polygroup", "Seams from Polygroups", "Mark a seam wherever two polygroups meet", "",
+        static_cast<uint32_t>(Surface::Menu | Surface::Toolkit), "UV/Cut & Sew", "Cut & Sew",
+        [this]() { MarkSeamsByPolygroup(); },
+        [this]() { return m_hasLowPoly && !m_lowPolyMesh.triangles.empty(); },
+        nullptr,
+        []() { return "Requires low-poly mesh"; }
+    });
+    m_commandRegistry.Register(Command{
+        "uv.mark_seams_uv_borders", "Seams from UV Borders", "Mark seams along the current UV island borders", "",
+        static_cast<uint32_t>(Surface::Menu | Surface::Toolkit), "UV/Cut & Sew", "Cut & Sew",
+        [this]() { MarkSeamsByUVBorders(); },
+        [this]() { return m_hasLowPoly && !m_lowPolyMesh.triangles.empty(); },
+        nullptr,
+        []() { return "Requires low-poly mesh"; }
+    });
+    m_commandRegistry.Register(Command{
         "uv.curve_new", "New Curve", "Add a surface curve and start drawing it on the 3D mesh", "",
         static_cast<uint32_t>(Surface::Menu | Surface::Toolkit), "UV/Cut & Sew/Curve Cut", "Cut & Sew",
         [this]() {
@@ -497,12 +554,9 @@ void UIManager::InitCommandRegistry() {
         []() { return "Requires low-poly mesh"; }
     });
     m_commandRegistry.Register(Command{
-        "uv.curve_apply", "Apply Curve", "Turn the active curve into seams using the selected method", "",
+        "uv.curve_mark_seam", "Mark as Seam", "Mark the mesh edges closest to the active curve as seams. The mesh keeps its topology.", "",
         static_cast<uint32_t>(Surface::Menu | Surface::Toolkit), "UV/Cut & Sew/Curve Cut", "Cut & Sew",
-        [this]() {
-            if (m_curveCutTopology) CutActiveCurveIntoTopology();
-            else SnapActiveCurveToSeams();
-        },
+        [this]() { SnapActiveCurveToSeams(); },
         [this]() {
             SurfaceCurve* c = m_curveManager.GetActiveCurve();
             return m_hasLowPoly && c && c->points.size() >= 2;
@@ -511,12 +565,57 @@ void UIManager::InitCommandRegistry() {
         []() { return "Active curve needs at least 2 points"; }
     });
     m_commandRegistry.Register(Command{
-        "uv.curve_apply_all", "Apply All Curves", "Turn every curve into seams using the selected method", "",
+        "uv.curve_cut_mesh", "Cut Mesh", "Split the mesh exactly along the active curve and mark the new edges as seams", "",
         static_cast<uint32_t>(Surface::Menu | Surface::Toolkit), "UV/Cut & Sew/Curve Cut", "Cut & Sew",
-        [this]() { BakeAllCurvesToSeams(m_curveCutTopology); },
+        [this]() { CutActiveCurveIntoTopology(); },
+        [this]() {
+            SurfaceCurve* c = m_curveManager.GetActiveCurve();
+            return m_hasLowPoly && c && c->points.size() >= 2;
+        },
+        nullptr,
+        []() { return "Active curve needs at least 2 points"; }
+    });
+    m_commandRegistry.Register(Command{
+        "uv.curve_mark_all", "Mark All as Seams", "Mark seams along every visible curve", "",
+        static_cast<uint32_t>(Surface::Menu | Surface::Toolkit), "UV/Cut & Sew/Curve Cut", "Cut & Sew",
+        [this]() { BakeAllCurvesToSeams(false); },
         [this]() { return m_hasLowPoly && !m_curveManager.curves.empty(); },
         nullptr,
         []() { return "No curves to apply"; }
+    });
+    m_commandRegistry.Register(Command{
+        "uv.curve_cut_all", "Cut Mesh Along All", "Split the mesh along every visible curve", "",
+        static_cast<uint32_t>(Surface::Menu | Surface::Toolkit), "UV/Cut & Sew/Curve Cut", "Cut & Sew",
+        [this]() { BakeAllCurvesToSeams(true); },
+        [this]() { return m_hasLowPoly && !m_curveManager.curves.empty(); },
+        nullptr,
+        []() { return "No curves to apply"; }
+    });
+    m_commandRegistry.Register(Command{
+        "uv.curve_toggle_visible", "Show Curve", "Show or hide the active curve in the 3D viewport", "",
+        static_cast<uint32_t>(Surface::Menu | Surface::Toolkit), "UV/Cut & Sew/Curve Cut", "Cut & Sew",
+        [this]() {
+            if (SurfaceCurve* c = m_curveManager.GetActiveCurve()) c->visible = !c->visible;
+        },
+        [this]() { return m_curveManager.GetActiveCurve() != nullptr; },
+        [this]() { const SurfaceCurve* c = m_curveManager.GetActiveCurve(); return c && c->visible; },
+        []() { return "No active curve"; }
+    });
+    m_commandRegistry.Register(Command{
+        "uv.curve_show_all", "Show All Curves", "Show every curve in the 3D viewport", "",
+        static_cast<uint32_t>(Surface::Menu | Surface::Toolkit), "UV/Cut & Sew/Curve Cut", "Cut & Sew",
+        [this]() { for (auto& c : m_curveManager.curves) c.visible = true; },
+        [this]() { return !m_curveManager.curves.empty(); },
+        nullptr,
+        []() { return "No curves yet"; }
+    });
+    m_commandRegistry.Register(Command{
+        "uv.curve_hide_all", "Hide All Curves", "Hide every curve in the 3D viewport", "",
+        static_cast<uint32_t>(Surface::Menu | Surface::Toolkit), "UV/Cut & Sew/Curve Cut", "Cut & Sew",
+        [this]() { for (auto& c : m_curveManager.curves) c.visible = false; },
+        [this]() { return !m_curveManager.curves.empty(); },
+        nullptr,
+        []() { return "No curves yet"; }
     });
     m_commandRegistry.Register(Command{
         "uv.curve_clear_all", "Clear All Curves", "Delete every surface curve (undoable)", "",
@@ -620,7 +719,7 @@ void UIManager::InitCommandRegistry() {
         []() { return "Active curve needs at least 2 points"; }
     });
     m_commandRegistry.Register(Command{
-        "uv.unwrap", "Unwrap", "Unwrap islands using conformal least-squares mapping", "",
+        "uv.unwrap", "Unwrap", "Unwrap islands with conformal mapping and pack them", "",
         static_cast<uint32_t>(Surface::Menu | Surface::Toolkit | Surface::Marking), "UV/Unfold", "Unfold",
         [this]() { UnwrapMesh(); },
         [this]() { return m_hasLowPoly && !m_lowPolyMesh.triangles.empty(); },
@@ -716,6 +815,22 @@ void UIManager::InitCommandRegistry() {
         []() { return "Requires low-poly mesh"; }
     });
     m_commandRegistry.Register(Command{
+        "uv.relax", "Relax (Reduce Stretch)", "Reduce UV stretch and shear in place without folding triangles. Click again to relax further.", "",
+        static_cast<uint32_t>(Surface::Menu | Surface::Toolkit), "UV/Texel Density", "Texel Density",
+        [this]() { RelaxUVs(); },
+        [this]() { return m_hasLowPoly && !m_lowPolyMesh.triangles.empty(); },
+        nullptr,
+        []() { return "Requires low-poly mesh"; }
+    });
+    m_commandRegistry.Register(Command{
+        "uv.snap_pixels", "Snap Islands to Pixels", "Move each island so its corner sits on a texel boundary of the pack resolution", "",
+        static_cast<uint32_t>(Surface::Menu | Surface::Toolkit), "UV/Pack", "Pack",
+        [this]() { SnapIslandsToPixels(); },
+        [this]() { return m_hasLowPoly && !m_lowPolyMesh.triangles.empty(); },
+        nullptr,
+        []() { return "Requires low-poly mesh"; }
+    });
+    m_commandRegistry.Register(Command{
         "uv.pack", "Pack Islands", "Pack UV islands across UDIM tiles", "",
         static_cast<uint32_t>(Surface::Menu | Surface::Toolkit), "UV/Pack", "Pack",
         [this]() { PackUVs(); },
@@ -731,6 +846,43 @@ void UIManager::InitCommandRegistry() {
         nullptr,
         []() { return "Requires low-poly mesh"; }
     });
+
+    // Projection and alignment (Maya UV Editor: Create / Align)
+    const auto hasMesh = [this]() { return m_hasLowPoly && !m_lowPolyMesh.triangles.empty(); };
+    m_commandRegistry.Register(Command{
+        "uv.camera_project", "Camera Projection", "Project UVs from the current 3D camera view. Acts on the selected faces, or the whole mesh.", "",
+        static_cast<uint32_t>(Surface::Menu | Surface::Toolkit | Surface::Marking), "UV/Project", "Unfold",
+        [this]() { ApplyCameraProjection(); },
+        hasMesh, nullptr,
+        []() { return "Requires low-poly mesh"; }
+    });
+    static const char* kAxisNames[3] = { "X", "Y", "Z" };
+    for (int axis = 0; axis < 3; ++axis) {
+        m_commandRegistry.Register(Command{
+            std::string("uv.project_") + static_cast<char>('x' + axis), std::string("Planar ") + kAxisNames[axis],
+            std::string("Project UVs flat along the ") + kAxisNames[axis] + " axis. Acts on the selected faces, or the whole mesh.", "",
+            static_cast<uint32_t>(Surface::Menu | Surface::Toolkit), "UV/Project", "Unfold",
+            [this, axis]() { PlanarProjectUVs(axis); },
+            hasMesh, nullptr,
+            []() { return "Requires low-poly mesh"; }
+        });
+    }
+    static const char* kAlignIds[6]    = { "uv.align_left", "uv.align_right", "uv.align_top", "uv.align_bottom", "uv.align_center_u", "uv.align_center_v" };
+    static const char* kAlignLabels[6] = { "Align Left", "Align Right", "Align Top", "Align Bottom", "Center Horizontally", "Center Vertically" };
+    for (int mode = 0; mode < 6; ++mode) {
+        m_commandRegistry.Register(Command{
+            kAlignIds[mode], kAlignLabels[mode], "Align the selected UVs to the edge or center of their bounding box", "",
+            static_cast<uint32_t>(Surface::Menu | Surface::Toolkit), "UV/Align", "Transform",
+            [this, mode]() { AlignSelectedUVs(mode); },
+            [this]() { return HasUVComponentSelection(); }, nullptr,
+            []() { return "No UV components selected"; }
+        });
+    }
+
+    // Marking menu: every wedge must be a registered command (the menu draws and runs them through the registry)
+    for (const MarkingWedge& w : kMarkingWedges) {
+        assert(m_commandRegistry.Find(w.commandId) && "Marking menu wedge references an unregistered command");
+    }
 
     // 8. Scene objects (Outliner rows and Properties panel)
     m_commandRegistry.Register(Command{
@@ -794,7 +946,7 @@ void UIManager::InitCommandRegistry() {
 
 void UIManager::SetUVSelectionMode(UVSelectionMode mode, const char* statusText) {
     m_uvSelectionMode = mode;
-    if (m_shellState.activeTab == BakerUI::ShellState::AppTab::UVCutAndPack) {
+    if (m_shellState.step == BakerUI::ShellState::Step::UV) {
         m_toolMode = ToolMode::CutSeam;
     }
     m_uvStatusMessage = statusText;
@@ -1076,6 +1228,7 @@ void UIManager::ClearScene() {
     ClearHighPoly();
     ClearCage();
     m_viewportRenderer.FrameAll();
+    m_bakeStatus = "Ready";
     m_logEntries.push_back("[Scene] Scene completely cleared.");
 }
 
@@ -1225,8 +1378,7 @@ void UIManager::RenderUI() {
     }
 
     // Begin Host (Main Menu Bar, Top Toolbar, DockSpace, Status Bar)
-    DockNewPanelsIntoSavedLayout();
-    BakerUI::BeginFrameHost(m_shellState, &m_commandRegistry);
+    BakerUI::BeginStageHost(m_shellState, m_commandRegistry);
 
     // Handle menu triggers
     if (m_shellState.openLowPoly) {
@@ -1282,378 +1434,49 @@ void UIManager::RenderUI() {
         ExportUnwrappedOBJ();
     }
 
-    bool isUVMode = (m_shellState.activeTab == BakerUI::ShellState::AppTab::UVCutAndPack);
+    // Keep the stepper's completion marks current
+    m_shellState.stepDone[0] = m_hasLowPoly && m_hasHighPoly;
+    m_shellState.stepDone[1] = m_hasLowPoly && !m_lowPolyMesh.detectedUDIMs.empty();
+    m_shellState.stepDone[2] = (m_bakeStatus == "Complete!");
 
-    // Workspace mode transition & focus orchestration
-    if (m_shellState.activeTab != m_prevActiveTab) {
-        if (isUVMode) {
-            // Switched from Baking to UV Cut & Pack
+    if (ImGui::IsKeyPressed(ImGuiKey_F5, false) && !io.WantTextInput) m_shellState.triggerBake = true;
+
+    // Step transition: configure the viewport for the new stage
+    if (m_shellState.step != m_prevStep) {
+        if (m_shellState.step == BakerUI::ShellState::Step::UV) {
             m_viewportMode = ViewportMode::SplitBoth;
             m_toolMode = ToolMode::CutSeam;
-            m_viewportRenderer.showHighPoly = false; // Hide high-poly sculpt to expose low-poly mesh
-            m_viewportRenderer.showCage = false;     // Hide cage
+            m_viewportRenderer.showHighPoly = false; // expose the low-poly
+            m_viewportRenderer.showCage = false;
             m_viewportRenderer.showLowPoly = true;
             m_viewportRenderer.showLowPolyWireframe = true;
             m_viewportRenderer.showSeams = true;
-            ImGui::SetWindowFocus("UV Tools###uvtools");
-            ImGui::SetWindowFocus("UDIM Layout###udim");
-            m_logEntries.push_back("[Workspace] Switched to UV Cut & Pack View (Split 3D/2D).");
         } else {
-            // Switched from UV Cut & Pack to Baking
             m_viewportMode = ViewportMode::View3D;
             m_toolMode = ToolMode::Navigate;
             m_viewportRenderer.showHighPoly = true;
             m_viewportRenderer.showCage = false;
             m_viewportRenderer.showLowPoly = true;
-            ImGui::SetWindowFocus("Bake Parameters###params");
-            ImGui::SetWindowFocus("Output Log###log");
-            m_logEntries.push_back("[Workspace] Switched to Bake Project View.");
         }
-        m_prevActiveTab = m_shellState.activeTab;
+        m_prevStep = m_shellState.step;
     }
 
-    // 0. Scene Outliner (available in both workspaces)
-    if (m_shellState.showOutliner) {
-        RenderOutlinerPanel();
-    }
-    if (m_shellState.showProperties) {
-        RenderPropertiesPanel();
-    }
-
-    // 1. Center / Main Stage: Viewport (3D / 2D / Split)
     RenderViewportPanel();
-
-    // 2. Mode-specific panels (strictly segregated by active workspace)
-    if (!isUVMode) {
-        // Baking Workspace
-        RenderMeshPanel();
-        RenderSettingsPanel();
-    } else {
-        // UV Cut & Pack Workspace
-        if (m_shellState.showUVTools) {
-            RenderUVToolsPanel();
-        }
-    }
-
-    // 3. Bottom Panels
-    if (m_shellState.showUdim) {
-        RenderUDIMCanvasPanel();
-    }
-    if (m_shellState.showLog) {
-        RenderBakeProgressPanel();
-    }
+    RenderScenePanel();
+    RenderActionPanel();
+    if (m_shellState.showLog) RenderBakeProgressPanel();
 
     RenderHelpWindows();
 
     BakerUI::EndFrameHost();
 }
 
-bool UIManager::SceneObjectExists(SceneObject obj) const {
-    switch (obj) {
-        case SceneObject::HighPoly: return m_hasHighPoly || m_isLoadingHighPoly;
-        case SceneObject::LowPoly:  return m_hasLowPoly;
-        case SceneObject::Cage:     return m_hasLowPoly; // the push-offset cage exists whenever a low-poly does
-        default:                    return false;
-    }
-}
-
-// Saved layouts from before a panel existed have no slot for it: dock it as a tab beside a related panel once.
-// Runs before the dockspace is submitted so the dock tree is never edited mid-frame.
-void UIManager::DockNewPanelsIntoSavedLayout() {
-    struct NewPanel { const char* name; const char* targets[3]; bool* done; };
-    NewPanel panels[] = {
-        { "Properties###properties", { "Bake Parameters###params", "Mesh Ingestion###ingest", "Scene Outliner###outliner" }, &m_propertiesDockChecked },
-        { "UV Tools###uvtools",      { "Bake Parameters###params", "Mesh Ingestion###ingest", "Properties###properties" }, &m_uvToolsDockChecked },
-    };
-    for (NewPanel& panel : panels) {
-        if (*panel.done) continue;
-        if (ImGui::FindWindowSettingsByID(ImHashStr(panel.name))) {
-            *panel.done = true;
-            continue;
-        }
-        if (ImGuiWindow* w = ImGui::FindWindowByName(panel.name)) {
-            if (w->DockId != 0) {
-                *panel.done = true;
-                continue;
-            }
-        }
-        ImGuiWindow* target = nullptr;
-        for (const char* name : panel.targets) {
-            ImGuiWindow* w = ImGui::FindWindowByName(name);
-            if (w && w->DockId != 0) { target = w; break; }
-        }
-        if (!target) continue; // try again once a related panel is docked
-
-        ImGui::DockBuilderDockWindow(panel.name, target->DockId);
-        ImGui::DockBuilderFinish(ImGui::DockNodeGetRootNode(ImGui::DockBuilderGetNode(target->DockId))->ID);
-        *panel.done = true;
-    }
-}
-
-// Scene Outliner: one row per object (visibility, name, type). Everything else lives in Properties.
-void UIManager::RenderOutlinerPanel() {
-    if (!ImGui::Begin("Scene Outliner###outliner", &m_shellState.showOutliner)) {
-        ImGui::End();
-        return;
-    }
-
-    if (!SceneObjectExists(m_selectedObject)) {
-        m_selectedObject = m_hasLowPoly ? SceneObject::LowPoly
-                         : SceneObjectExists(SceneObject::HighPoly) ? SceneObject::HighPoly
-                         : SceneObject::None;
-    }
-
-    if (!SceneObjectExists(SceneObject::HighPoly) && !m_hasLowPoly) {
-        ImGui::Spacing();
-        ImGui::TextDisabled("No objects yet.");
-        ImGui::TextDisabled("File > Open Low-Poly... to start.");
-        ImGui::End();
-        return;
-    }
-
-    const float rowH = ImGui::GetFrameHeight();
-    const ImGuiStyle& style = ImGui::GetStyle();
-
-    // Visibility eye bound to a registry toggle command
-    auto drawEye = [&](const char* cmdId) {
-        const BakerUI::Command* cmd = m_commandRegistry.Find(cmdId);
-        bool visible = cmd && cmd->checked && cmd->checked();
-        ImVec2 p = ImGui::GetCursorScreenPos();
-        bool clicked = ImGui::InvisibleButton(cmdId, ImVec2(rowH, rowH));
-        bool hovered = ImGui::IsItemHovered();
-        if (cmd) BakerUI::DrawCommandTooltip(*cmd, true);
-        if (clicked) m_commandRegistry.Execute(cmdId);
-
-        ImDrawList* dl = ImGui::GetWindowDrawList();
-        ImVec2 c(p.x + rowH * 0.5f, p.y + rowH * 0.5f);
-        float rx = rowH * 0.30f, ry = rowH * 0.18f;
-        ImVec4 eyeCol = visible ? BakerUI::Col::Text() : BakerUI::Col::TextDim();
-        eyeCol.w = hovered ? 1.0f : (visible ? 0.85f : 0.55f);
-        ImU32 col = ImGui::GetColorU32(eyeCol);
-        dl->AddBezierQuadratic(ImVec2(c.x - rx, c.y), ImVec2(c.x, c.y - ry * 2.0f), ImVec2(c.x + rx, c.y), col, 1.2f);
-        dl->AddBezierQuadratic(ImVec2(c.x - rx, c.y), ImVec2(c.x, c.y + ry * 2.0f), ImVec2(c.x + rx, c.y), col, 1.2f);
-        if (visible) {
-            dl->AddCircleFilled(c, rowH * 0.09f, col);
-        } else {
-            dl->AddLine(ImVec2(c.x - rx * 0.8f, c.y + ry * 1.4f), ImVec2(c.x + rx * 0.8f, c.y - ry * 1.4f), col, 1.2f);
-        }
-    };
-
-    auto drawRow = [&](SceneObject obj, const char* visCmd, const std::string& name, const char* typeLabel,
-                       const ImVec4& typeColor, const char* removeCmd) {
-        ImGui::PushID(static_cast<int>(obj));
-        drawEye(visCmd);
-        ImGui::SameLine(0.0f, style.ItemSpacing.x * 0.5f);
-
-        ImGui::PushStyleVar(ImGuiStyleVar_SelectableTextAlign, ImVec2(0.0f, 0.5f));
-        bool selected = (m_selectedObject == obj);
-        if (ImGui::Selectable(name.c_str(), selected, ImGuiSelectableFlags_None, ImVec2(0.0f, rowH))) {
-            m_selectedObject = obj;
-        }
-        ImGui::PopStyleVar();
-
-        // Type label right-aligned inside the row
-        ImVec2 rMin = ImGui::GetItemRectMin(), rMax = ImGui::GetItemRectMax();
-        ImVec2 typeSize = ImGui::CalcTextSize(typeLabel);
-        ImGui::GetWindowDrawList()->AddText(ImVec2(rMax.x - typeSize.x - style.FramePadding.x, rMin.y + (rowH - typeSize.y) * 0.5f),
-                                            ImGui::GetColorU32(typeColor), typeLabel);
-
-        if (ImGui::BeginPopupContextItem("##row_ctx")) {
-            m_selectedObject = obj;
-            BakerUI::DrawCommandMenuItem(m_commandRegistry, removeCmd);
-            ImGui::EndPopup();
-        }
-        ImGui::PopID();
-    };
-
-    if (SceneObjectExists(SceneObject::HighPoly)) {
-        std::string hpName = std::filesystem::path(m_highPolyPath).stem().string();
-        if (hpName.empty()) hpName = "High-Poly Sculpt";
-        drawRow(SceneObject::HighPoly, "view.3d_high_poly", hpName,
-                m_isLoadingHighPoly ? "Loading..." : "Sculpt",
-                m_isLoadingHighPoly ? BakerUI::Col::Warn() : BakerUI::Col::TextDim(), "scene.remove_high_poly");
-    }
-    if (m_hasLowPoly) {
-        std::string lpName = std::filesystem::path(m_lowPolyPath).stem().string();
-        if (lpName.empty()) lpName = "Low-Poly";
-        drawRow(SceneObject::LowPoly, "view.3d_low_poly", lpName, "Low-Poly", BakerUI::Col::TextDim(), "scene.remove_low_poly");
-
-        std::string cageName = m_hasExplicitCage ? std::filesystem::path(m_cagePath).stem().string() : std::string("Cage");
-        drawRow(SceneObject::Cage, "view.3d_cage", cageName, m_hasExplicitCage ? "Cage File" : "Cage", BakerUI::Col::TextDim(), "scene.remove_cage");
-    }
-
-    ImGui::End();
-}
-
-// Properties: details and settings for the object selected in the Scene Outliner.
-void UIManager::RenderPropertiesPanel() {
-    if (!ImGui::Begin("Properties###properties", &m_shellState.showProperties)) {
-        ImGui::End();
-        return;
-    }
-    RenderObjectProperties();
-    ImGui::End();
-}
-
-// Object details and settings, shown in the Properties panel.
-void UIManager::RenderObjectProperties() {
-    if (!SceneObjectExists(m_selectedObject)) {
-        ImGui::TextDisabled("Select an object in the Scene Outliner.");
-        return;
-    }
-
-    auto header = [](const std::string& name, const char* type, const std::string& path) {
-        if (BakerUI::gFontBold) ImGui::PushFont(BakerUI::gFontBold);
-        ImGui::TextUnformatted(name.c_str());
-        if (BakerUI::gFontBold) ImGui::PopFont();
-        ImGui::SameLine();
-        ImGui::TextDisabled("%s", type);
-        if (!path.empty()) {
-            ImGui::PushTextWrapPos(0.0f);
-            ImGui::TextDisabled("%s", path.c_str());
-            ImGui::PopTextWrapPos();
-        }
-        ImGui::Spacing();
-    };
-    const ImVec2 fullW(-FLT_MIN, 0.0f);
-    char buf[128];
-
-    switch (m_selectedObject) {
-    case SceneObject::HighPoly: {
-        std::string name = std::filesystem::path(m_highPolyPath).stem().string();
-        header(name.empty() ? "High-Poly Sculpt" : name, "Sculpt", m_highPolyPath);
-        if (m_isLoadingHighPoly) {
-            ImGui::TextColored(BakerUI::Col::Warn(), "Loading and building BVH...");
-            break;
-        }
-        if (BakerUI::BeginSectionCard("Mesh", "##pp_hp_mesh", true)) {
-            if (BakerUI::BeginProps("##pp_hp_mesh_props")) {
-                snprintf(buf, sizeof(buf), "%zu", m_highPolyMesh.positions.size());
-                BakerUI::PropValue("Vertices", buf);
-                if (m_highPolyMesh.isQuadMesh && !m_highPolyMesh.quadIndices.empty()) {
-                    snprintf(buf, sizeof(buf), "%zu quads", m_highPolyMesh.quadIndices.size() / 4);
-                } else {
-                    snprintf(buf, sizeof(buf), "%zu triangles", m_highPolyMesh.indices.size() / 3);
-                }
-                BakerUI::PropValue("Faces", buf);
-                BakerUI::PropValue("Polypaint", m_highPolyMesh.colors.empty() ? "None" : "Yes");
-                BakerUI::PropValue("Polygroups", m_highPolyMesh.polygroupPerFace.empty() ? "None" : "Yes");
-                BakerUI::EndProps();
-            }
-            BakerUI::EndSectionCard();
-        }
-        if (BakerUI::BeginSectionCard("Viewport Display", "##pp_hp_display", true)) {
-            if (BakerUI::BeginProps("##pp_hp_display_props")) {
-                BakerUI::PropFloat("Opacity", &m_viewportRenderer.highPolyOpacity, 0.01f, 0.05f, 1.0f, "%.2f");
-                const char* shadingModes[] = { "Studio White", "Clay", "Wax Red", "Normals", "Flat" };
-                int currentShading = (m_viewportRenderer.highPolyShading == ShadingMode::FlatShaded) ? 4 : (int)m_viewportRenderer.highPolyShading;
-                if (BakerUI::PropCombo("Shading", &currentShading, shadingModes, IM_ARRAYSIZE(shadingModes))) {
-                    m_viewportRenderer.highPolyShading = (currentShading == 4) ? ShadingMode::FlatShaded : (ShadingMode)currentShading;
-                }
-                BakerUI::EndProps();
-            }
-            BakerUI::EndSectionCard();
-        }
-        BakerUI::DrawCommand(m_commandRegistry, "scene.remove_high_poly", nullptr, fullW, BakerUI::CommandStyle::Destructive);
-        break;
-    }
-    case SceneObject::LowPoly: {
-        std::string name = std::filesystem::path(m_lowPolyPath).stem().string();
-        header(name.empty() ? "Low-Poly" : name, "Low-Poly", m_lowPolyPath);
-        if (BakerUI::BeginSectionCard("Mesh", "##pp_lp_mesh", true)) {
-            if (BakerUI::BeginProps("##pp_lp_mesh_props")) {
-                snprintf(buf, sizeof(buf), "%zu", m_lowPolyMesh.vertices.size());
-                BakerUI::PropValue("Vertices", buf);
-                if (m_lowPolyMesh.quadCount > 0 && m_lowPolyMesh.triCount == 0) {
-                    snprintf(buf, sizeof(buf), "%u quads", m_lowPolyMesh.quadCount);
-                } else if (m_lowPolyMesh.quadCount > 0) {
-                    snprintf(buf, sizeof(buf), "%u (%u quads, %u tris)", m_lowPolyMesh.polyCount, m_lowPolyMesh.quadCount, m_lowPolyMesh.triCount);
-                } else {
-                    snprintf(buf, sizeof(buf), "%zu triangles", m_lowPolyMesh.triangles.size());
-                }
-                BakerUI::PropValue("Faces", buf);
-                BakerUI::EndProps();
-            }
-            BakerUI::EndSectionCard();
-        }
-        if (BakerUI::BeginSectionCard("Viewport Display", "##pp_lp_display", true)) {
-            if (BakerUI::BeginProps("##pp_lp_display_props")) {
-                BakerUI::PropFloat("Opacity", &m_viewportRenderer.lowPolyOpacity, 0.01f, 0.05f, 1.0f, "%.2f");
-                BakerUI::EndProps();
-            }
-            BakerUI::EndSectionCard();
-        }
-        snprintf(buf, sizeof(buf), "UDIM Tiles to Bake (%zu)", m_lowPolyMesh.detectedUDIMs.size());
-        if (BakerUI::BeginSectionCard(buf, "##pp_lp_udims", true)) {
-            if (!m_lowPolyMesh.detectedUDIMs.empty()) {
-                bool allSelected = true;
-                for (int tile : m_lowPolyMesh.detectedUDIMs) {
-                    if (!IsUDIMSelected(tile)) { allSelected = false; break; }
-                }
-                if (ImGui::Checkbox("All Tiles", &allSelected)) {
-                    if (allSelected) SelectAllUDIMs();
-                    else m_selectedUDIMs.clear();
-                }
-                ImGui::Indent();
-                for (int tile : m_lowPolyMesh.detectedUDIMs) {
-                    bool sel = IsUDIMSelected(tile);
-                    snprintf(buf, sizeof(buf), "%d", tile);
-                    if (ImGui::Checkbox(buf, &sel)) {
-                        ToggleUDIM(tile);
-                    }
-                }
-                ImGui::Unindent();
-            } else {
-                ImGui::TextDisabled("No UVs yet.");
-            }
-            BakerUI::EndSectionCard();
-        }
-        BakerUI::DrawCommand(m_commandRegistry, "scene.remove_low_poly", nullptr, fullW, BakerUI::CommandStyle::Destructive);
-        break;
-    }
-    case SceneObject::Cage: {
-        std::string name = m_hasExplicitCage ? std::filesystem::path(m_cagePath).stem().string() : std::string("Cage");
-        header(name, m_hasExplicitCage ? "Cage File" : "Push-Offset Cage", m_hasExplicitCage ? m_cagePath : std::string());
-        if (BakerUI::BeginSectionCard("Cage", "##pp_cage", true)) {
-            if (BakerUI::BeginProps("##pp_cage_props")) {
-                BakerUI::PropValue("Source", m_hasExplicitCage ? "Loaded file" : "Low-poly pushed along normals");
-                if (!m_hasExplicitCage) {
-                    if (BakerUI::PropFloat("Offset", &m_settings.cageDistance, 0.001f, 0.0f, 2.0f, "%.4f", "Distance the cage is pushed out from the low-poly surface")) {
-                        m_viewportRenderer.UpdateCage(m_lowPolyMesh, m_settings.cageDistance, m_settings.lowPolyScale);
-                    }
-                }
-                BakerUI::EndProps();
-            }
-            BakerUI::EndSectionCard();
-        }
-        if (BakerUI::BeginSectionCard("Viewport Display", "##pp_cage_display", true)) {
-            if (BakerUI::BeginProps("##pp_cage_display_props")) {
-                BakerUI::PropFloat("Opacity", &m_viewportRenderer.cageOpacity, 0.01f, 0.05f, 1.0f, "%.2f");
-                BakerUI::EndProps();
-            }
-            BakerUI::EndSectionCard();
-        }
-        if (m_hasExplicitCage) {
-            BakerUI::DrawCommand(m_commandRegistry, "scene.remove_cage", nullptr, fullW, BakerUI::CommandStyle::Destructive);
-        }
-        break;
-    }
-    default:
-        break;
-    }
-}
-
-// UV Tools: the frequent operations sit in one row at the top, every other stage is a collapsible section
-// below, and Auto UV, the panel's single primary action (R-3), is pinned to the bottom.
+// UV step: the frequent operations sit in one row at the top and every other stage is a collapsible section
+// below. Auto UV, the step's single primary action (R-3), is pinned to the bottom by RenderInspector.
 // Every button goes through BakerUI::DrawCommand; parameters stay as plain property rows.
-void UIManager::RenderUVToolsPanel() {
+void UIManager::RenderUVStep() {
     using BakerUI::CommandStyle;
     using BakerUI::DrawCommand;
-
-    if (!ImGui::Begin("UV Tools###uvtools", &m_shellState.showUVTools)) {
-        ImGui::End();
-        return;
-    }
 
     const ImGuiStyle& style = ImGui::GetStyle();
     const ImVec2 fullW(-FLT_MIN, 0.0f);
@@ -1663,14 +1486,10 @@ void UIManager::RenderUVToolsPanel() {
         ImGui::SameLine();
         DrawCommand(m_commandRegistry, right, nullptr, fullW);
     };
-    const float primaryH = ImGui::GetFrameHeight() * 1.5f;
-    const float footerH = primaryH + style.ItemSpacing.y * 2.0f + style.WindowPadding.y;
-
     if (!m_hasLowPoly) {
         ImGui::TextDisabled("Load a low-poly mesh to use the UV tools.");
     }
 
-    // Frequent operations, always visible
     {
         const float quarterW = (ImGui::GetContentRegionAvail().x - style.ItemSpacing.x * 3.0f) * 0.25f;
         const float rowH = ImGui::GetFrameHeight() * 1.25f;
@@ -1683,51 +1502,58 @@ void UIManager::RenderUVToolsPanel() {
         DrawCommand(m_commandRegistry, "uv.pack", "Pack", ImVec2(-FLT_MIN, rowH));
         ImGui::Spacing();
     }
-
-    if (ImGui::BeginChild("##uvtools_sections", ImVec2(0.0f, -footerH))) {
+    {
         if (BakerUI::BeginSectionCard("Seams", "##uvt_seams", true)) {
             if (BakerUI::BeginProps("##uvt_auto_seams_props")) {
                 BakerUI::PropFloat("Angle Crease", &m_seamAngleThreshold, 1.0f, 15.0f, 90.0f, "%.1f deg", "Edges sharper than this dihedral angle become seams");
                 BakerUI::EndProps();
             }
             DrawCommand(m_commandRegistry, "uv.auto_seams", "Mark Seams by Angle", fullW);
+            drawPair("uv.mark_seams_polygroup", "uv.mark_seams_uv_borders");
             DrawCommand(m_commandRegistry, "uv.clear_seams", nullptr, fullW, CommandStyle::Destructive);
             BakerUI::EndSectionCard();
         }
 
-        if (BakerUI::BeginSectionCard("Curve Cut", "##uvt_curve_cut", false)) {
-            std::vector<std::string> curveNames;
-            std::vector<const char*> curveNamePtrs;
-            for (const auto& curve : m_curveManager.curves) {
-                char nameBuf[128];
-                snprintf(nameBuf, sizeof(nameBuf), "%s (%zu pts)%s", curve.name.c_str(), curve.points.size(), curve.isBaked ? " [Applied]" : "");
-                curveNames.push_back(nameBuf);
-            }
-            for (const auto& name : curveNames) curveNamePtrs.push_back(name.c_str());
-
-            static const char* kCurveMethods[] = { "Snap to Edges", "Cut Topology" };
-            int methodIdx = m_curveCutTopology ? 1 : 0;
-            if (BakerUI::BeginProps("##uvt_curve_props")) {
-                if (!curveNamePtrs.empty()) {
-                    int curCurve = m_curveManager.activeCurveIndex;
-                    if (BakerUI::PropCombo("Curve", &curCurve, curveNamePtrs.data(), static_cast<int>(curveNamePtrs.size()))) {
-                        m_curveManager.activeCurveIndex = curCurve;
+        if (BakerUI::BeginSectionCard("Curves", "##uvt_curvecut", true)) {
+            if (m_curveManager.curves.empty()) {
+                ImGui::TextDisabled("No curves yet. New Curve starts drawing on the 3D mesh.");
+            } else {
+                const float listH = ImGui::GetFrameHeightWithSpacing() * static_cast<float>((std::min)(m_curveManager.curves.size(), static_cast<size_t>(5))) + style.WindowPadding.y * 2.0f;
+                if (ImGui::BeginChild("##uvt_curve_list", ImVec2(0.0f, listH), ImGuiChildFlags_Borders)) {
+                    for (size_t i = 0; i < m_curveManager.curves.size(); ++i) {
+                        SurfaceCurve& curve = m_curveManager.curves[i];
+                        ImGui::PushID(static_cast<int>(i));
+                        ImGui::Checkbox("##visible", &curve.visible);
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show in the 3D viewport");
+                        ImGui::SameLine();
+                        char rowLabel[128];
+                        snprintf(rowLabel, sizeof(rowLabel), "%s   %zu pts%s##row", curve.name.c_str(), curve.points.size(), curve.isBaked ? "   applied" : "");
+                        if (ImGui::Selectable(rowLabel, static_cast<int>(i) == m_curveManager.activeCurveIndex)) {
+                            m_curveManager.activeCurveIndex = static_cast<int>(i);
+                            m_curveManager.selectedPointIndex = -1;
+                            m_curveManager.selectedPointEndIndex = -1;
+                        }
+                        ImGui::PopID();
                     }
                 }
-                if (BakerUI::PropCombo("Method", &methodIdx, kCurveMethods, IM_ARRAYSIZE(kCurveMethods))) {
-                    m_curveCutTopology = (methodIdx == 1);
-                }
-                if (SurfaceCurve* c = m_curveManager.GetActiveCurve()) {
-                    BakerUI::PropCheck("Close Loop", &c->isClosed, "Connect the last point back to the first");
-                }
-                BakerUI::EndProps();
+                ImGui::EndChild();
             }
-            if (curveNamePtrs.empty()) {
-                ImGui::TextDisabled("No curves yet. New Curve starts drawing on the 3D mesh.");
+            if (SurfaceCurve* active = m_curveManager.GetActiveCurve()) {
+                if (BakerUI::BeginProps("##uvt_curve_props")) {
+                    BakerUI::PropCheck("Close Loop", &active->isClosed, "Connect the last point back to the first");
+                    BakerUI::EndProps();
+                }
             }
             drawPair("uv.curve_new", "uv.curve_delete");
             DrawCommand(m_commandRegistry, "uv.curve_draw_mode", nullptr, fullW);
-            drawPair("uv.curve_apply", "uv.curve_apply_all");
+            drawPair("uv.curve_show_all", "uv.curve_hide_all");
+
+            ImGui::SeparatorText("Apply to mesh");
+            drawPair("uv.curve_mark_seam", "uv.curve_cut_mesh");
+            drawPair("uv.curve_mark_all", "uv.curve_cut_all");
+            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+            ImGui::TextWrapped("Mark as Seam keeps the topology. Cut Mesh splits the polygons along the curve.");
+            ImGui::PopStyleColor();
             DrawCommand(m_commandRegistry, "uv.curve_clear_all", nullptr, fullW, CommandStyle::Destructive);
 
             SurfaceCurve* c = m_curveManager.GetActiveCurve();
@@ -1778,10 +1604,27 @@ void UIManager::RenderUVToolsPanel() {
             drawPair("uv.flip_u", "uv.flip_v");
             drawPair("uv.rot_ccw", "uv.rot_cw");
             drawPair("uv.straighten", "uv.orient");
+            ImGui::SeparatorText("Align");
+            drawPair("uv.align_left", "uv.align_right");
+            drawPair("uv.align_top", "uv.align_bottom");
+            drawPair("uv.align_center_u", "uv.align_center_v");
             BakerUI::EndSectionCard();
         }
 
-        if (BakerUI::BeginSectionCard("Stack & Overlap", "##uvt_stack", false)) {
+        if (BakerUI::BeginSectionCard("Project", "##uvt_project", false)) {
+            DrawCommand(m_commandRegistry, "uv.camera_project", nullptr, fullW);
+            {
+                const float thirdW = (ImGui::GetContentRegionAvail().x - style.ItemSpacing.x * 2.0f) / 3.0f;
+                DrawCommand(m_commandRegistry, "uv.project_x", nullptr, ImVec2(thirdW, 0.0f));
+                ImGui::SameLine();
+                DrawCommand(m_commandRegistry, "uv.project_y", nullptr, ImVec2(thirdW, 0.0f));
+                ImGui::SameLine();
+                DrawCommand(m_commandRegistry, "uv.project_z", nullptr, ImVec2(-FLT_MIN, 0.0f));
+            }
+            BakerUI::EndSectionCard();
+        }
+
+        if (BakerUI::BeginSectionCard("Stack & Overlap", "##uvt_stackoverlap", false)) {
             if (BakerUI::BeginProps("##uvt_stack_props")) {
                 BakerUI::PropCheck("Lock Overlaps", &m_lockOverlapping, "Treat stacked identical islands as a single unit during pack");
                 BakerUI::EndProps();
@@ -1790,7 +1633,7 @@ void UIManager::RenderUVToolsPanel() {
             BakerUI::EndSectionCard();
         }
 
-        if (BakerUI::BeginSectionCard("Texel Density", "##uvt_td", false)) {
+        if (BakerUI::BeginSectionCard("Texel Density", "##uvt_texeldensity", false)) {
             if (BakerUI::BeginProps("##uvt_td_props")) {
                 BakerUI::PropFloat("Target (px/cm)", &m_targetTexelDensity, 0.5f, 0.1f, 100.0f, "%.2f px/cm", "Desired texel density per world centimetre");
                 ImGui::TableNextRow();
@@ -1808,10 +1651,11 @@ void UIManager::RenderUVToolsPanel() {
             }
             drawPair("uv.td_get", "uv.td_set");
             DrawCommand(m_commandRegistry, "uv.td_equalize", nullptr, fullW);
+            DrawCommand(m_commandRegistry, "uv.relax", nullptr, fullW);
             BakerUI::EndSectionCard();
         }
 
-        if (BakerUI::BeginSectionCard("Pack Options", "##uvt_pack", false)) {
+        if (BakerUI::BeginSectionCard("Pack Options", "##uvt_packoptions", false)) {
             if (BakerUI::BeginProps("##uvt_pack_props")) {
                 BakerUI::PropCheck("Multi-UDIM", &m_packSettings.multiUDIM, "Pack across tiles 1001, 1002, 1003...");
                 if (m_packSettings.multiUDIM) {
@@ -1843,6 +1687,7 @@ void UIManager::RenderUVToolsPanel() {
                 }
                 ImGui::TreePop();
             }
+            DrawCommand(m_commandRegistry, "uv.snap_pixels", nullptr, fullW);
             if (m_packStats.packedIslands > 0) {
                 ImGui::SeparatorText("Last Pack");
                 ImGui::TextDisabled("%d islands on %d tile(s), %.1f%% efficient",
@@ -1857,12 +1702,6 @@ void UIManager::RenderUVToolsPanel() {
             BakerUI::EndSectionCard();
         }
     }
-    ImGui::EndChild();
-
-    ImGui::Separator();
-    DrawCommand(m_commandRegistry, "uv.auto_cut_unwrap_pack", nullptr, ImVec2(-FLT_MIN, primaryH), CommandStyle::Primary);
-
-    ImGui::End();
 }
 
 void UIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& size) {
@@ -1870,7 +1709,7 @@ void UIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& size) {
 
     ImGui::SetCursorScreenPos(origin);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(22, 22, 24, 255));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(38, 38, 41, 255));
     bool childOpen = ImGui::BeginChild("##uv_canvas_viewport", size, false,
         ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoMove);
     ImGui::PopStyleColor();
@@ -1883,7 +1722,7 @@ void UIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& size) {
     ImDrawList* drawList = ImGui::GetWindowDrawList();
 
     // Deep dark background matching Blender UV Editor
-    drawList->AddRectFilled(origin, ImVec2(origin.x + size.x, origin.y + size.y), IM_COL32(22, 22, 24, 255));
+    drawList->AddRectFilled(origin, ImVec2(origin.x + size.x, origin.y + size.y), IM_COL32(38, 38, 41, 255));
 
     // Clip to canvas rectangle
     drawList->PushClipRect(origin, ImVec2(origin.x + size.x, origin.y + size.y), true);
@@ -1898,7 +1737,7 @@ void UIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& size) {
     float currentTileSize = baseTileSize * m_uvZoom;
 
     float headerH = 30.0f;
-    bool inCanvas = isHovered && (io.MousePos.y > origin.y + headerH);
+    bool inCanvas = isHovered && (io.MousePos.y > origin.y + headerH) && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId);
 
     // Helper functions for true UV <-> Screen mapping
     auto UVToScreen = [&](float u, float v) -> ImVec2 {
@@ -1982,7 +1821,7 @@ void UIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& size) {
         }
 
         // Tile fill
-        drawList->AddRectFilled(ImVec2(x0, y0), ImVec2(x1, y1), IM_COL32(28, 28, 31, 255));
+        drawList->AddRectFilled(ImVec2(x0, y0), ImVec2(x1, y1), IM_COL32(48, 48, 52, 255));
 
         // UV Checker Pattern (optional Maya/Blender style)
         if (m_showUVChecker && currentTileSize > 30.0f) {
@@ -1993,7 +1832,7 @@ void UIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& size) {
                     if ((cx + cy) % 2 == 1) {
                         float px0 = x0 + cx * cStep;
                         float py0 = y0 + cy * cStep;
-                        drawList->AddRectFilled(ImVec2(px0, py0), ImVec2(px0 + cStep, py0 + cStep), IM_COL32(36, 36, 42, 255));
+                        drawList->AddRectFilled(ImVec2(px0, py0), ImVec2(px0 + cStep, py0 + cStep), IM_COL32(58, 58, 64, 255));
                     }
                 }
             }
@@ -2014,7 +1853,7 @@ void UIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& size) {
         if (currentTileSize > 35.0f) {
             float fade = std::clamp((currentTileSize - 35.0f) / 45.0f, 0.0f, 1.0f);
             int subAlpha = static_cast<int>(fade * 65.0f);
-            ImU32 subLineCol = IM_COL32(50, 52, 58, subAlpha);
+            ImU32 subLineCol = IM_COL32(78, 80, 88, subAlpha);
             for (int g = 1; g < 10; ++g) {
                 float fx = x0 + (g / 10.0f) * currentTileSize;
                 float fy = y0 + (g / 10.0f) * currentTileSize;
@@ -2023,11 +1862,11 @@ void UIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& size) {
             }
         }
 
-        drawList->AddRect(ImVec2(x0, y0), ImVec2(x1, y1), IM_COL32(60, 60, 65, 255), 0.0f, 0, 1.0f);
+        drawList->AddRect(ImVec2(x0, y0), ImVec2(x1, y1), IM_COL32(92, 92, 100, 255), 0.0f, 0, 1.0f);
 
         char tileStr[16];
         snprintf(tileStr, sizeof(tileStr), "%d", udim);
-        drawList->AddText(ImVec2(x0 + 8.0f, y0 + 6.0f), IM_COL32(110, 110, 118, 255), tileStr);
+        drawList->AddText(ImVec2(x0 + 8.0f, y0 + 6.0f), IM_COL32(150, 150, 158, 255), tileStr);
     }
 
     // Point in 2D triangle helper
@@ -2046,7 +1885,7 @@ void UIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& size) {
     // Draw Low-Poly UV Faces and Wireframe (Maya Shell Shading, Distortion Heatmap & Clean Wireframe)
     if (m_hasLowPoly && !m_lowPolyMesh.triangles.empty()) {
         ImU32 faceFillCol = IM_COL32(220, 225, 235, 18);   // Subtle translucent face fill
-        ImU32 edgeCol = IM_COL32(100, 105, 115, 200);      // Clean 1px wireframe edge
+        ImU32 edgeCol = IM_COL32(225, 232, 240, 235);      // Bright polygon edges so quads read over shell fills and triangle seams
 
         // Palette of vibrant translucent colors matching Maya UV Editor Shell Shading (Hotkey 5)
         static const ImU32 kMayaShellColors[] = {
@@ -2103,8 +1942,15 @@ void UIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& size) {
             }
         }
 
-        // 3. Wireframe edges (Pure polygon outlines matching Blender/Maya UV Editor: NO triangulated diagonals!)
+        // 3. Wireframe: faint triangulation underneath, bright polygon (quad) edges on top
         if (m_showUVWireframe) {
+            const ImU32 triEdgeCol = IM_COL32(200, 210, 220, 60);
+            for (const auto& tri : m_lowPolyMesh.triangles) {
+                ImVec2 p0 = UVToScreen(m_lowPolyMesh.vertices[tri.indices[0]].uv.u, m_lowPolyMesh.vertices[tri.indices[0]].uv.v);
+                ImVec2 p1 = UVToScreen(m_lowPolyMesh.vertices[tri.indices[1]].uv.u, m_lowPolyMesh.vertices[tri.indices[1]].uv.v);
+                ImVec2 p2 = UVToScreen(m_lowPolyMesh.vertices[tri.indices[2]].uv.u, m_lowPolyMesh.vertices[tri.indices[2]].uv.v);
+                drawList->AddTriangle(p0, p1, p2, triEdgeCol, 1.0f);
+            }
             if (!m_lowPolyMesh.polygonFaces.empty()) {
                 for (const auto& face : m_lowPolyMesh.polygonFaces) {
                     size_t fv = face.size();
@@ -2127,15 +1973,6 @@ void UIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& size) {
                         ImVec2 p1 = UVToScreen(m_lowPolyMesh.vertices[i1].uv.u, m_lowPolyMesh.vertices[i1].uv.v);
                         drawList->AddLine(p0, p1, edgeCol, 1.0f);
                     }
-                }
-            } else {
-                for (const auto& tri : m_lowPolyMesh.triangles) {
-                    ImVec2 p0 = UVToScreen(m_lowPolyMesh.vertices[tri.indices[0]].uv.u, m_lowPolyMesh.vertices[tri.indices[0]].uv.v);
-                    ImVec2 p1 = UVToScreen(m_lowPolyMesh.vertices[tri.indices[1]].uv.u, m_lowPolyMesh.vertices[tri.indices[1]].uv.v);
-                    ImVec2 p2 = UVToScreen(m_lowPolyMesh.vertices[tri.indices[2]].uv.u, m_lowPolyMesh.vertices[tri.indices[2]].uv.v);
-                    drawList->AddLine(p0, p1, edgeCol, 1.0f);
-                    drawList->AddLine(p1, p2, edgeCol, 1.0f);
-                    drawList->AddLine(p2, p0, edgeCol, 1.0f);
                 }
             }
         }
@@ -2680,15 +2517,13 @@ void UIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& size) {
 
         // Shift + RMB: Maya Radial Marking Menu
         if (io.KeyShift && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
-            m_markingMenu.active = true;
-            m_markingMenu.centerPos = io.MousePos;
-            m_markingMenu.armedWedge = -1;
+            OpenMarkingMenu();
         }
     }
 
     // Draw UV Editor Header Toolbar (single pinned row across top of 2D UV Viewport)
-    drawList->AddRectFilled(origin, ImVec2(origin.x + size.x, origin.y + headerH), IM_COL32(20, 21, 25, 255));
-    drawList->AddLine(ImVec2(origin.x, origin.y + headerH), ImVec2(origin.x + size.x, origin.y + headerH), IM_COL32(40, 43, 50, 255), 1.0f);
+    drawList->AddRectFilled(origin, ImVec2(origin.x + size.x, origin.y + headerH), IM_COL32(36, 37, 41, 255));
+    drawList->AddLine(ImVec2(origin.x, origin.y + headerH), ImVec2(origin.x + size.x, origin.y + headerH), IM_COL32(60, 63, 70, 255), 1.0f);
 
     bool compact = (size.x < 620.0f);
 
@@ -2706,11 +2541,11 @@ void UIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& size) {
             ImGui::PushStyleColor(ImGuiCol_Button, BakerUI::Hex(0x4CC3A6));
             ImGui::PushStyleColor(ImGuiCol_Text, BakerUI::Hex(0x0C1412));
         } else {
-            ImGui::PushStyleColor(ImGuiCol_Button, BakerUI::Hex(0x242528));
+            ImGui::PushStyleColor(ImGuiCol_Button, BakerUI::Hex(0x3A3B3F));
             ImGui::PushStyleColor(ImGuiCol_Text, BakerUI::Hex(0xCCCCCC));
         }
         if (ImGui::Button(compact ? labelCompact : labelFull)) {
-            m_uvSelectionMode = mode;
+            SetUVSelectionMode(mode, tooltip);
         }
         ImGui::PopStyleColor(2);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tooltip);
@@ -2731,7 +2566,7 @@ void UIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& size) {
             ImGui::PushStyleColor(ImGuiCol_Button, BakerUI::Hex(0x4CC3A6));
             ImGui::PushStyleColor(ImGuiCol_Text, BakerUI::Hex(0x0C1412));
         } else {
-            ImGui::PushStyleColor(ImGuiCol_Button, BakerUI::Hex(0x242528));
+            ImGui::PushStyleColor(ImGuiCol_Button, BakerUI::Hex(0x3A3B3F));
             ImGui::PushStyleColor(ImGuiCol_Text, BakerUI::Hex(0xCCCCCC));
         }
         if (ImGui::Button(compact ? labelCompact : labelFull)) {
@@ -2754,7 +2589,7 @@ void UIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& size) {
             ImGui::PushStyleColor(ImGuiCol_Button, BakerUI::Hex(0x3B82F6));
             ImGui::PushStyleColor(ImGuiCol_Text, BakerUI::Hex(0xFFFFFF));
         } else {
-            ImGui::PushStyleColor(ImGuiCol_Button, BakerUI::Hex(0x242528));
+            ImGui::PushStyleColor(ImGuiCol_Button, BakerUI::Hex(0x3A3B3F));
             ImGui::PushStyleColor(ImGuiCol_Text, BakerUI::Hex(0x888890));
         }
         if (ImGui::Button(compact ? labelCompact : labelFull)) *var = !*var;
@@ -2782,38 +2617,20 @@ void UIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& size) {
     }
 
     float statW = ImGui::CalcTextSize(selStat).x;
-    float modeChipsW = (m_viewportMode == ViewportMode::View2D) ? (compact ? 135.0f : 190.0f) : 0.0f;
-    float rightGroupW = statW + modeChipsW + 16.0f;
+    float rightGroupW = statW + 16.0f;
     float availRight = (origin.x + size.x) - ImGui::GetCursorScreenPos().x;
 
     if (availRight > rightGroupW + 8.0f) {
         ImGui::Dummy(ImVec2(availRight - rightGroupW - 4.0f, 0));
         ImGui::SameLine();
         ImGui::TextDisabled("%s", selStat);
-        if (m_viewportMode == ViewportMode::View2D) {
-            ImGui::SameLine();
-            bool is3D = false;
-            bool is2D = true;
-            bool isSplit = false;
-            if (BakerUI::ToggleChip(compact ? "3D" : "3D View", &is3D) && is3D) {
-                m_viewportMode = ViewportMode::View3D;
-            }
-            ImGui::SameLine();
-            if (BakerUI::ToggleChip(compact ? "2D" : "2D UV", &is2D) && is2D) {
-                m_viewportMode = ViewportMode::View2D;
-            }
-            ImGui::SameLine();
-            if (BakerUI::ToggleChip(compact ? "Split" : "Split", &isSplit) && isSplit) {
-                m_viewportMode = ViewportMode::SplitBoth;
-            }
-        }
     }
 
     ImGui::PopStyleVar(3);
 
     // 2D UV Canvas bottom status hint text matching reference design
     char hintUV[140];
-    snprintf(hintUV, sizeof(hintUV), "Texel density %.2f px/cm  *  padding %d px  *  Zoom: %.1fx  *  MMB/RMB: Pan  *  Scroll: Zoom",
+    snprintf(hintUV, sizeof(hintUV), "Texel density %.2f px/cm  *  padding %d px  *  Zoom: %.1fx  *  RMB menu  *  RMB drag: Pan  *  Scroll: Zoom",
              m_packStats.averageTexelDensity > 0.01f ? m_packStats.averageTexelDensity : 10.24f,
              m_packSettings.paddingPixels,
              m_uvZoom);
@@ -2825,7 +2642,18 @@ void UIManager::Render2DUVCanvas(const ImVec2& origin, const ImVec2& size) {
 
 void UIManager::RenderViewportPanel() {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-    bool open = ImGui::Begin("Viewport###viewport", nullptr, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    {
+        ImGuiViewport* mvp = ImGui::GetMainViewport();
+        const float x0 = mvp->WorkPos.x + BakerUI::kPanelMargin + BakerUI::kLeftW + BakerUI::kPanelMargin;
+        const float x1 = mvp->WorkPos.x + mvp->WorkSize.x - BakerUI::kPanelMargin - BakerUI::kRightW - BakerUI::kPanelMargin;
+        const float y0 = mvp->WorkPos.y + BakerUI::TopBarHeight();
+        const float y1 = mvp->WorkPos.y + mvp->WorkSize.y - BakerUI::StatusBarHeight() - BakerUI::kPanelMargin;
+        ImGui::SetNextWindowPos(ImVec2(x0, y0));
+        ImGui::SetNextWindowSize(ImVec2((std::max)(x1 - x0, 200.0f), (std::max)(y1 - y0, 120.0f)));
+    }
+    bool open = ImGui::Begin("Viewport###viewport", nullptr, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
+                             ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+                             ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus);
     ImGui::PopStyleVar();
     if (!open) {
         ImGui::End();
@@ -2841,6 +2669,7 @@ void UIManager::RenderViewportPanel() {
     }
 
     ImGuiIO& io = ImGui::GetIO();
+    const bool popupBlocking = ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId); // a click that dismisses a menu must not also edit the scene
 
     float splitterW = 6.0f;
     float leftW = avail.x;
@@ -2872,7 +2701,7 @@ void UIManager::RenderViewportPanel() {
                     else if (ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) button = 2; // Maya Alt + MMB: Track/Pan
                     else if (ImGui::IsMouseDragging(ImGuiMouseButton_Right)) button = 3;  // Maya Alt + RMB: Dolly/Zoom
                 } else {
-                    bool isUVActive = (m_toolMode == ToolMode::CutSeam) || (m_shellState.activeTab == BakerUI::ShellState::AppTab::UVCutAndPack);
+                    bool isUVActive = (m_toolMode == ToolMode::CutSeam) || (m_shellState.step == BakerUI::ShellState::Step::UV);
                     bool suppressNav = m_markingMenu.active || io.KeyShift;
                     if (!suppressNav) {
                         if (ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) button = 2;      // MMB: Track/Pan
@@ -2900,7 +2729,7 @@ void UIManager::RenderViewportPanel() {
     }
 
     // Marmoset-style 3D interactive brush ray-casting
-    if ((m_toolMode == ToolMode::PaintCage || m_toolMode == ToolMode::PaintSkew) && !ImGui::GetIO().KeyAlt && m_hasLowPoly && (m_viewportMode == ViewportMode::View3D || m_viewportMode == ViewportMode::SplitBoth)) {
+    if ((m_toolMode == ToolMode::PaintCage || m_toolMode == ToolMode::PaintSkew) && !popupBlocking && !ImGui::GetIO().KeyAlt && m_hasLowPoly && (m_viewportMode == ViewportMode::View3D || m_viewportMode == ViewportMode::SplitBoth)) {
         float maxActiveW = (m_viewportMode == ViewportMode::SplitBoth) ? leftW : avail.x;
         float relX = io.MousePos.x - origin.x;
         float relY = io.MousePos.y - origin.y;
@@ -2967,8 +2796,8 @@ void UIManager::RenderViewportPanel() {
 
     // Interactive Seam Cutting mode
     // Interactive Seam Cutting & Maya Edge Selection mode
-    bool isUVCuttingActive = (m_toolMode == ToolMode::CutSeam) || (m_shellState.activeTab == BakerUI::ShellState::AppTab::UVCutAndPack);
-    if (isUVCuttingActive && !io.KeyAlt && m_hasLowPoly && (m_viewportMode == ViewportMode::View3D || m_viewportMode == ViewportMode::SplitBoth)) {
+    bool isUVCuttingActive = (m_toolMode == ToolMode::CutSeam) || (m_shellState.step == BakerUI::ShellState::Step::UV);
+    if (isUVCuttingActive && !popupBlocking && !io.KeyAlt && m_hasLowPoly && (m_viewportMode == ViewportMode::View3D || m_viewportMode == ViewportMode::SplitBoth)) {
         float maxActiveW = (m_viewportMode == ViewportMode::SplitBoth) ? leftW : avail.x;
         float relX = io.MousePos.x - origin.x;
         float relY = io.MousePos.y - origin.y;
@@ -3251,9 +3080,7 @@ void UIManager::RenderViewportPanel() {
                                 m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
                                 PushHistoryState("Select Edge");
                             }
-                            m_markingMenu.active = true;
-                            m_markingMenu.centerPos = io.MousePos;
-                            m_markingMenu.armedWedge = -1;
+                            OpenMarkingMenu();
                         }
                     } else {
                         if (ImGui::IsMouseClicked(0) && !io.KeyShift && !io.KeyAlt) {
@@ -3325,14 +3152,12 @@ void UIManager::RenderViewportPanel() {
         float relX = io.MousePos.x - origin.x;
         float relY = io.MousePos.y - origin.y;
         if (relX >= 0.0f && relX <= maxActiveW && relY >= 0.0f && relY <= avail.y) {
-            m_markingMenu.active = true;
-            m_markingMenu.centerPos = io.MousePos;
-            m_markingMenu.armedWedge = -1;
+            OpenMarkingMenu();
         }
     }
 
     // Interactive 3D Surface Curve Drawing and Point Movement
-    if (m_toolMode == ToolMode::DrawCurve && !io.KeyAlt && m_hasLowPoly && (m_viewportMode == ViewportMode::View3D || m_viewportMode == ViewportMode::SplitBoth)) {
+    if (m_toolMode == ToolMode::DrawCurve && !popupBlocking && !io.KeyAlt && m_hasLowPoly && (m_viewportMode == ViewportMode::View3D || m_viewportMode == ViewportMode::SplitBoth)) {
         float maxActiveW = (m_viewportMode == ViewportMode::SplitBoth) ? leftW : avail.x;
         float relX = io.MousePos.x - origin.x;
         float relY = io.MousePos.y - origin.y;
@@ -3360,7 +3185,7 @@ void UIManager::RenderViewportPanel() {
 
                 // 1. Detect if mouse cursor is hovering over any existing point handle
                 int hoveredPt = -1;
-                if (activeCurve) {
+                if (activeCurve && activeCurve->visible) {
                     for (size_t p = 0; p < activeCurve->points.size(); ++p) {
                         float sX, sY;
                         if (m_viewportRenderer.ProjectToScreen(DirectX::XMFLOAT3(activeCurve->points[p].position.x, activeCurve->points[p].position.y, activeCurve->points[p].position.z), sX, sY)) {
@@ -3384,7 +3209,7 @@ void UIManager::RenderViewportPanel() {
                 if (hoveredPt < 0) {
                     for (size_t cIdx = 0; cIdx < m_curveManager.curves.size(); ++cIdx) {
                         const auto& c = m_curveManager.curves[cIdx];
-                        if (c.points.empty()) continue;
+                        if (c.points.empty() || !c.visible) continue;
                         size_t testPts[2] = { 0, c.points.size() - 1 };
                         size_t numTests = (c.points.size() == 1) ? 1 : 2;
                         for (size_t t = 0; t < numTests; ++t) {
@@ -3434,6 +3259,7 @@ void UIManager::RenderViewportPanel() {
 
                 // 3. Handle Click to Grab or Add Point on Surface
                 if (ImGui::IsMouseClicked(0)) {
+                    if (activeCurve) activeCurve->visible = true; // drawing on a hidden curve would be invisible
                     if (hoveredPt >= 0) {
                         if (io.KeyShift) {
                             m_curveManager.selectedPointEndIndex = hoveredPt;
@@ -3463,27 +3289,18 @@ void UIManager::RenderViewportPanel() {
                     }
                 }
 
-                // Finish curve and slice mesh topology on Enter or Right Click
-                if (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsMouseClicked(1)) {
+                // Enter finishes this curve and starts the next. Applying a curve to the mesh is explicit
+                // (Mark as Seam / Cut Mesh), and right-click opens the context menu instead of committing.
+                if (ImGui::IsKeyPressed(ImGuiKey_Enter, false) && activeCurve && activeCurve->points.size() >= 2) {
                     m_draggingPointIndex = -1;
                     m_curveManager.selectedPointIndex = -1;
-                    if (activeCurve && activeCurve->points.size() >= 2) {
-                        std::vector<std::pair<uint32_t, uint32_t>> seamEdges;
-                        CurveManager::CutCurveIntoMeshTopology(*activeCurve, m_lowPolyMesh, seamEdges);
-                        activeCurve->isBaked = true;
-                        m_viewportRenderer.SetLowPolyMesh(m_lowPolyMesh, m_settings.lowPolyScale);
-                        m_viewportRenderer.UpdateSeams(m_lowPolyMesh);
-                        m_viewportRenderer.showSeams = true;
-
-                        // Automatically finalize this curve and start a new fresh curve! Tool mode stays active!
-                        int newCurveIdx = m_curveManager.AddCurve();
-                        PushHistoryState("Slice Mesh Topology");
-                        char msg[128];
-                        snprintf(msg, sizeof(msg), "Sliced mesh topology along curve (%zu slice edges). Ready for next cut.",
-                                 seamEdges.size());
-                        m_uvStatusMessage = msg;
-                        m_logEntries.push_back(std::string("[Curve Slice] ") + msg);
-                    }
+                    m_curveManager.AddCurve();
+                    PushHistoryState("Finish Curve");
+                    m_uvStatusMessage = "Curve finished. Use Mark as Seam or Cut Mesh to apply it.";
+                }
+                if (ImGui::IsKeyPressed(ImGuiKey_Delete, false)) m_commandRegistry.Execute("uv.curve_delete_point");
+                if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) && !m_markingMenu.active) {
+                    m_toolMode = (m_shellState.step == BakerUI::ShellState::Step::UV) ? ToolMode::CutSeam : ToolMode::Navigate;
                 }
             }
         }
@@ -3501,7 +3318,7 @@ void UIManager::RenderViewportPanel() {
 
         for (size_t cIdx = 0; cIdx < m_curveManager.curves.size(); ++cIdx) {
             const auto& curve = m_curveManager.curves[cIdx];
-            if (curve.points.empty()) continue;
+            if (curve.points.empty() || !curve.visible) continue;
 
             bool isActive = (static_cast<int>(cIdx) == m_curveManager.activeCurveIndex);
             // Golden amber curve matching reference design
@@ -3617,7 +3434,7 @@ void UIManager::RenderViewportPanel() {
         }
     }
 
-    bool isUVMode = (m_shellState.activeTab == BakerUI::ShellState::AppTab::UVCutAndPack);
+    bool isUVMode = (m_shellState.step == BakerUI::ShellState::Step::UV);
 
     // Floating overlay (top-left) - 3D controls (context-aware grouping by workspace mode)
     if (m_viewportMode != ViewportMode::View2D) {
@@ -3667,6 +3484,14 @@ void UIManager::RenderViewportPanel() {
             BakerUI::ToggleChip("Wire", &m_viewportRenderer.showLowPolyWireframe); ImGui::SameLine();
             BakerUI::ToggleChip("Seams", &m_viewportRenderer.showSeams); ImGui::SameLine();
             BakerUI::ToggleChip("Grid", &m_viewportRenderer.showGrid); ImGui::SameLine();
+            BakerUI::ToggleChip("Checker", &m_viewportRenderer.showUVChecker); ImGui::SameLine();
+            BakerUI::ToggleChip("Stretch", &m_viewportRenderer.showUVStretch); ImGui::SameLine();
+            if (m_viewportRenderer.showUVStretch) {
+                ImGui::SetNextItemWidth(64.0f);
+                ImGui::SliderFloat("##stretchRange", &m_viewportRenderer.uvStretchRange, 0.25f, 3.0f, "%.2f");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Stretch range (log2): 1.0 = full red/blue at 2x density error");
+                ImGui::SameLine();
+            }
 
             ImGui::Dummy(ImVec2(8, 0)); ImGui::SameLine();
 
@@ -3695,11 +3520,13 @@ void UIManager::RenderViewportPanel() {
         ImGui::SameLine();
         ImGui::Dummy(ImVec2(8, 0)); ImGui::SameLine();
 
-        ImGui::SetNextItemWidth(100);
-        const char* shadingModes[] = { "Studio White", "Clay", "Wax Red", "Normals", "Flat" };
-        int currentShading = (m_viewportRenderer.highPolyShading == ShadingMode::FlatShaded) ? 4 : (int)m_viewportRenderer.highPolyShading;
-        if (ImGui::Combo("##Shading", &currentShading, shadingModes, IM_ARRAYSIZE(shadingModes))) {
-            m_viewportRenderer.highPolyShading = (currentShading == 4) ? ShadingMode::FlatShaded : (ShadingMode)currentShading;
+        if (!isUVMode) {
+            ImGui::SetNextItemWidth(100);
+            const char* shadingModes[] = { "Studio White", "Clay", "Wax Red", "Normals", "Flat" };
+            int currentShading = (m_viewportRenderer.highPolyShading == ShadingMode::FlatShaded) ? 4 : (int)m_viewportRenderer.highPolyShading;
+            if (ImGui::Combo("##Shading", &currentShading, shadingModes, IM_ARRAYSIZE(shadingModes))) {
+                m_viewportRenderer.highPolyShading = (currentShading == 4) ? ShadingMode::FlatShaded : (ShadingMode)currentShading;
+            }
         }
         ImGui::EndGroup();
 
@@ -3714,72 +3541,26 @@ void UIManager::RenderViewportPanel() {
             ImGui::BeginChild("##brush_bar_zb", ImVec2(barW, 36.0f), true, ImGuiWindowFlags_NoScrollbar);
             {
                 if (m_toolMode == ToolMode::DrawCurve) {
-                    ImGui::AlignTextToFramePadding();
-                    ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.1f, 1.0f), "CAMERA CURVE CUT");
-                    ImGui::SameLine();
+                    using BakerUI::DrawCommand;
                     SurfaceCurve* c = m_curveManager.GetActiveCurve();
-                    ImGui::TextDisabled("%s (%zu pts)", c ? c->name.c_str() : "Curve", c ? c->points.size() : 0);
+                    ImGui::AlignTextToFramePadding();
+                    ImGui::TextColored(BakerUI::Col::Accent(), "Curve cut");
                     ImGui::SameLine();
-                    ImGui::TextColored(ImVec4(0.0f, 0.95f, 1.0f, 1.0f), "| Seams: %zu", m_lowPolyMesh.cutSeams.size());
+                    ImGui::TextDisabled("%s, %zu pts, %zu seams", c ? c->name.c_str() : "none", c ? c->points.size() : 0, m_lowPolyMesh.cutSeams.size());
                     ImGui::SameLine();
-                    if (ImGui::Button("Snap Seams")) {
-                        SnapActiveCurveToSeams();
-                    }
+                    DrawCommand(m_commandRegistry, "uv.curve_mark_seam");
                     ImGui::SameLine();
-                    if (ImGui::Button("Cut Topology")) {
-                        CutActiveCurveIntoTopology();
-                    }
+                    DrawCommand(m_commandRegistry, "uv.curve_cut_mesh");
                     ImGui::SameLine();
-                    if (ImGui::Button("+ New")) {
-                        m_curveManager.AddCurve();
-                    }
+                    DrawCommand(m_commandRegistry, "uv.curve_toggle_visible", "Visible");
                     ImGui::SameLine();
+                    DrawCommand(m_commandRegistry, "uv.curve_new");
                     if (c) {
+                        ImGui::SameLine();
                         ImGui::Checkbox("Loop", &c->isClosed);
-                        ImGui::SameLine();
                     }
-                    if (c && c->points.size() >= 2) {
-                        int ptCountInt = static_cast<int>(c->points.size());
-                        int p0 = (m_curveManager.selectedPointIndex >= 0) ? m_curveManager.selectedPointIndex : 0;
-                        if (p0 >= ptCountInt) p0 = ptCountInt - 1;
-                        int defaultP1 = (p0 + 1 < ptCountInt) ? (p0 + 1) : (c->isClosed ? 0 : p0);
-                        int p1 = (m_curveManager.selectedPointEndIndex >= 0) ? m_curveManager.selectedPointEndIndex : defaultP1;
-                        if (p1 >= ptCountInt) p1 = ptCountInt - 1;
-
-                        char strBtn[48];
-                        snprintf(strBtn, sizeof(strBtn), "Straighten P%d->P%d", p0, p1);
-                        if (ImGui::Button(strBtn)) {
-                            PushHistoryState("Straighten Curve Segment");
-                            c->StraightenSegment(p0, p1, m_lowPolyMesh);
-                            char msg[128];
-                            snprintf(msg, sizeof(msg), "Straightened segment P%d -> P%d", p0, p1);
-                            m_uvStatusMessage = msg;
-                        }
-                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Straightens the surface path between P%d and P%d", p0, p1);
-
-                        ImGui::SameLine();
-                        char smBtn[48];
-                        snprintf(smBtn, sizeof(smBtn), "Smooth P%d->P%d", p0, p1);
-                        if (ImGui::Button(smBtn)) {
-                            PushHistoryState("Smooth Curve Segment");
-                            c->SmoothSegment(p0, p1, m_curveManager.smoothIterations, m_curveManager.smoothFactor, m_lowPolyMesh);
-                            char msg[128];
-                            snprintf(msg, sizeof(msg), "Smoothed segment P%d -> P%d (%d iter)", p0, p1, m_curveManager.smoothIterations);
-                            m_uvStatusMessage = msg;
-                        }
-                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Smooths out kinks/deviations between P%d and P%d using Laplacian relaxation", p0, p1);
-
-                        ImGui::SameLine();
-                        if (ImGui::Button("Smooth All")) {
-                            PushHistoryState("Smooth Entire Curve");
-                            c->SmoothEntireCurve(m_curveManager.smoothIterations, m_curveManager.smoothFactor, m_lowPolyMesh);
-                            m_uvStatusMessage = "Smoothed entire curve";
-                        }
-                        ImGui::SameLine();
-                    }
-                    if (ImGui::Button("Clear")) {
-                        ClearActiveCurve();
-                    }
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("Enter: next curve   Esc: exit");
                 } else if (m_toolMode == ToolMode::CutSeam) {
                     ImGui::AlignTextToFramePadding();
                     const char* modeLabel = (m_uvSelectionMode == UVSelectionMode::Vertex) ? "VERT (1)" :
@@ -3834,39 +3615,8 @@ void UIManager::RenderViewportPanel() {
     // 3D Viewport bottom status hint text matching reference design
     if (m_viewportMode == ViewportMode::View3D || m_viewportMode == ViewportMode::SplitBoth) {
         ImDrawList* dl = ImGui::GetWindowDrawList();
-        const char* hint3D = "Alt+LMB orbit  *  Shift+RMB marking menu  *  Enter finalize cut";
+        const char* hint3D = "Alt+LMB orbit  *  RMB menu  *  Shift+RMB marking menu";
         dl->AddText(ImVec2(origin.x + 14.0f, origin.y + avail.y - 20.0f), ImGui::GetColorU32(BakerUI::Hex(0x5A6878)), hint3D);
-    }
-
-    // Floating mode toggles (strictly anchored within 3D viewport region)
-    if (m_viewportMode == ViewportMode::View3D || m_viewportMode == ViewportMode::SplitBoth) {
-        float viewport3DW = (m_viewportMode == ViewportMode::SplitBoth) ? leftW : avail.x;
-        float rightBtnGroupW = 215.0f; // 3D View + 2D UV + Split 3D | 2D chips
-        if (viewport3DW > 100.0f) {
-            float anchorX = (viewport3DW >= rightBtnGroupW + 24.0f)
-                ? (origin.x + viewport3DW - rightBtnGroupW - 12.0f)
-                : (origin.x + 12.0f);
-            ImGui::SetCursorScreenPos(ImVec2(anchorX, origin.y + 12.0f));
-            ImGui::BeginGroup();
-
-            bool is3D = (m_viewportMode == ViewportMode::View3D);
-            bool is2D = (m_viewportMode == ViewportMode::View2D);
-            bool isSplit = (m_viewportMode == ViewportMode::SplitBoth);
-
-            if (BakerUI::ToggleChip("3D View", &is3D) && is3D) {
-                m_viewportMode = ViewportMode::View3D;
-            }
-            ImGui::SameLine();
-            if (BakerUI::ToggleChip("2D UV", &is2D) && is2D) {
-                m_viewportMode = ViewportMode::View2D;
-            }
-            ImGui::SameLine();
-            if (BakerUI::ToggleChip("Split 3D | 2D", &isSplit) && isSplit) {
-                m_viewportMode = ViewportMode::SplitBoth;
-            }
-
-            ImGui::EndGroup();
-        }
     }
 
     // 2D UV Canvas overlay & sliding splitter if 2D or Split mode is active
@@ -3889,13 +3639,13 @@ void UIManager::RenderViewportPanel() {
         ImDrawList* dl = ImGui::GetWindowDrawList();
         ImU32 splitBg = isSplitActive ? ImGui::GetColorU32(BakerUI::Hex(0x4CC3A6, 0.35f)) :
                         (isSplitHovered ? ImGui::GetColorU32(BakerUI::Hex(0x4CC3A6, 0.15f)) :
-                                           ImGui::GetColorU32(BakerUI::Hex(0x181818)));
+                                           ImGui::GetColorU32(BakerUI::Hex(0x262626)));
         dl->AddRectFilled(ImVec2(origin.x + leftW, origin.y),
                           ImVec2(origin.x + leftW + splitterW, origin.y + avail.y), splitBg);
 
         ImU32 splitLineCol = isSplitActive ? ImGui::GetColorU32(BakerUI::Col::Accent()) :
                              (isSplitHovered ? ImGui::GetColorU32(BakerUI::Col::AccentHi()) :
-                                                ImGui::GetColorU32(BakerUI::Hex(0x282828)));
+                                                ImGui::GetColorU32(BakerUI::Hex(0x3C3C3C)));
         dl->AddLine(ImVec2(origin.x + leftW + 3.0f, origin.y),
                     ImVec2(origin.x + leftW + 3.0f, origin.y + avail.y),
                     splitLineCol);
@@ -3913,295 +3663,211 @@ void UIManager::RenderViewportPanel() {
         Render2DUVCanvas(splitPos, splitSize);
     }
 
-    // Floating Workspace Action HUD (bottom center of viewport, only in Baking view)
-    if (!isUVMode) {
-        // Baking View: Start Bake & Progress HUD
-        int udimCount = m_lowPolyMesh.detectedUDIMs.empty() ? 1 : (int)m_lowPolyMesh.detectedUDIMs.size();
-        bool canBake = m_hasLowPoly && m_hasHighPoly && !m_isBaking && !m_isLoadingHighPoly;
-        if (BakerUI::FloatingBakeBar(origin, avail, canBake, m_isBaking, m_bakeProgress, m_bakeStatus.c_str(),
-                                     udimCount, m_settings.resolution, m_settings.resolution)) {
-            if (canBake) {
-                TriggerBake();
-            }
-        }
+    {
+        const float x2D = origin.x + (m_viewportMode == ViewportMode::SplitBoth ? leftW + splitterW : 0.0f);
+        const bool inY = io.MousePos.y >= origin.y && io.MousePos.y <= origin.y + avail.y;
+        const bool in3D = leftW > 0.0f && inY && io.MousePos.x >= origin.x && io.MousePos.x <= origin.x + leftW;
+        const bool in2D = rightW > 0.0f && inY && io.MousePos.x >= x2D && io.MousePos.x <= origin.x + avail.x &&
+                          io.MousePos.y > origin.y + 30.0f; // below the UV header toolbar
+        UpdateContextMenuTrigger(in3D, in2D);
+        RenderContextMenu();
     }
-
     RenderMarkingMenu();
 
     ImGui::End();
 }
 
-void UIManager::RenderFloatingUVBar(const ImVec2& origin, const ImVec2& avail) {
-    if (!m_hasLowPoly) return;
-
-    float barW = 460.0f;
-    float barH = 38.0f;
-    float posX = origin.x + (avail.x - barW) * 0.5f;
-    float posY = origin.y + avail.y - barH - 12.0f;
-
-    ImGui::SetCursorScreenPos(ImVec2(posX, posY));
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 5.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.0f, 6.0f));
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(24.0f / 255.0f, 24.0f / 255.0f, 26.0f / 255.0f, 0.94f));
-    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(48.0f / 255.0f, 48.0f / 255.0f, 52.0f / 255.0f, 0.85f));
-
-    if (ImGui::BeginChild("##floating_uv_bar", ImVec2(barW, barH), true, ImGuiWindowFlags_NoScrollbar)) {
-        ImGui::AlignTextToFramePadding();
-
-        size_t seamCount = m_lowPolyMesh.cutSeams.size();
-        char seamStr[32];
-        snprintf(seamStr, sizeof(seamStr), "%zu Seams", seamCount);
-        BakerUI::StatusPill(seamStr, seamCount > 0 ? BakerUI::Hex(0x4CC3A6) : BakerUI::Hex(0x888888));
-        ImGui::SameLine(0, 8.0f);
-
-        char islStr[32];
-        snprintf(islStr, sizeof(islStr), "%zu Islands", m_currentIslands.size());
-        BakerUI::StatusPill(islStr, m_currentIslands.empty() ? BakerUI::Hex(0x888888) : BakerUI::Hex(0x4E92F9));
-        ImGui::SameLine(0, 12.0f);
-
-        if (BakerUI::PrimaryButton("Unwrap (Ctrl+U)", 115, 24)) {
-            UnwrapMesh();
-        }
-        ImGui::SameLine(0, 6.0f);
-
-        if (BakerUI::SecondaryButton("Pack (Ctrl+P)", 105, 24)) {
-            PackUVs();
-        }
-        ImGui::SameLine(0, 6.0f);
-
-        if (BakerUI::SecondaryButton("Export OBJ", 90, 24)) {
-            ExportUnwrappedOBJ();
-        }
-    }
-    ImGui::EndChild();
-    ImGui::PopStyleColor(2);
-    ImGui::PopStyleVar(2);
+void UIManager::OpenMarkingMenu() {
+    m_markingMenu.active = true;
+    m_markingMenu.sticky = false;
+    m_markingMenu.centerPos = ImGui::GetIO().MousePos;
+    m_markingMenu.armedWedge = -1;
 }
 
+// Radial menu: hold Shift+RMB, flick toward a label, release. Releasing without a flick keeps it open for clicking.
 void UIManager::RenderMarkingMenu() {
     if (!m_markingMenu.active) return;
 
-    ImGuiIO& io = ImGui::GetIO();
-    ImDrawList* drawList = ImGui::GetForegroundDrawList(ImGui::GetWindowViewport());
+    constexpr float kPi = 3.14159265f;
+    constexpr float kDeadZone = 20.0f;   // flick distance before a wedge arms
+    constexpr float kHubR = 20.0f;
+    constexpr float kRx = 165.0f, kRy = 110.0f; // label ellipse; sized so neighbouring labels never overlap
+    constexpr float kPillH = 30.0f, kPillMinW = 96.0f;
 
-    ImVec2 c = m_markingMenu.centerPos;
-    float dx = io.MousePos.x - c.x;
-    float dy = io.MousePos.y - c.y;
-    float dist = std::sqrt(dx * dx + dy * dy);
+    ImGuiIO& io = ImGui::GetIO();
+    ImDrawList* dl = ImGui::GetForegroundDrawList(ImGui::GetWindowViewport());
+    const ImVec2 c = m_markingMenu.centerPos;
+    const ImVec2 d(io.MousePos.x - c.x, io.MousePos.y - c.y);
+    const float dist = std::sqrt(d.x * d.x + d.y * d.y);
     m_markingMenu.dragDist = dist;
 
-    // Determine armed wedge based on angle if dragged > 16 pixels
+    // Label rectangles, kept inside the window so menus opened near an edge stay readable
+    ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImVec2 pillMin[8], pillMax[8];
+    for (int i = 0; i < 8; ++i) {
+        const float rad = kMarkingWedges[i].angleDeg * kPi / 180.0f;
+        const float w = (std::max)(ImGui::CalcTextSize(kMarkingWedges[i].label).x + 28.0f, kPillMinW);
+        float cx = c.x + std::cos(rad) * kRx, cy = c.y + std::sin(rad) * kRy;
+        cx = std::clamp(cx, vp->WorkPos.x + w * 0.5f + 4.0f, vp->WorkPos.x + vp->WorkSize.x - w * 0.5f - 4.0f);
+        cy = std::clamp(cy, vp->WorkPos.y + kPillH * 0.5f + 4.0f, vp->WorkPos.y + vp->WorkSize.y - kPillH * 0.5f - 4.0f);
+        pillMin[i] = ImVec2(cx - w * 0.5f, cy - kPillH * 0.5f);
+        pillMax[i] = ImVec2(cx + w * 0.5f, cy + kPillH * 0.5f);
+    }
+
+    // Arm by label hover, or by flick direction while the button is still held
     int armed = -1;
-    if (dist > 16.0f) {
-        float angleDeg = std::atan2(dy, dx) * 180.0f / 3.14159265f; // [-180, 180]
-        if (angleDeg >= -112.5f && angleDeg < -67.5f) {
-            armed = 0; // CUT (North)
-        } else if (angleDeg >= 67.5f && angleDeg < 112.5f) {
-            armed = 1; // SEW (South)
-        } else if (angleDeg >= -22.5f && angleDeg < 22.5f) {
-            armed = 2; // LOOP (East)
-        } else if (angleDeg >= 157.5f || angleDeg < -157.5f) {
-            armed = 3; // UNWRAP (West)
-        } else if (angleDeg >= -67.5f && angleDeg < -22.5f) {
-            armed = 4; // EDGE RING (NE)
-        } else if (angleDeg >= -157.5f && angleDeg < -112.5f) {
-            armed = 5; // CAMERA PROJECT (NW)
-        } else if (angleDeg >= 22.5f && angleDeg < 67.5f) {
-            armed = 6; // AUTO UV (SE)
-        } else if (angleDeg >= 112.5f && angleDeg < 157.5f) {
-            armed = 7; // CLEAR SEL (SW)
+    for (int i = 0; i < 8; ++i) {
+        if (io.MousePos.x >= pillMin[i].x && io.MousePos.x <= pillMax[i].x &&
+            io.MousePos.y >= pillMin[i].y && io.MousePos.y <= pillMax[i].y) armed = i;
+    }
+    if (armed < 0 && !m_markingMenu.sticky && dist > kDeadZone) {
+        const float a = std::atan2(d.y, d.x) * 180.0f / kPi;
+        float best = 1e9f;
+        for (int i = 0; i < 8; ++i) {
+            const float delta = std::fabs(std::remainder(a - kMarkingWedges[i].angleDeg, 360.0f));
+            if (delta < best) { best = delta; armed = i; }
         }
     }
     m_markingMenu.armedWedge = armed;
 
-    // Draw dark radial hub at center
-    drawList->AddCircleFilled(c, 24.0f, IM_COL32(18, 20, 24, 235));
-    drawList->AddCircle(c, 24.0f, IM_COL32(80, 85, 95, 210), 32, 2.0f);
-    drawList->AddText(ImVec2(c.x - 13.0f, c.y - 6.0f), IM_COL32(0, 0, 0, 220), "MAYA");
-    drawList->AddText(ImVec2(c.x - 14.0f, c.y - 7.0f), IM_COL32(0, 230, 255, 240), "MAYA");
-
-    // Radial spokes
-    auto DrawSpoke = [&](float angleDeg) {
-        float rad = angleDeg * 3.14159265f / 180.0f;
-        ImVec2 p0(c.x + std::cos(rad) * 26.0f, c.y + std::sin(rad) * 26.0f);
-        ImVec2 p1(c.x + std::cos(rad) * 58.0f, c.y + std::sin(rad) * 58.0f);
-        drawList->AddLine(p0, p1, IM_COL32(70, 75, 88, 170), 1.5f);
-    };
-    DrawSpoke(-90.0f);  // N
-    DrawSpoke(90.0f);   // S
-    DrawSpoke(0.0f);    // E
-    DrawSpoke(180.0f);  // W
-    DrawSpoke(-45.0f);  // NE
-    DrawSpoke(-135.0f); // NW
-    DrawSpoke(45.0f);   // SE
-    DrawSpoke(135.0f);  // SW
-
-    // Draw active gesture laser line towards cursor
-    if (dist > 8.0f) {
-        drawList->AddLine(c, io.MousePos, IM_COL32(0, 220, 255, 220), 2.5f);
-        drawList->AddCircleFilled(io.MousePos, 4.0f, IM_COL32(0, 255, 255, 255));
-    }
-
-    // Helper to render wedge badges
-    auto RenderWedgeBadge = [&](int id, const ImVec2& offset, const char* label, const char* sub, ImU32 activeColor) {
-        bool isArmed = (armed == id);
-        ImVec2 bp(c.x + offset.x, c.y + offset.y);
-        ImVec2 textSize = ImGui::CalcTextSize(label);
-        float w = (std::max)(textSize.x + 24.0f, 106.0f);
-        float h = 32.0f;
-        ImVec2 minP(bp.x - w * 0.5f, bp.y - h * 0.5f);
-        ImVec2 maxP(bp.x + w * 0.5f, bp.y + h * 0.5f);
-
-        // Check if mouse is hovering badge directly
-        if (io.MousePos.x >= minP.x && io.MousePos.x <= maxP.x && io.MousePos.y >= minP.y && io.MousePos.y <= maxP.y) {
-            isArmed = true;
-            m_markingMenu.armedWedge = id;
-            if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-                ExecuteMarkingMenuAction(id);
-                m_markingMenu.active = false;
-                m_markingMenu.armedWedge = -1;
-                return;
-            }
-        }
-
-        ImU32 bgCol = isArmed ? IM_COL32(24, 38, 52, 250) : IM_COL32(20, 22, 28, 230);
-        ImU32 borderCol = isArmed ? activeColor : IM_COL32(70, 75, 88, 180);
-        ImU32 textCol = isArmed ? activeColor : IM_COL32(230, 235, 245, 255);
-
-        drawList->AddRectFilled(minP, maxP, bgCol, 5.0f);
-        drawList->AddRect(minP, maxP, borderCol, 5.0f, 0, isArmed ? 2.5f : 1.0f);
-
-        float textX = bp.x - textSize.x * 0.5f;
-        float textY = bp.y - (sub ? 11.0f : 7.0f);
-        drawList->AddText(ImVec2(textX + 1.0f, textY + 1.0f), IM_COL32(0, 0, 0, 220), label);
-        drawList->AddText(ImVec2(textX, textY), textCol, label);
-
-        if (sub) {
-            ImVec2 subSize = ImGui::CalcTextSize(sub);
-            float subX = bp.x - subSize.x * 0.5f;
-            float subY = bp.y + 2.0f;
-            drawList->AddText(ImVec2(subX + 1.0f, subY + 1.0f), IM_COL32(0, 0, 0, 180), sub);
-            drawList->AddText(ImVec2(subX, subY), IM_COL32(150, 155, 170, 200), sub);
-        }
+    auto EnabledAt = [&](int i) {
+        const BakerUI::Command* cmd = m_commandRegistry.Find(kMarkingWedges[i].commandId);
+        return cmd && (!cmd->enabled || cmd->enabled());
     };
 
-    RenderWedgeBadge(0, ImVec2(0.0f, -72.0f),   "CUT",            "^ Flick Up",     IM_COL32(0, 230, 255, 255));
-    RenderWedgeBadge(1, ImVec2(0.0f, 72.0f),    "SEW",            "v Flick Down",   IM_COL32(255, 170, 20, 255));
-    RenderWedgeBadge(2, ImVec2(118.0f, 0.0f),   "EDGE LOOP",      "> Flick Right",  IM_COL32(80, 170, 255, 255));
-    RenderWedgeBadge(3, ImVec2(-126.0f, 0.0f),  "UNWRAP & PACK",  "< Flick Left",   IM_COL32(60, 230, 130, 255));
-    RenderWedgeBadge(4, ImVec2(98.0f, -54.0f),  "EDGE RING",      "^> Flick NE",    IM_COL32(190, 130, 255, 255));
-    RenderWedgeBadge(5, ImVec2(-116.0f, -54.0f), "CAMERA PROJ",   "<^ Flick NW",    IM_COL32(255, 140, 60, 255));
-    RenderWedgeBadge(6, ImVec2(98.0f, 54.0f),   "AUTO UV",        "v> Flick SE",    IM_COL32(255, 220, 50, 255));
-    RenderWedgeBadge(7, ImVec2(-116.0f, 54.0f), "CLEAR SEL",      "<v Flick SW",    IM_COL32(240, 90, 90, 255));
+    const auto WithAlpha = [](ImVec4 c4, float a) { c4.w = a; return ImGui::GetColorU32(c4); };
+    const ImU32 accent   = ImGui::GetColorU32(BakerUI::Col::Accent());
+    const ImU32 panel    = WithAlpha(BakerUI::Col::Panel(), 0.96f);
+    const ImU32 border   = ImGui::GetColorU32(BakerUI::Col::Border());
+    const ImU32 textCol  = ImGui::GetColorU32(BakerUI::Col::Text());
+    const ImU32 dimCol   = WithAlpha(BakerUI::Col::TextDim(), 0.75f);
+    const ImU32 onAccent = ImGui::GetColorU32(BakerUI::Hex(0x0C1412));
 
-    // When RMB is released, execute action if armed!
-    if (ImGui::IsMouseReleased(ImGuiMouseButton_Right)) {
-        if (m_markingMenu.armedWedge >= 0) {
-            ExecuteMarkingMenuAction(m_markingMenu.armedWedge);
-        }
-        m_markingMenu.active = false;
-        m_markingMenu.armedWedge = -1;
+    // Spokes from hub to each label, then the armed sector on top of them
+    for (int i = 0; i < 8; ++i) {
+        const float rad = kMarkingWedges[i].angleDeg * kPi / 180.0f;
+        const ImVec2 dir(std::cos(rad), std::sin(rad));
+        const bool on = (i == armed) && EnabledAt(i);
+        dl->AddLine(ImVec2(c.x + dir.x * (kHubR + 4.0f), c.y + dir.y * (kHubR + 4.0f)),
+                    ImVec2((pillMin[i].x + pillMax[i].x) * 0.5f, (pillMin[i].y + pillMax[i].y) * 0.5f),
+                    on ? accent : border, on ? 2.0f : 1.0f);
+    }
+    if (armed >= 0) {
+        const float rad = kMarkingWedges[armed].angleDeg * kPi / 180.0f;
+        dl->PathArcTo(c, kHubR + 14.0f, rad - 0.34f, rad + 0.34f, 16);
+        dl->PathStroke(EnabledAt(armed) ? accent : border, 0, 18.0f);
+    }
+    dl->AddCircleFilled(c, kHubR, panel);
+    dl->AddCircle(c, kHubR, border, 32, 1.5f);
+
+    // Labels
+    for (int i = 0; i < 8; ++i) {
+        const bool isArmed = (i == armed);
+        const bool enabled = EnabledAt(i);
+        const ImU32 fill = (isArmed && enabled) ? accent : panel;
+        dl->AddRectFilled(pillMin[i], pillMax[i], fill, 6.0f);
+        dl->AddRect(pillMin[i], pillMax[i], isArmed ? accent : border, 6.0f, 0, 1.0f);
+        const char* label = kMarkingWedges[i].label;
+        const ImVec2 ts = ImGui::CalcTextSize(label);
+        dl->AddText(ImVec2((pillMin[i].x + pillMax[i].x - ts.x) * 0.5f, (pillMin[i].y + pillMax[i].y - ts.y) * 0.5f),
+                    !enabled ? dimCol : (isArmed ? onAccent : textCol), label);
     }
 
-    // Dismiss on Escape or LMB click outside
-    if (ImGui::IsKeyPressed(ImGuiKey_Escape) || (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && dist > 140.0f)) {
-        m_markingMenu.active = false;
-        m_markingMenu.armedWedge = -1;
+    // Why the armed wedge cannot run
+    if (armed >= 0 && !EnabledAt(armed)) {
+        const BakerUI::Command* cmd = m_commandRegistry.Find(kMarkingWedges[armed].commandId);
+        if (cmd && cmd->disabledReason) {
+            const std::string reason = cmd->disabledReason();
+            const ImVec2 ts = ImGui::CalcTextSize(reason.c_str());
+            dl->AddText(ImVec2(c.x - ts.x * 0.5f, c.y + kRy + kPillH + 10.0f), ImGui::GetColorU32(BakerUI::Col::Warn()), reason.c_str());
+        }
+    }
+
+    auto Close = [&]() { m_markingMenu.active = false; m_markingMenu.sticky = false; m_markingMenu.armedWedge = -1; };
+    auto Run = [&](int i) { Close(); m_commandRegistry.Execute(kMarkingWedges[i].commandId); };
+
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape)) { Close(); return; }
+    if (m_markingMenu.sticky) {
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) { if (armed >= 0) Run(armed); else Close(); }
+    } else if (ImGui::IsMouseReleased(ImGuiMouseButton_Right)) {
+        if (armed >= 0) Run(armed);
+        else if (dist < kDeadZone) m_markingMenu.sticky = true;
+        else Close();
+    } else if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && armed >= 0) {
+        Run(armed);
     }
 }
 
-void UIManager::ExecuteMarkingMenuAction(int wedge) {
-    if (!m_hasLowPoly) return;
-
-    if (wedge == 0) { // CUT SEAMS
-        if (!m_lowPolyMesh.selectedEdges.empty()) {
-            size_t count = m_lowPolyMesh.selectedEdges.size();
-            UVCutter::CutSelectedEdges(m_lowPolyMesh);
-            m_viewportRenderer.UpdateSeams(m_lowPolyMesh);
-            m_viewportRenderer.showSeams = true;
-            PushHistoryState("Maya Cut UVs");
-            char msg[128];
-            snprintf(msg, sizeof(msg), "Cut %zu seam edge(s) via Maya gesture", count);
-            m_uvStatusMessage = msg;
-            m_logEntries.push_back(std::string("[Maya Cut] ") + msg);
-        } else {
-            m_uvStatusMessage = "No edges selected to cut (Select an edge or loop first)";
-        }
-    } else if (wedge == 1) { // SEW / STITCH
-        if (!m_lowPolyMesh.selectedEdges.empty()) {
-            size_t count = m_lowPolyMesh.selectedEdges.size();
-            UVCutter::SewSelectedEdges(m_lowPolyMesh);
-            m_viewportRenderer.UpdateSeams(m_lowPolyMesh);
-            PushHistoryState("Maya Sew UVs");
-            char msg[128];
-            snprintf(msg, sizeof(msg), "Sewed %zu edge(s) via Maya gesture", count);
-            m_uvStatusMessage = msg;
-            m_logEntries.push_back(std::string("[Maya Sew] ") + msg);
-        } else {
-            m_uvStatusMessage = "No edges selected to sew";
-        }
-    } else if (wedge == 2) { // SELECT EDGE LOOP
-        if (!m_lowPolyMesh.selectedEdges.empty()) {
-            auto currentEdges = m_lowPolyMesh.selectedEdges;
-            for (const auto& edge : currentEdges) {
-                UVCutter::SelectEdgeLoop(m_lowPolyMesh, edge.first, edge.second, true);
-            }
-            m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
-            PushHistoryState("Maya Select Edge Loop");
-            char msg[128];
-            snprintf(msg, sizeof(msg), "Selected edge loop(s): %zu edges selected", m_lowPolyMesh.selectedEdges.size());
-            m_uvStatusMessage = msg;
-        } else {
-            m_uvStatusMessage = "Click an edge to select an edge loop";
-        }
-    } else if (wedge == 3) { // UNWRAP & PACK
-        auto islandsTris = UVCutter::SegmentIslands(m_lowPolyMesh);
-        if (!islandsTris.empty()) {
-            m_currentIslands = UVUnwrapper::UnwrapMesh(m_lowPolyMesh, islandsTris);
-            m_packStats = UVPacker::PackIslands(m_currentIslands, m_packSettings);
-            UVPacker::ApplyToMesh(m_lowPolyMesh, m_currentIslands);
-            m_viewportRenderer.SetLowPolyMesh(m_lowPolyMesh, 1.0f);
-            m_hasUnwrappedIslands = true;
-            PushHistoryState("Maya Unwrap & Pack");
-            char msg[128];
-            snprintf(msg, sizeof(msg), "Unwrapped & packed %zu UV islands (%.1f%% efficiency)",
-                     m_currentIslands.size(), m_packStats.packingEfficiency * 100.0f);
-            m_uvStatusMessage = msg;
-            m_logEntries.push_back(std::string("[UV] ") + msg);
-        } else {
-            m_uvStatusMessage = "Mesh has no triangles to unwrap";
-        }
-    } else if (wedge == 4) { // SELECT EDGE RING
-        if (!m_lowPolyMesh.selectedEdges.empty()) {
-            auto currentEdges = m_lowPolyMesh.selectedEdges;
-            for (const auto& edge : currentEdges) {
-                UVCutter::SelectEdgeRing(m_lowPolyMesh, edge.first, edge.second, true);
-            }
-            m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
-            PushHistoryState("Maya Select Edge Ring");
-            char msg[128];
-            snprintf(msg, sizeof(msg), "Selected edge ring(s): %zu edges selected", m_lowPolyMesh.selectedEdges.size());
-            m_uvStatusMessage = msg;
-        } else {
-            m_uvStatusMessage = "Click an edge to select an edge ring";
-        }
-    } else if (wedge == 5) { // CAMERA PROJECTION
-        DirectX::XMMATRIX viewProj = m_viewportRenderer.GetViewProjectionMatrix();
-        UVCutter::CameraProjectUVs(m_lowPolyMesh, viewProj);
-        m_viewportRenderer.SetLowPolyMesh(m_lowPolyMesh, 1.0f);
-        PushHistoryState("Maya Camera Projection");
-        m_uvStatusMessage = "Projected UVs from current 3D camera view";
-        m_logEntries.push_back("[UV] Camera Projection applied from current viewport view.");
-    } else if (wedge == 6) { // AUTO UV
-        AutoCutUnwrapAndPack();
-    } else if (wedge == 7) { // CLEAR SELECTION
-        m_lowPolyMesh.selectedEdges.clear();
-        m_hasLastSelectedEdge = false;
-        m_lowPolyMesh.GenerateSelectedEdgeLines();
-        m_viewportRenderer.UpdateSelectedEdges(m_lowPolyMesh);
-        PushHistoryState("Maya Clear Selection");
-        m_uvStatusMessage = "Selection cleared";
+// RMB click without a drag opens the context menu; RMB drag keeps dollying (3D) or panning (2D).
+void UIManager::UpdateContextMenuTrigger(bool in3DZone, bool in2DZone) {
+    ImGuiIO& io = ImGui::GetIO();
+    if (ImGui::IsMouseClicked(ImGuiMouseButton_Right) && (in3DZone || in2DZone) && !io.KeyShift && !io.KeyAlt &&
+        !m_markingMenu.active && ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows)) {
+        m_rmbPressArmed = true;
+        m_contextIn2D = in2DZone;
     }
+    if (m_rmbPressArmed && ImGui::IsMouseDragging(ImGuiMouseButton_Right, 4.0f)) m_rmbPressArmed = false;
+    if (m_rmbPressArmed && ImGui::IsMouseReleased(ImGuiMouseButton_Right)) {
+        m_rmbPressArmed = false;
+        ImGui::OpenPopup("##viewport_ctx");
+    }
+}
+
+// Built entirely from registry commands, so labels, shortcuts, checks and disabled reasons match every other surface.
+void UIManager::RenderContextMenu() {
+    using BakerUI::DrawCommandMenuItem;
+    using BakerUI::DrawCommandMenuContents;
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6.0f, 6.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding, 6.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_PopupBorderSize, 1.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f, 4.0f));
+    ImGui::SetNextWindowSizeConstraints(ImVec2(ImGui::GetFontSize() * 15.0f, 0.0f), ImVec2(FLT_MAX, FLT_MAX));
+    const bool open = ImGui::BeginPopup("##viewport_ctx");
+    ImGui::PopStyleVar(4);
+    if (!open) return;
+
+    BakerUI::CommandRegistry& r = m_commandRegistry;
+    const bool uvStep = (m_shellState.step == BakerUI::ShellState::Step::UV);
+    if (uvStep) {
+        const char* modeName = "Edge";
+        size_t count = m_lowPolyMesh.selectedEdges.size();
+        if (m_uvSelectionMode == UVSelectionMode::Vertex) { modeName = "Vertex"; count = m_selectedUVVertices.size(); }
+        else if (m_uvSelectionMode == UVSelectionMode::Face) { modeName = "Face"; count = m_selectedUVFaces.size(); }
+        else if (m_uvSelectionMode == UVSelectionMode::Shell) { modeName = "Shell"; count = m_selectedUVFaces.size(); }
+        ImGui::TextDisabled("%s selection - %zu selected", modeName, count);
+        ImGui::Separator();
+
+        if (m_toolMode == ToolMode::DrawCurve) {
+            DrawCommandMenuItem(r, "uv.curve_mark_seam");
+            DrawCommandMenuItem(r, "uv.curve_cut_mesh");
+            DrawCommandMenuItem(r, "uv.curve_toggle_visible");
+            DrawCommandMenuItem(r, "uv.curve_delete_point");
+            DrawCommandMenuItem(r, "uv.curve_new");
+            ImGui::Separator();
+        }
+        DrawCommandMenuItem(r, "uv.cut");
+        DrawCommandMenuItem(r, "uv.sew");
+        ImGui::Separator();
+        if (ImGui::BeginMenu("Selection mode")) {
+            for (const char* id : { "select.mode_vertex", "select.mode_edge", "select.mode_face", "select.mode_shell" }) DrawCommandMenuItem(r, id);
+            ImGui::EndMenu();
+        }
+        for (const char* id : { "select.edge_loop", "select.edge_ring", "select.seams", "select.clear" }) DrawCommandMenuItem(r, id);
+        ImGui::Separator();
+        for (const char* id : { "uv.unwrap", "uv.pack", "uv.auto_cut_unwrap_pack" }) DrawCommandMenuItem(r, id);
+        ImGui::Separator();
+        struct Sub { const char* title; const char* path; };
+        for (const Sub& sub : { Sub{ "Project", "UV/Project" }, Sub{ "Transform", "UV/Transform" }, Sub{ "Align", "UV/Align" },
+                                Sub{ "Curves", "UV/Cut & Sew/Curve Cut" }, Sub{ "Stack and overlap", "UV/Stack & Overlap" },
+                                Sub{ "Texel density", "UV/Texel Density" } }) {
+            if (ImGui::BeginMenu(sub.title)) { DrawCommandMenuContents(r, sub.path, false); ImGui::EndMenu(); }
+        }
+        ImGui::Separator();
+    }
+    if (ImGui::BeginMenu("View")) { DrawCommandMenuContents(r, "View", false); ImGui::EndMenu(); }
+    DrawCommandMenuItem(r, "edit.undo");
+    DrawCommandMenuItem(r, "edit.redo");
+    ImGui::EndPopup();
 }
 
 void UIManager::SyncTransforms() {
@@ -4248,354 +3914,440 @@ void UIManager::ResetTransforms() {
     m_logEntries.push_back("[Transform] Low-Poly transform reset to default.");
 }
 
-void UIManager::RenderMeshPanel() {
-    if (!ImGui::Begin("Mesh Ingestion###ingest", nullptr)) {
+// ---------------------------------------------------------------------------------------------
+// Two side windows around the viewport.
+//   Left  : the scene - every mesh (sculpt, game mesh, cage) and how it sits in the world.
+//   Right : what to do with it - the UV tools or the bake settings, following the stepper,
+//           with that step's main button pinned at the bottom.
+// ---------------------------------------------------------------------------------------------
+void UIManager::RenderScenePanel() {
+    if (!BakerUI::BeginSidePanel("Scene###scene", true, BakerUI::kLeftW)) {
         ImGui::End();
         return;
     }
+    const float avail = ImGui::GetContentRegionAvail().y;
+    if (ImGui::BeginChild("##outliner", ImVec2(0.0f, avail * 0.36f))) RenderOutliner();
+    ImGui::EndChild();
 
-    // 1. High-Poly Source Card (Blender Collapsible Section Card, packed by default)
-    if (BakerUI::BeginSectionCard("HIGH-POLY SOURCE", "##hp_card_zb", false)) {
-        std::string cacheHigh = "C:/Users/Public/Documents/ZBrushData2026/ZPluginData/UDIMBaker/UDIM_HighPoly.obj";
-        DWORD attrHP = GetFileAttributesA(cacheHigh.c_str());
-        std::string syncHighLabel = "Sync from ZBrush Cache";
-        if (attrHP != INVALID_FILE_ATTRIBUTES && !(attrHP & FILE_ATTRIBUTE_DIRECTORY)) {
-            uintmax_t sz = 0;
-            try { sz = std::filesystem::file_size(cacheHigh); } catch (...) {}
-            char b[64];
-            if (sz > 1024 * 1024 * 1024) {
-                snprintf(b, sizeof(b), "Sync Active Sculpt (%.2f GB)", sz / (1024.0 * 1024.0 * 1024.0));
-            } else if (sz > 0) {
-                snprintf(b, sizeof(b), "Sync Active Sculpt (%.1f MB)", sz / (1024.0 * 1024.0));
-            } else {
-                snprintf(b, sizeof(b), "Sync from ZBrush Cache");
-            }
-            syncHighLabel = b;
-        }
-
-        if (BakerUI::PrimaryButton(syncHighLabel.c_str())) {
-            AutoDetectZBrushCache(true);
-        }
-        if (BakerUI::SecondaryButton("Browse OBJ / FBX / BIN...")) {
-            std::string path = OpenFileDialog(L"Mesh Files (*.obj;*.fbx;*.bin)\0*.obj;*.fbx;*.bin\0Wavefront OBJ (*.obj)\0*.obj\0Autodesk FBX (*.fbx)\0*.fbx\0Binary Mesh (*.bin)\0*.bin\0All Files (*.*)\0*.*\0");
-            if (!path.empty()) {
-                SetCommandLineHighPoly(path);
-            }
-        }
-        if (m_isLoadingHighPoly) {
-            ImGui::Spacing();
-            BakerUI::StatusPill("Ingesting in background...", BakerUI::Col::Warn());
-            ImGui::TextDisabled("Parsing mesh & building BVH tree...");
-        } else if (m_hasHighPoly) {
-            ImGui::Spacing();
-            if (BakerUI::gFontMono) ImGui::PushFont(BakerUI::gFontMono);
-            ImGui::TextDisabled("%s", m_highPolyPath.c_str());
-            ImGui::Text("Positions %zu", m_highPolyMesh.positions.size());
-            if (m_highPolyMesh.isQuadMesh && !m_highPolyMesh.quadIndices.empty()) {
-                ImGui::Text("Quads     %zu", m_highPolyMesh.quadIndices.size() / 4);
-            } else {
-                ImGui::Text("Triangles %zu", m_highPolyMesh.indices.size() / 3);
-            }
-            ImGui::Text("Diag      %.4f", m_highPolyMesh.GetBoundingBoxDiagonal());
-            if (BakerUI::gFontMono) ImGui::PopFont();
-            ImGui::Spacing();
-            BakerUI::StatusPill("BVH ready (Embree 3)", BakerUI::Col::Ok());
-        } else {
-            ImGui::Spacing();
-            BakerUI::StatusPill("No high-poly loaded", BakerUI::Col::TextDim());
-        }
-        BakerUI::EndSectionCard();
-    }
-
-    // 2. Low-Poly Target Card (Blender Collapsible Section Card, packed by default)
-    if (BakerUI::BeginSectionCard("LOW-POLY TARGET (UDIM)", "##lp_card_zb", false)) {
-        std::string cacheLow = "C:/Users/Public/Documents/ZBrushData2026/ZPluginData/UDIMBaker/UDIM_LowPoly.obj";
-        DWORD attrLP = GetFileAttributesA(cacheLow.c_str());
-        if (attrLP != INVALID_FILE_ATTRIBUTES && !(attrLP & FILE_ATTRIBUTE_DIRECTORY)) {
-            uintmax_t sz = 0;
-            try { sz = std::filesystem::file_size(cacheLow); } catch (...) {}
-            char b[64];
-            snprintf(b, sizeof(b), "Sync Active Low-Poly (%.1f MB)", sz / (1024.0 * 1024.0));
-            if (BakerUI::PrimaryButton(b)) {
-                SetCommandLineLowPoly(cacheLow);
-            }
-        }
-        if (BakerUI::SecondaryButton("Browse Low-Poly OBJ / FBX...")) {
-            std::string path = OpenFileDialog(L"Mesh Files (*.obj;*.fbx)\0*.obj;*.fbx\0Wavefront OBJ (*.obj)\0*.obj\0Autodesk FBX (*.fbx)\0*.fbx\0All Files (*.*)\0*.*\0");
-            if (!path.empty()) {
-                SetCommandLineLowPoly(path);
-            }
-        }
-        if (m_hasLowPoly) {
-            ImGui::Spacing();
-            if (BakerUI::gFontMono) ImGui::PushFont(BakerUI::gFontMono);
-            ImGui::TextDisabled("%s", m_lowPolyPath.c_str());
-            ImGui::Text("Vertices  %zu", m_lowPolyMesh.vertices.size());
-            if (m_lowPolyMesh.quadCount > 0 && m_lowPolyMesh.triCount == 0) {
-                ImGui::Text("Quads     %u", m_lowPolyMesh.quadCount);
-            } else if (m_lowPolyMesh.quadCount > 0) {
-                ImGui::Text("Faces     %u (%u Quads, %u Tris)", m_lowPolyMesh.polyCount, m_lowPolyMesh.quadCount, m_lowPolyMesh.triCount);
-            } else {
-                ImGui::Text("Triangles %zu", m_lowPolyMesh.triangles.size());
-            }
-            ImGui::Text("Diag      %.4f", m_lowPolyMesh.GetBoundingBoxDiagonal());
-            ImGui::Text("UDIMs     %zu tiles", m_lowPolyMesh.detectedUDIMs.size());
-            if (BakerUI::gFontMono) ImGui::PopFont();
-            ImGui::Spacing();
-            BakerUI::StatusPill("Low-poly loaded", BakerUI::Col::Ok());
-        } else {
-            ImGui::Spacing();
-            BakerUI::StatusPill("No low-poly loaded", BakerUI::Col::Warn());
-        }
-        BakerUI::EndSectionCard();
-    }
-
-    // 3. Explicit Cage (Blender Collapsible Section Card, packed by default)
-    if (BakerUI::BeginSectionCard("EXPLICIT CAGE (OPTIONAL)", "##cage_card_zb", false)) {
-        if (BakerUI::SecondaryButton("Browse Cage OBJ / FBX...")) {
-            std::string path = OpenFileDialog(L"Mesh Files (*.obj;*.fbx)\0*.obj;*.fbx\0Wavefront OBJ (*.obj)\0*.obj\0Autodesk FBX (*.fbx)\0*.fbx\0All Files (*.*)\0*.*\0");
-            if (!path.empty()) {
-                std::string err;
-                if (MeshLoader::LoadCageMesh(path, m_lowPolyMesh, err)) {
-                    m_hasExplicitCage = true;
-                    m_cagePath = path;
-                    m_viewportRenderer.UpdateCage(m_lowPolyMesh, m_settings.cageDistance, m_settings.lowPolyScale);
-                    m_logEntries.push_back("[Cage] Loaded explicit cage: " + path);
-                } else {
-                    m_logEntries.push_back("[Error] " + err);
-                }
-            }
-        }
-        ImGui::Spacing();
-        if (m_hasExplicitCage) {
-            BakerUI::StatusPill("Explicit Cage Active", BakerUI::Col::Ok());
-        } else {
-            BakerUI::StatusPill("Auto normal extrusion cage", BakerUI::Col::TextDim());
-        }
-        BakerUI::EndSectionCard();
-    }
-
-    if (m_hasLowPoly) {
-        if (BakerUI::BeginSectionCard("TRANSFORM & ALIGNMENT", "##trans_card_zb", false)) {
-            bool changed = false;
-
-            ImGui::TextDisabled("Position (XYZ):");
-            ImGui::SetNextItemWidth(-FLT_MIN);
-            if (ImGui::DragFloat3("##pos", &m_settings.lowPolyTranslation.x, 0.01f, -10000.0f, 10000.0f, "%.3f")) {
-                changed = true;
-            }
-
-            ImGui::TextDisabled("Rotation (XYZ deg):");
-            ImGui::SetNextItemWidth(-FLT_MIN);
-            if (ImGui::DragFloat3("##rot", &m_settings.lowPolyRotation.x, 0.5f, -360.0f, 360.0f, "%.1f deg")) {
-                changed = true;
-            }
-
-            ImGui::TextDisabled("Scale (XYZ):");
-            ImGui::Checkbox("Uniform Scale", &m_uniformScale);
-            ImGui::SetNextItemWidth(-FLT_MIN);
-            if (m_uniformScale) {
-                float s = m_settings.lowPolyScaleVec.x;
-                if (ImGui::DragFloat("##scale_u", &s, 0.005f, 0.0001f, 10000.0f, "%.4f")) {
-                    m_settings.lowPolyScaleVec = { s, s, s };
-                    m_settings.lowPolyScale = s;
-                    changed = true;
-                }
-            } else {
-                if (ImGui::DragFloat3("##scale_xyz", &m_settings.lowPolyScaleVec.x, 0.005f, 0.0001f, 10000.0f, "%.4f")) {
-                    changed = true;
-                }
-            }
-
-            if (changed) {
-                SyncTransforms();
-            }
-
-            ImGui::Spacing();
-            if (m_hasHighPoly) {
-                if (BakerUI::PrimaryButton("Auto-Align Centers")) {
-                    AutoAlignMeshCenters();
-                }
-                if (BakerUI::SecondaryButton("Auto-Fit Scale")) {
-                    AutoFitMeshScale();
-                }
-            }
-
-            if (BakerUI::SecondaryButton("Reset Transform")) {
-                ResetTransforms();
-            }
-            BakerUI::EndSectionCard();
-        }
-    }
-
-    if (m_hasLowPoly && m_hasHighPoly) {
-        if (BakerUI::BeginSectionCard("SCALE SYNCHRONIZATION", "##scale_card_zb", false)) {
-            ImGui::Text("Scale Ratio: %.4fx", m_detectedScaleRatio);
-            if (ImGui::Checkbox("Auto-Match Low-Poly Scale", &m_autoScaleLowPoly)) {
-                CheckScaleAndAutoCalibrate();
-            }
-            if (BakerUI::SecondaryButton("Recalibrate Scale & Bounds")) {
-                CheckScaleAndAutoCalibrate();
-            }
-            BakerUI::EndSectionCard();
-        }
-    }
-
+    ImGui::Separator();
+    if (BakerUI::gFontBold) ImGui::PushFont(BakerUI::gFontBold);
+    ImGui::TextUnformatted("Details");
+    if (BakerUI::gFontBold) ImGui::PopFont();
+    ImGui::Spacing();
+    if (ImGui::BeginChild("##details")) RenderSceneContents();
+    ImGui::EndChild();
     ImGui::End();
 }
 
-void UIManager::RenderSettingsPanel() {
-    if (!ImGui::Begin("Bake Parameters###params", nullptr)) {
+// Outliner: Scene Collection > Collection > one row per mesh (eye, name, kind). Click a row to see its details below.
+void UIManager::RenderOutliner() {
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const float rowH = ImGui::GetFrameHeight();
+
+    auto drawEye = [&](const char* cmdId) {
+        const BakerUI::Command* cmd = m_commandRegistry.Find(cmdId);
+        bool visible = cmd && cmd->checked && cmd->checked();
+        ImVec2 p = ImGui::GetCursorScreenPos();
+        bool clicked = ImGui::InvisibleButton(cmdId, ImVec2(rowH, rowH));
+        bool hovered = ImGui::IsItemHovered();
+        if (cmd) BakerUI::DrawCommandTooltip(*cmd, true);
+        if (clicked) m_commandRegistry.Execute(cmdId);
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        ImVec2 c(p.x + rowH * 0.5f, p.y + rowH * 0.5f);
+        float rx = rowH * 0.30f, ry = rowH * 0.18f;
+        ImVec4 col = visible ? BakerUI::Col::Text() : BakerUI::Col::TextDim();
+        col.w = hovered ? 1.0f : (visible ? 0.85f : 0.55f);
+        ImU32 u = ImGui::GetColorU32(col);
+        dl->AddBezierQuadratic(ImVec2(c.x - rx, c.y), ImVec2(c.x, c.y - ry * 2.0f), ImVec2(c.x + rx, c.y), u, 1.2f);
+        dl->AddBezierQuadratic(ImVec2(c.x - rx, c.y), ImVec2(c.x, c.y + ry * 2.0f), ImVec2(c.x + rx, c.y), u, 1.2f);
+        if (visible) dl->AddCircleFilled(c, rowH * 0.09f, u);
+        else dl->AddLine(ImVec2(c.x - rx * 0.8f, c.y + ry * 1.4f), ImVec2(c.x + rx * 0.8f, c.y - ry * 1.4f), u, 1.2f);
+    };
+
+    auto row = [&](SceneObject obj, const char* visCmd, const char* removeCmd, const char* replaceCmd, const std::string& name, const char* kind, bool present) {
+        ImGui::PushID(static_cast<int>(obj));
+        ImGui::PushStyleVar(ImGuiStyleVar_SelectableTextAlign, ImVec2(0.0f, 0.5f));
+        const float eyeW = rowH + style.ItemSpacing.x;
+        ImVec2 start = ImGui::GetCursorScreenPos();
+        ImGui::PushStyleColor(ImGuiCol_Text, present ? BakerUI::Col::Text() : BakerUI::Col::TextDim());
+        ImGui::SetCursorScreenPos(ImVec2(start.x + eyeW, start.y));
+        if (ImGui::Selectable(name.c_str(), m_selectedObject == obj, ImGuiSelectableFlags_None, ImVec2(ImGui::GetContentRegionAvail().x, rowH)))
+            m_selectedObject = obj;
+        ImGui::PopStyleColor();
+        ImGui::PopStyleVar();
+        // Right-click: select the row, then act on it (same commands as the Details buttons)
+        if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) m_selectedObject = obj;
+        if (ImGui::BeginPopupContextItem("##row_ctx")) {
+            if (ImGui::MenuItem(present ? "Replace..." : "Add...")) m_commandRegistry.Execute(replaceCmd);
+            if (present) {
+                if (ImGui::MenuItem("Toggle Visibility")) m_commandRegistry.Execute(visCmd);
+                ImGui::Separator();
+                if (ImGui::MenuItem("Delete")) m_commandRegistry.Execute(removeCmd);
+            }
+            ImGui::EndPopup();
+        }
+        ImVec2 rMax = ImGui::GetItemRectMax();
+        ImVec2 ks = ImGui::CalcTextSize(kind);
+        ImGui::GetWindowDrawList()->AddText(ImVec2(rMax.x - ks.x - style.FramePadding.x, start.y + (rowH - ks.y) * 0.5f),
+                                            ImGui::GetColorU32(BakerUI::Col::TextDim()), kind);
+        ImGui::SetCursorScreenPos(start);
+        if (present) drawEye(visCmd); else ImGui::Dummy(ImVec2(rowH, rowH));
+        ImGui::PopID();
+    };
+
+    if (BakerUI::gFontBold) ImGui::PushFont(BakerUI::gFontBold);
+    ImGui::TextUnformatted("Scene Collection");
+    if (BakerUI::gFontBold) ImGui::PopFont();
+    ImGui::Spacing();
+    ImGui::Indent(style.IndentSpacing * 0.6f);
+
+    std::string hp = m_hasHighPoly ? std::filesystem::path(m_highPolyPath).stem().string() : std::string("Sculpt (not added)");
+    std::string lp = m_hasLowPoly ? std::filesystem::path(m_lowPolyPath).stem().string() : std::string("Game mesh (not added)");
+    row(SceneObject::HighPoly, "view.3d_high_poly", "scene.remove_high_poly", "file.open_high_poly", m_isLoadingHighPoly ? "Loading..." : hp, "Sculpt", m_hasHighPoly);
+    row(SceneObject::LowPoly, "view.3d_low_poly", "scene.remove_low_poly", "file.open_low_poly", lp, "Game mesh", m_hasLowPoly);
+
+    ImGui::Unindent(style.IndentSpacing * 0.6f);
+}
+
+void UIManager::RenderSceneContents() {
+    const ImVec2 fullW(-FLT_MIN, 0.0f);
+    const ImGuiStyle& style = ImGui::GetStyle();
+    auto halfW = [&]() { return ImVec2((ImGui::GetContentRegionAvail().x - style.ItemSpacing.x) * 0.5f, 0.0f); };
+    char buf[128];
+
+    auto cacheLabel = [](const char* prefix, const char* path, char* out, size_t n) {
+        std::error_code ec;
+        uintmax_t sz = std::filesystem::is_regular_file(path, ec) ? std::filesystem::file_size(path, ec) : 0;
+        if (sz == 0) return false;
+        if (sz > (1ull << 30)) snprintf(out, n, "%s (%.2f GB)", prefix, sz / 1073741824.0);
+        else                   snprintf(out, n, "%s (%.1f MB)", prefix, sz / 1048576.0);
+        return true;
+    };
+    auto header = [&](const char* title, const char* pillText, const ImVec4& pillCol) {
+        if (BakerUI::gFontBold) ImGui::PushFont(BakerUI::gFontBold);
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(title);
+        if (BakerUI::gFontBold) ImGui::PopFont();
+        ImGui::SameLine(ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize(pillText).x - 12.0f);
+        BakerUI::StatusPill(pillText, pillCol);
+        ImGui::Spacing();
+    };
+    auto fileLine = [](const std::string& path) {
+        std::string name = std::filesystem::path(path).filename().string();
+        if (BakerUI::gFontMono) ImGui::PushFont(BakerUI::gFontMono);
+        ImGui::TextUnformatted(name.c_str());
+        if (BakerUI::gFontMono) ImGui::PopFont();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", path.c_str());
+    };
+
+    // ---- Sculpt
+    if (m_selectedObject == SceneObject::HighPoly && BakerUI::BeginCard("##sc_hp")) {
+        header("Sculpt", m_isLoadingHighPoly ? "Loading" : (m_hasHighPoly ? "Ready" : "Needed"),
+               m_isLoadingHighPoly ? BakerUI::Col::Warn() : (m_hasHighPoly ? BakerUI::Col::Ok() : BakerUI::Col::TextDim()));
+        if (m_isLoadingHighPoly) {
+            ImGui::TextDisabled("Reading the mesh and building the BVH...");
+        } else {
+            if (m_hasHighPoly) {
+                fileLine(m_highPolyPath);
+                if (BakerUI::BeginProps("##sc_hp_props")) {
+                    snprintf(buf, sizeof(buf), "%zu", m_highPolyMesh.positions.size());
+                    BakerUI::PropValue("Vertices", buf);
+                    if (m_highPolyMesh.isQuadMesh && !m_highPolyMesh.quadIndices.empty()) snprintf(buf, sizeof(buf), "%zu quads", m_highPolyMesh.quadIndices.size() / 4);
+                    else                                                                snprintf(buf, sizeof(buf), "%zu triangles", m_highPolyMesh.indices.size() / 3);
+                    BakerUI::PropValue("Faces", buf);
+                    BakerUI::PropValue("Polypaint", m_highPolyMesh.colors.empty() ? "None" : "Yes");
+                    BakerUI::PropValue("Polygroups", m_highPolyMesh.polygroupPerFace.empty() ? "None" : "Yes");
+                    BakerUI::PropFloat("Opacity", &m_viewportRenderer.highPolyOpacity, 0.01f, 0.05f, 1.0f, "%.2f");
+                    BakerUI::EndProps();
+                }
+            }
+            if (cacheLabel("Sync from ZBrush", "C:/Users/Public/Documents/ZBrushData2026/ZPluginData/UDIMBaker/UDIM_HighPoly.obj", buf, sizeof(buf)))
+                BakerUI::DrawCommand(m_commandRegistry, "file.load_zbrush_cache", buf, fullW, BakerUI::CommandStyle::Primary);
+            BakerUI::DrawCommand(m_commandRegistry, "file.open_high_poly", m_hasHighPoly ? "Replace..." : "Browse...", m_hasHighPoly ? halfW() : fullW);
+            if (m_hasHighPoly) {
+                ImGui::SameLine();
+                BakerUI::DrawCommand(m_commandRegistry, "scene.remove_high_poly", "Remove", fullW, BakerUI::CommandStyle::Destructive);
+            }
+        }
+        BakerUI::EndCard();
+    }
+
+    // ---- Game mesh
+    if (m_selectedObject == SceneObject::LowPoly && BakerUI::BeginCard("##sc_lp")) {
+        header("Game mesh", m_hasLowPoly ? "Ready" : "Needed", m_hasLowPoly ? BakerUI::Col::Ok() : BakerUI::Col::TextDim());
+        if (m_hasLowPoly) {
+            fileLine(m_lowPolyPath);
+            if (BakerUI::BeginProps("##sc_lp_props")) {
+                snprintf(buf, sizeof(buf), "%zu", m_lowPolyMesh.vertices.size());
+                BakerUI::PropValue("Vertices", buf);
+                if (m_lowPolyMesh.quadCount > 0 && m_lowPolyMesh.triCount == 0) snprintf(buf, sizeof(buf), "%u quads", m_lowPolyMesh.quadCount);
+                else if (m_lowPolyMesh.quadCount > 0) snprintf(buf, sizeof(buf), "%u (%u quads, %u tris)", m_lowPolyMesh.polyCount, m_lowPolyMesh.quadCount, m_lowPolyMesh.triCount);
+                else snprintf(buf, sizeof(buf), "%zu triangles", m_lowPolyMesh.triangles.size());
+                BakerUI::PropValue("Faces", buf);
+                snprintf(buf, sizeof(buf), "%zu", m_lowPolyMesh.detectedUDIMs.size());
+                BakerUI::PropValue("UDIM tiles", buf);
+                BakerUI::PropFloat("Opacity", &m_viewportRenderer.lowPolyOpacity, 0.01f, 0.05f, 1.0f, "%.2f");
+                BakerUI::EndProps();
+            }
+        }
+        static const char* kLowCache = "C:/Users/Public/Documents/ZBrushData2026/ZPluginData/UDIMBaker/UDIM_LowPoly.obj";
+        if (cacheLabel("Sync from ZBrush", kLowCache, buf, sizeof(buf)) && BakerUI::PrimaryButton(buf)) SetCommandLineLowPoly(kLowCache);
+        BakerUI::DrawCommand(m_commandRegistry, "file.open_low_poly", m_hasLowPoly ? "Replace..." : "Browse...", m_hasLowPoly ? halfW() : fullW);
+        if (m_hasLowPoly) {
+            ImGui::SameLine();
+            BakerUI::DrawCommand(m_commandRegistry, "scene.remove_low_poly", "Remove", fullW, BakerUI::CommandStyle::Destructive);
+        }
+        BakerUI::EndCard();
+    }
+
+    // ---- Cage: a property of the game mesh, shown with it
+    if (m_selectedObject == SceneObject::LowPoly && m_hasLowPoly && BakerUI::BeginCard("##sc_cage")) {
+        header("Cage", m_hasExplicitCage ? "Custom" : "Automatic", m_hasExplicitCage ? BakerUI::Col::Ok() : BakerUI::Col::TextDim());
+        BakerUI::DrawCommand(m_commandRegistry, "view.3d_cage", "Show cage", fullW);
+        if (m_hasExplicitCage) fileLine(m_cagePath);
+        else {
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextDisabled("The game mesh pushed out along its normals. Set the distance in Bake, or use your own cage mesh.");
+            ImGui::PopTextWrapPos();
+        }
+        ImGui::Spacing();
+        if (!m_hasLowPoly) ImGui::BeginDisabled();
+        BakerUI::DrawCommand(m_commandRegistry, "file.open_cage", m_hasExplicitCage ? "Replace..." : "Use a cage mesh...", m_hasExplicitCage ? halfW() : fullW);
+        if (!m_hasLowPoly) ImGui::EndDisabled();
+        if (m_hasExplicitCage) {
+            ImGui::SameLine();
+            BakerUI::DrawCommand(m_commandRegistry, "scene.remove_cage", "Remove", fullW, BakerUI::CommandStyle::Destructive);
+        }
+        BakerUI::EndCard();
+    }
+
+    // ---- Placement of the game mesh against the sculpt
+    if (m_selectedObject == SceneObject::LowPoly && m_hasLowPoly && BakerUI::BeginCard("##sc_align")) {
+        if (BakerUI::gFontBold) ImGui::PushFont(BakerUI::gFontBold);
+        ImGui::TextUnformatted("Game mesh placement");
+        if (BakerUI::gFontBold) ImGui::PopFont();
+        ImGui::Spacing();
+        bool changed = false;
+        ImGui::TextDisabled("Position");
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        changed |= ImGui::DragFloat3("##pos", &m_settings.lowPolyTranslation.x, 0.01f, -10000.0f, 10000.0f, "%.3f");
+        ImGui::TextDisabled("Rotation (degrees)");
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        changed |= ImGui::DragFloat3("##rot", &m_settings.lowPolyRotation.x, 0.5f, -360.0f, 360.0f, "%.1f");
+        ImGui::TextDisabled("Scale");
+        ImGui::SameLine();
+        ImGui::Checkbox("Uniform", &m_uniformScale);
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        if (m_uniformScale) {
+            float s = m_settings.lowPolyScaleVec.x;
+            if (ImGui::DragFloat("##scale_u", &s, 0.005f, 0.0001f, 10000.0f, "%.4f")) {
+                m_settings.lowPolyScaleVec = { s, s, s };
+                m_settings.lowPolyScale = s;
+                changed = true;
+            }
+        } else {
+            changed |= ImGui::DragFloat3("##scale_xyz", &m_settings.lowPolyScaleVec.x, 0.005f, 0.0001f, 10000.0f, "%.4f");
+        }
+        if (changed) SyncTransforms();
+        ImGui::Spacing();
+        if (m_hasHighPoly) {
+            if (BakerUI::SecondaryButton("Auto-align", halfW().x)) AutoAlignMeshCenters();
+            ImGui::SameLine();
+            if (BakerUI::SecondaryButton("Auto-fit scale")) AutoFitMeshScale();
+            if (ImGui::Checkbox("Auto-match scale", &m_autoScaleLowPoly)) CheckScaleAndAutoCalibrate();
+            ImGui::TextDisabled("Detected scale ratio %.4fx", m_detectedScaleRatio);
+        }
+        if (BakerUI::SecondaryButton("Reset placement")) ResetTransforms();
+        BakerUI::EndCard();
+    }
+}
+
+// Right window. Body scrolls; the footer (what is ready + the step's main button) stays at the bottom.
+void UIManager::RenderActionPanel() {
+    using Step = BakerUI::ShellState::Step;
+    const Step step = m_shellState.step;
+    static const char* kTitle[] = { "Get started", "UV", "Bake" };
+    static const char* kHint[] = { "Add both meshes on the left", "Optional if already unwrapped", "Choose tiles and maps" };
+    const int si = static_cast<int>(step);
+
+    if (!BakerUI::BeginSidePanel("Actions###actions", false, BakerUI::kRightW)) {
         ImGui::End();
         return;
     }
+    if (BakerUI::gFontBold) ImGui::PushFont(BakerUI::gFontBold);
+    ImGui::TextUnformatted(kTitle[si]);
+    if (BakerUI::gFontBold) ImGui::PopFont();
+    ImGui::SameLine();
+    ImGui::TextDisabled("%s", kHint[si]);
+    ImGui::Separator();
 
-    static const char* kRes[] = { "1024", "2048", "4096", "8192 (8K)", "16384 (16K)" };
-    static int currentResIdx = 1; // 2048
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const float btnH = ImGui::GetFrameHeight() * 1.5f;
+    const float lineH = ImGui::GetTextLineHeightWithSpacing();
+    const float slack = style.WindowPadding.y + 10.0f;
+    const float footerH = slack + ((step == Step::Import) ? (lineH * 2.0f + btnH + style.ItemSpacing.y * 3.0f)
+                        : (step == Step::UV)     ? (lineH + btnH * 2.0f + style.ItemSpacing.y * 4.0f)
+                                                 : (lineH * 2.0f + btnH * 2.0f + style.ItemSpacing.y * 4.0f));
 
-    static const char* kAA[] = { "1x (Draft)", "2x2 (4 Samples - Prod)", "4x4 (16 Samples - Max)" };
-    static int currentAAIdx = 1; // 2x2
-
-    float maxSliderDist = (m_hasHighPoly ? m_highPolyMesh.GetBoundingBoxDiagonal() * 0.5f : 10.0f);
-    if (maxSliderDist < 1.0f) maxSliderDist = 1.0f;
-
-    // 1. Projection & Quality (Blender Collapsible Section Card, packed by default)
-    if (BakerUI::BeginSectionCard("PROJECTION & QUALITY", "##proj_card_zb", false)) {
-        if (BakerUI::BeginProps("##proj")) {
-            if (BakerUI::PropCombo("Resolution", &currentResIdx, kRes, 5)) {
-                int resMap[] = { 1024, 2048, 4096, 8192, 16384 };
-                m_settings.resolution = resMap[currentResIdx];
-            }
-            if (BakerUI::PropCombo("Antialiasing", &currentAAIdx, kAA, 3)) {
-                int aaMap[] = { 1, 2, 4 };
-                m_settings.antiAliasing = aaMap[currentAAIdx];
-            }
-            BakerUI::PropFloat("Skew factor", &m_settings.skewFactor, 0.01f, 0.0f, 1.0f, "%.2f", "Marmoset Skew: 0=Smooth Normals, 1=Flat Face Normals");
-            if (!m_hasExplicitCage) {
-                if (BakerUI::PropFloat("Cage offset", &m_settings.cageDistance, 0.002f, 0.0001f, maxSliderDist, "%.4f", "Push distance along vertex normal")) {
-                    m_viewportRenderer.UpdateCage(m_lowPolyMesh, m_settings.cageDistance, m_settings.lowPolyScale);
-                }
-            }
-            BakerUI::PropFloat("Max ray length", &m_settings.maxRayDistance, 0.005f, 0.001f, maxSliderDist, "%.4f");
-            BakerUI::PropInt("Padding (px)", &m_settings.seamPadding, 0, 64, "JFA nearest-texel dilation");
-            BakerUI::PropCheck("Discard Backface", &m_settings.discardBackfaceHits, "Prevents inverted border artifacts");
-            if (m_settings.discardBackfaceHits) {
-                BakerUI::PropFloat("Angle Threshold", &m_settings.angleThreshold, 0.5f, 30.0f, 90.0f, "%.1f deg");
-            }
-            BakerUI::PropCheck("Bidirectional Rays", &m_settings.useBidirectionalRays, "Marmoset/xNormal dual-direction rays to catch crevices and protrusions");
-            BakerUI::PropCheck("Isolate Mesh Parts", &m_settings.isolateMeshParts, "Prevent ray bleeding between adjacent stones/subtools");
-            BakerUI::EndProps();
-        }
-
-        if (m_hasLowPoly && !m_lowPolyMesh.detectedUDIMs.empty()) {
-            std::string udimSummary;
-            for (size_t i = 0; i < m_selectedUDIMs.size(); ++i) {
-                if (i > 0) udimSummary += ", ";
-                udimSummary += std::to_string(m_selectedUDIMs[i]);
-            }
-            if (udimSummary.empty()) udimSummary = "None (0 selected)";
-            ImGui::TextDisabled("Target UDIMs: %s (%zu/%zu)", udimSummary.c_str(), m_selectedUDIMs.size(), m_lowPolyMesh.detectedUDIMs.size());
-            ImGui::SameLine();
-            if (ImGui::SmallButton("UDIM Mgr")) {
-                m_shellState.showUdim = true;
-            }
+    if (ImGui::BeginChild("##action_body", ImVec2(0.0f, -footerH))) {
+        if (step == Step::Import) {
             ImGui::Spacing();
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextDisabled("1. Add a sculpt and a game mesh in the Scene window.");
+            ImGui::TextDisabled("2. Prepare the game mesh UVs, or skip this if it is already unwrapped.");
+            ImGui::TextDisabled("3. Choose the maps and bake.");
+            ImGui::PopTextWrapPos();
+        } else if (step == Step::UV) {
+            RenderUVStep();
+        } else {
+            RenderBakeStep();
         }
-        BakerUI::EndSectionCard();
     }
+    ImGui::EndChild();
 
-    // 2. Output Maps (Blender Collapsible Section Card, packed by default)
-    if (BakerUI::BeginSectionCard("OUTPUT MAPS (MARMOSET SUITE)", "##maps_card_zb", false)) {
-        if (BakerUI::BeginProps("##maps")) {
-            BakerUI::PropCheck("Tangent Normal (MikkT)", &m_settings.bakeNormal, "World-standard tangent space normal map");
-            BakerUI::PropCheck("World / Object Normal", &m_settings.bakeWorldNormal, "Raw XYZ world surface vectors");
-            BakerUI::PropCheck("Displacement / Height (32f)", &m_settings.bakeDisplacement, "Vector projection height difference");
-            BakerUI::PropCheck("Ambient Occlusion (AO)", &m_settings.bakeAmbientOcclusion, "Cosine-weighted diffuse contact shadows");
-            if (m_settings.bakeAmbientOcclusion) {
-                BakerUI::PropInt("AO Samples", &m_settings.aoSamples, 4, 64);
-                BakerUI::PropFloat("AO Radius", &m_settings.aoMaxDistance, 0.005f, 0.001f, maxSliderDist, "%.4f");
-            }
-            BakerUI::PropCheck("Cavity Map", &m_settings.bakeCavity, "High-frequency micro-crevices, pores, wrinkles");
-            BakerUI::PropCheck("Curvature Map", &m_settings.bakeCurvature, "Convex ridges (white) & concave crevices (black)");
-            if (m_settings.bakeCavity || m_settings.bakeCurvature) {
-                BakerUI::PropFloat("Cavity Contrast", &m_settings.cavityStrength, 0.1f, 0.1f, 10.0f, "%.1fx");
-            }
-            BakerUI::PropCheck("Thickness / SSS Map", &m_settings.bakeThickness, "Subsurface scattering inward ray thickness");
-            if (m_settings.bakeThickness) {
-                BakerUI::PropFloat("Thickness Depth", &m_settings.thicknessMaxDistance, 0.005f, 0.001f, maxSliderDist, "%.4f");
-            }
-            BakerUI::PropCheck("World Position Map", &m_settings.bakePosition, "World XYZ coordinate gradient map (32f EXR)");
-            BakerUI::PropCheck("Material ID (Polygroups)", &m_settings.bakeMaterialID, "Distinct color per ZBrush polygroup ID");
-            BakerUI::PropCheck("Base Color (Polypaint)", &m_settings.bakeBaseColor, "ZBrush vertex colors baked directly to UDIM texture");
-            BakerUI::PropCheck("Diagnostic map", &m_settings.bakeDiagnosticMap, "Missed rays and ray coverage analysis");
-            static const char* const kNormalFormats[] = { "OpenGL (+Y) (Blender/Maya)", "DirectX (-Y) (Unreal/Max)" };
-            int curNormalFmt = m_settings.flipYNormal ? 1 : 0;
-            if (BakerUI::PropCombo("Normal Format", &curNormalFmt, kNormalFormats, 2)) {
-                m_settings.flipYNormal = (curNormalFmt == 1);
-            }
-            BakerUI::PropCheck("Compact BVH", &m_settings.useCompactBVH, "For dense 50M-100M poly sculpts");
-            BakerUI::EndProps();
-        }
-        BakerUI::EndSectionCard();
-    }
-
-    // 3. Destination & Formats (Blender Collapsible Section Card, packed by default)
-    if (BakerUI::BeginSectionCard("DESTINATION & FORMATS", "##dest_card_zb", false)) {
-        ImGui::TextDisabled("Output Folder:");
-        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 90);
-        ImGui::InputText("##dir", m_outDirBuf, sizeof(m_outDirBuf));
-        m_settings.outputDir = m_outDirBuf;
+    ImGui::Separator();
+    const ImVec2 fullW(-FLT_MIN, btnH);
+    auto check = [](bool ok, const char* text) {
+        BakerUI::StatusDot(ok ? BakerUI::Col::Ok() : BakerUI::Col::TextDim(), ok);
         ImGui::SameLine();
-        if (ImGui::Button("Browse...", ImVec2(80, 0))) {
-            std::string folder = ChooseFolderDialog();
-            if (!folder.empty()) {
-                m_settings.outputDir = folder;
-                strncpy_s(m_outDirBuf, folder.c_str(), sizeof(m_outDirBuf) - 1);
-            }
-        }
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(ok ? BakerUI::Col::Text() : BakerUI::Col::TextDim(), "%s", text);
+    };
 
-        ImGui::Spacing();
-        ImGui::TextDisabled("Base Filename:");
-        ImGui::SetNextItemWidth(-FLT_MIN);
-        ImGui::InputText("##basename", m_baseNameBuf, sizeof(m_baseNameBuf));
-        m_settings.baseFilename = m_baseNameBuf;
-
-        ImGui::Spacing();
-        if (BakerUI::SecondaryButton("Open Output Folder in Explorer")) {
+    switch (step) {
+    case Step::Import:
+        check(m_hasHighPoly, "Sculpt loaded");
+        check(m_hasLowPoly, "Game mesh loaded");
+        if (!m_hasLowPoly) ImGui::BeginDisabled();
+        if (BakerUI::PrimaryButton("Next: UV", fullW.x, fullW.y)) m_shellState.step = Step::UV;
+        if (!m_hasLowPoly) ImGui::EndDisabled();
+        break;
+    case Step::UV:
+        ImGui::TextDisabled("%zu seams, %zu islands", m_lowPolyMesh.cutSeams.size(), m_currentIslands.size());
+        BakerUI::DrawCommand(m_commandRegistry, "uv.auto_cut_unwrap_pack", "Auto UV", fullW, BakerUI::CommandStyle::Primary);
+        if (BakerUI::SecondaryButton("Next: Bake", fullW.x, fullW.y)) m_shellState.step = Step::Bake;
+        break;
+    case Step::Bake: {
+        const bool canBake = m_hasLowPoly && m_hasHighPoly && !m_isBaking && !m_isLoadingHighPoly;
+        int maps = m_settings.bakeNormal + m_settings.bakeWorldNormal + m_settings.bakeDisplacement + m_settings.bakeAmbientOcclusion +
+                   m_settings.bakeCavity + m_settings.bakeCurvature + m_settings.bakeThickness + m_settings.bakePosition +
+                   m_settings.bakeMaterialID + m_settings.bakeBaseColor + m_settings.bakeDiagnosticMap;
+        ImGui::TextDisabled("%d tile(s), %d px, %d map(s)", static_cast<int>(m_selectedUDIMs.empty() ? 1 : m_selectedUDIMs.size()),
+                            m_settings.resolution, maps);
+        if (m_isBaking)                       ImGui::TextColored(BakerUI::Col::Accent(), "%s", m_bakeStatus.c_str());
+        else if (!canBake)                    ImGui::TextColored(BakerUI::Col::Warn(), "%s", !m_hasHighPoly ? "Add a sculpt first." : "Add a game mesh first.");
+        else if (m_bakeStatus == "Complete!") ImGui::TextColored(BakerUI::Col::Ok(), "Baked to the output folder.");
+        else                                  ImGui::TextDisabled("Ready.");
+        if (BakerUI::SecondaryButton("Open output folder", fullW.x, fullW.y))
             ShellExecuteA(NULL, "open", m_settings.outputDir.c_str(), NULL, NULL, SW_SHOWNORMAL);
-        }
-
-        ImGui::Spacing();
-        if (BakerUI::BeginProps("##fmt_props")) {
-            BakerUI::PropCheck("Export 8-Bit PNG", &m_settings.exportPNG, "For instant preview & game engines");
-            BakerUI::PropCheck("Export Float EXR", &m_settings.exportEXR, "16-bit half / 32-bit float for production renderers");
-            BakerUI::EndProps();
-        }
-        BakerUI::EndSectionCard();
+        if (!canBake && !m_isBaking) ImGui::BeginDisabled();
+        if (BakerUI::BakeButton(m_isBaking ? m_bakeProgress : -1.0f, "Bake") && canBake) TriggerBake();
+        if (!canBake && !m_isBaking) ImGui::EndDisabled();
+        break;
     }
-
-    // Pin BakeButton at the bottom of the panel
-    float btnH = 44.f * (ImGui::GetFontSize() / 15.f) + ImGui::GetStyle().WindowPadding.y;
-    float remain = ImGui::GetContentRegionAvail().y - btnH;
-    if (remain > 0) ImGui::Dummy(ImVec2(0, remain));
-
-    bool canBake = m_hasLowPoly && m_hasHighPoly && !m_isBaking;
-    if (!canBake && !m_isBaking) {
-        ImGui::BeginDisabled();
     }
-
-    float bakeProg = m_isBaking ? m_bakeProgress : -1.0f;
-    if (BakerUI::BakeButton(bakeProg, "START HARDWARE-ACCELERATED BAKE")) {
-        if (canBake) {
-            TriggerBake();
-        }
-    }
-
-    if (!canBake && !m_isBaking) {
-        ImGui::EndDisabled();
-    }
-
     ImGui::End();
+}
+
+// Bake settings in the order a bake is set up. Sections are always open: scroll, do not hunt.
+void UIManager::RenderBakeStep() {
+    static const char* kRes[] = { "1024", "2048", "4096", "8192 (8K)", "16384 (16K)" };
+    static const int kResPx[] = { 1024, 2048, 4096, 8192, 16384 };
+    static const char* kAA[] = { "1x (Draft)", "2x2 (Production)", "4x4 (Max)" };
+    static const int kAAv[] = { 1, 2, 4 };
+    int resIdx = 1, aaIdx = 1;
+    for (int i = 0; i < 5; ++i) if (kResPx[i] == m_settings.resolution) resIdx = i;
+    for (int i = 0; i < 3; ++i) if (kAAv[i] == m_settings.antiAliasing) aaIdx = i;
+
+    float maxDist = m_hasHighPoly ? m_highPolyMesh.GetBoundingBoxDiagonal() * 0.5f : 10.0f;
+    if (maxDist < 1.0f) maxDist = 1.0f;
+    char buf[64];
+
+    if (m_hasLowPoly && !m_lowPolyMesh.detectedUDIMs.empty()) {
+        BakerUI::SectionLabel("Tiles to bake");
+        bool all = true;
+        for (int t : m_lowPolyMesh.detectedUDIMs) if (!IsUDIMSelected(t)) { all = false; break; }
+        if (ImGui::Checkbox("All", &all)) { if (all) SelectAllUDIMs(); else m_selectedUDIMs.clear(); }
+        for (int t : m_lowPolyMesh.detectedUDIMs) {
+            bool sel = IsUDIMSelected(t);
+            snprintf(buf, sizeof(buf), "%d", t);
+            ImGui::SameLine();
+            if (ImGui::Checkbox(buf, &sel)) ToggleUDIM(t);
+        }
+    }
+
+    BakerUI::SectionLabel("Quality");
+    if (BakerUI::BeginProps("##bk_quality")) {
+        if (BakerUI::PropCombo("Resolution", &resIdx, kRes, 5)) m_settings.resolution = kResPx[resIdx];
+        if (BakerUI::PropCombo("Antialiasing", &aaIdx, kAA, 3)) m_settings.antiAliasing = kAAv[aaIdx];
+        BakerUI::PropInt("Padding (px)", &m_settings.seamPadding, 0, 64, "Dilation past the UV island edge");
+        BakerUI::EndProps();
+    }
+
+    BakerUI::SectionLabel("Maps");
+    if (BakerUI::BeginProps("##bk_maps")) {
+        BakerUI::PropCheck("Tangent normal", &m_settings.bakeNormal, "MikkTSpace tangent-space normal map");
+        BakerUI::PropCheck("World normal", &m_settings.bakeWorldNormal, "Raw XYZ world surface vectors");
+        BakerUI::PropCheck("Displacement (32f)", &m_settings.bakeDisplacement, "Projection height difference");
+        BakerUI::PropCheck("Ambient occlusion", &m_settings.bakeAmbientOcclusion, "Cosine-weighted contact shadows");
+        if (m_settings.bakeAmbientOcclusion) {
+            BakerUI::PropInt("AO samples", &m_settings.aoSamples, 4, 64);
+            BakerUI::PropFloat("AO radius", &m_settings.aoMaxDistance, 0.005f, 0.001f, maxDist, "%.4f");
+        }
+        BakerUI::PropCheck("Cavity", &m_settings.bakeCavity, "High-frequency micro-crevices");
+        BakerUI::PropCheck("Curvature", &m_settings.bakeCurvature, "Convex ridges and concave crevices");
+        if (m_settings.bakeCavity || m_settings.bakeCurvature)
+            BakerUI::PropFloat("Cavity contrast", &m_settings.cavityStrength, 0.1f, 0.1f, 10.0f, "%.1fx");
+        BakerUI::PropCheck("Thickness", &m_settings.bakeThickness, "Inward ray thickness for SSS");
+        if (m_settings.bakeThickness)
+            BakerUI::PropFloat("Thickness depth", &m_settings.thicknessMaxDistance, 0.005f, 0.001f, maxDist, "%.4f");
+        BakerUI::PropCheck("World position", &m_settings.bakePosition, "World XYZ gradient (32f EXR)");
+        BakerUI::PropCheck("Material ID", &m_settings.bakeMaterialID, "Distinct color per polygroup");
+        BakerUI::PropCheck("Base color", &m_settings.bakeBaseColor, "Polypaint baked to texture");
+        BakerUI::PropCheck("Diagnostic", &m_settings.bakeDiagnosticMap, "Missed rays and coverage analysis");
+        static const char* const kNormalFormats[] = { "OpenGL (+Y)", "DirectX (-Y)" };
+        int fmt = m_settings.flipYNormal ? 1 : 0;
+        if (BakerUI::PropCombo("Normal format", &fmt, kNormalFormats, 2)) m_settings.flipYNormal = (fmt == 1);
+        BakerUI::EndProps();
+    }
+
+    BakerUI::SectionLabel("Projection");
+    if (BakerUI::BeginProps("##bk_projection")) {
+        if (!m_hasExplicitCage) {
+            if (BakerUI::PropFloat("Cage offset", &m_settings.cageDistance, 0.002f, 0.0001f, maxDist, "%.4f", "Push distance along vertex normal"))
+                m_viewportRenderer.UpdateCage(m_lowPolyMesh, m_settings.cageDistance, m_settings.lowPolyScale);
+        }
+        BakerUI::PropFloat("Max ray length", &m_settings.maxRayDistance, 0.005f, 0.001f, maxDist, "%.4f");
+        BakerUI::PropFloat("Skew", &m_settings.skewFactor, 0.01f, 0.0f, 1.0f, "%.2f", "0 = smooth normals, 1 = flat face normals");
+        BakerUI::PropCheck("Discard backfaces", &m_settings.discardBackfaceHits, "Prevents inverted border artifacts");
+        if (m_settings.discardBackfaceHits) BakerUI::PropFloat("Angle limit", &m_settings.angleThreshold, 0.5f, 30.0f, 90.0f, "%.1f deg");
+        BakerUI::PropCheck("Bidirectional rays", &m_settings.useBidirectionalRays, "Dual-direction rays catch crevices and protrusions");
+        BakerUI::PropCheck("Isolate parts", &m_settings.isolateMeshParts, "Prevent ray bleeding between adjacent parts");
+        BakerUI::PropCheck("Compact BVH", &m_settings.useCompactBVH, "For 50M-100M poly sculpts");
+        BakerUI::EndProps();
+    }
+
+    BakerUI::SectionLabel("Save to");
+    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 70.0f);
+    ImGui::InputText("##dir", m_outDirBuf, sizeof(m_outDirBuf));
+    m_settings.outputDir = m_outDirBuf;
+    ImGui::SameLine();
+    if (ImGui::Button("Browse", ImVec2(-FLT_MIN, 0))) {
+        std::string folder = ChooseFolderDialog();
+        if (!folder.empty()) {
+            m_settings.outputDir = folder;
+            strncpy_s(m_outDirBuf, folder.c_str(), sizeof(m_outDirBuf) - 1);
+        }
+    }
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    ImGui::InputTextWithHint("##basename", "File name", m_baseNameBuf, sizeof(m_baseNameBuf));
+    m_settings.baseFilename = m_baseNameBuf;
+    if (BakerUI::BeginProps("##bk_formats")) {
+        BakerUI::PropCheck("PNG (8-bit)", &m_settings.exportPNG, "Instant preview and game engines");
+        BakerUI::PropCheck("EXR (float)", &m_settings.exportEXR, "Production renderers");
+        BakerUI::EndProps();
+    }
+    if (m_viewportRenderer.HasBakedNormalMap() && BakerUI::SecondaryButton("Clear baked normal preview")) m_shellState.clearNormalPreview = true;
 }
 
 void UIManager::MarkSeamsByAngle() {
@@ -4989,6 +4741,44 @@ void UIManager::SeparateOverlappingIslands() {
     m_logEntries.push_back(std::string("[UVPackmaster] ") + buf);
 }
 
+// Direct UV edits (relax, snap) change the mesh; keep m_currentIslands matching so later pack/stack use them.
+void UIManager::SyncIslandsFromMesh() {
+    for (auto& isl : m_currentIslands) {
+        for (size_t i = 0; i < isl.vertexIndices.size() && i < isl.uvs.size(); ++i) {
+            const auto& uv = m_lowPolyMesh.vertices[isl.vertexIndices[i]].uv;
+            isl.uvs[i] = UVPoint(uv.u, uv.v);
+        }
+        isl.ComputeBounds();
+    }
+}
+
+void UIManager::RelaxUVs() {
+    if (!m_hasLowPoly) return;
+    const float before = UVUnwrapper::MeasureDistortion(m_lowPolyMesh);
+    if (before <= 0.0f) {
+        m_uvStatusMessage = "Nothing to relax: unwrap the mesh first.";
+        return;
+    }
+    const float after = UVUnwrapper::RelaxUVs(m_lowPolyMesh, 30);
+    SyncIslandsFromMesh();
+    m_viewportRenderer.SetLowPolyMesh(m_lowPolyMesh, m_settings.lowPolyScale);
+    PushHistoryState("Relax UVs");
+    char buf[128];
+    snprintf(buf, sizeof(buf), "Relaxed UVs: distortion %.3f -> %.3f (1.0 = no stretch)", before, after);
+    m_uvStatusMessage = buf;
+    m_logEntries.push_back(std::string("[UV Relax] ") + buf);
+}
+
+void UIManager::SnapIslandsToPixels() {
+    if (!m_hasLowPoly) return;
+    UVUnwrapper::SnapIslandsToPixels(m_lowPolyMesh, m_packSettings.resolution);
+    SyncIslandsFromMesh();
+    m_viewportRenderer.SetLowPolyMesh(m_lowPolyMesh, m_settings.lowPolyScale);
+    PushHistoryState("Snap Islands to Pixels");
+    m_uvStatusMessage = "Snapped island corners to the " + std::to_string(m_packSettings.resolution) + "px grid";
+    m_logEntries.push_back("[UV Snap] " + m_uvStatusMessage);
+}
+
 void UIManager::StraightenIslands() {
     if (!m_hasLowPoly) return;
     if (m_currentIslands.empty()) {
@@ -5273,33 +5063,91 @@ std::set<uint32_t> UIManager::GetConnectedUVIsland(uint32_t seedTri) {
     return island;
 }
 
-void UIManager::FlipSelectedUVs(bool horizontal) {
-    if (!m_hasLowPoly || m_lowPolyMesh.vertices.empty()) return;
-
-    std::vector<uint32_t> targetVerts;
+// Vertices the UV edit commands act on: the active selection, or the whole mesh when nothing is selected.
+std::vector<uint32_t> UIManager::GetTargetUVVerts() const {
+    std::vector<uint32_t> verts;
     if (m_uvSelectionMode == UVSelectionMode::Vertex && !m_selectedUVVertices.empty()) {
-        targetVerts.assign(m_selectedUVVertices.begin(), m_selectedUVVertices.end());
+        verts.assign(m_selectedUVVertices.begin(), m_selectedUVVertices.end());
     } else if (m_uvSelectionMode == UVSelectionMode::Edge && !m_lowPolyMesh.selectedEdges.empty()) {
         for (const auto& e : m_lowPolyMesh.selectedEdges) {
-            targetVerts.push_back(e.first);
-            targetVerts.push_back(e.second);
+            verts.push_back(e.first);
+            verts.push_back(e.second);
         }
     } else if (!m_selectedUVFaces.empty()) {
         for (uint32_t f : m_selectedUVFaces) {
             if (f < m_lowPolyMesh.triangles.size()) {
                 const auto& tri = m_lowPolyMesh.triangles[f];
-                targetVerts.push_back(tri.indices[0]);
-                targetVerts.push_back(tri.indices[1]);
-                targetVerts.push_back(tri.indices[2]);
+                verts.insert(verts.end(), { tri.indices[0], tri.indices[1], tri.indices[2] });
             }
         }
     } else {
-        targetVerts.resize(m_lowPolyMesh.vertices.size());
-        for (size_t i = 0; i < m_lowPolyMesh.vertices.size(); ++i) targetVerts[i] = static_cast<uint32_t>(i);
+        verts.resize(m_lowPolyMesh.vertices.size());
+        for (size_t i = 0; i < verts.size(); ++i) verts[i] = static_cast<uint32_t>(i);
     }
+    std::sort(verts.begin(), verts.end());
+    verts.erase(std::unique(verts.begin(), verts.end()), verts.end());
+    return verts;
+}
 
-    std::sort(targetVerts.begin(), targetVerts.end());
-    targetVerts.erase(std::unique(targetVerts.begin(), targetVerts.end()), targetVerts.end());
+// mode: 0 left, 1 right, 2 top, 3 bottom, 4 center U, 5 center V
+void UIManager::AlignSelectedUVs(int mode) {
+    if (!m_hasLowPoly) return;
+    std::vector<uint32_t> verts = GetTargetUVVerts();
+    if (verts.empty()) return;
+    float minU = 1e9f, maxU = -1e9f, minV = 1e9f, maxV = -1e9f;
+    for (uint32_t v : verts) {
+        const auto& uv = m_lowPolyMesh.vertices[v].uv;
+        minU = (std::min)(minU, uv.u); maxU = (std::max)(maxU, uv.u);
+        minV = (std::min)(minV, uv.v); maxV = (std::max)(maxV, uv.v);
+    }
+    for (uint32_t v : verts) {
+        auto& uv = m_lowPolyMesh.vertices[v].uv;
+        switch (mode) {
+            case 0: uv.u = minU; break;
+            case 1: uv.u = maxU; break;
+            case 2: uv.v = maxV; break;
+            case 3: uv.v = minV; break;
+            case 4: uv.u = (minU + maxU) * 0.5f; break;
+            default: uv.v = (minV + maxV) * 0.5f; break;
+        }
+    }
+    static const char* kNames[] = { "Left", "Right", "Top", "Bottom", "Center U", "Center V" };
+    m_viewportRenderer.SetLowPolyMesh(m_lowPolyMesh, m_settings.lowPolyScale);
+    std::string msg = std::string("Align UVs ") + kNames[mode];
+    PushHistoryState(msg);
+    m_uvStatusMessage = msg;
+}
+
+// Flat projection of the selected faces (or the whole mesh) along a world axis, normalised into the 0-1 tile.
+void UIManager::PlanarProjectUVs(int axis) {
+    if (!m_hasLowPoly) return;
+    std::vector<uint32_t> verts = GetTargetUVVerts();
+    if (verts.empty()) return;
+    const int a = (axis + 1) % 3, b = (axis + 2) % 3;
+    auto Comp = [](const Vec3& p, int i) { return i == 0 ? p.x : (i == 1 ? p.y : p.z); };
+    float minA = 1e9f, maxA = -1e9f, minB = 1e9f, maxB = -1e9f;
+    for (uint32_t v : verts) {
+        const Vec3& p = m_lowPolyMesh.vertices[v].position;
+        minA = (std::min)(minA, Comp(p, a)); maxA = (std::max)(maxA, Comp(p, a));
+        minB = (std::min)(minB, Comp(p, b)); maxB = (std::max)(maxB, Comp(p, b));
+    }
+    const float span = (std::max)((std::max)(maxA - minA, maxB - minB), 1e-6f); // uniform scale keeps texel density square
+    for (uint32_t v : verts) {
+        auto& vert = m_lowPolyMesh.vertices[v];
+        vert.uv.u = (Comp(vert.position, a) - minA) / span;
+        vert.uv.v = (Comp(vert.position, b) - minB) / span;
+    }
+    static const char* kAxis[] = { "X", "Y", "Z" };
+    m_viewportRenderer.SetLowPolyMesh(m_lowPolyMesh, m_settings.lowPolyScale);
+    std::string msg = std::string("Planar projection along ") + kAxis[axis];
+    PushHistoryState(msg);
+    m_uvStatusMessage = msg;
+}
+
+void UIManager::FlipSelectedUVs(bool horizontal) {
+    if (!m_hasLowPoly || m_lowPolyMesh.vertices.empty()) return;
+
+    std::vector<uint32_t> targetVerts = GetTargetUVVerts();
     if (targetVerts.empty()) return;
 
     float minU = 1e9f, maxU = -1e9f, minV = 1e9f, maxV = -1e9f;
@@ -5332,30 +5180,7 @@ void UIManager::FlipSelectedUVs(bool horizontal) {
 void UIManager::RotateSelectedUVs(float angleDeg) {
     if (!m_hasLowPoly || m_lowPolyMesh.vertices.empty()) return;
 
-    std::vector<uint32_t> targetVerts;
-    if (m_uvSelectionMode == UVSelectionMode::Vertex && !m_selectedUVVertices.empty()) {
-        targetVerts.assign(m_selectedUVVertices.begin(), m_selectedUVVertices.end());
-    } else if (m_uvSelectionMode == UVSelectionMode::Edge && !m_lowPolyMesh.selectedEdges.empty()) {
-        for (const auto& e : m_lowPolyMesh.selectedEdges) {
-            targetVerts.push_back(e.first);
-            targetVerts.push_back(e.second);
-        }
-    } else if (!m_selectedUVFaces.empty()) {
-        for (uint32_t f : m_selectedUVFaces) {
-            if (f < m_lowPolyMesh.triangles.size()) {
-                const auto& tri = m_lowPolyMesh.triangles[f];
-                targetVerts.push_back(tri.indices[0]);
-                targetVerts.push_back(tri.indices[1]);
-                targetVerts.push_back(tri.indices[2]);
-            }
-        }
-    } else {
-        targetVerts.resize(m_lowPolyMesh.vertices.size());
-        for (size_t i = 0; i < m_lowPolyMesh.vertices.size(); ++i) targetVerts[i] = static_cast<uint32_t>(i);
-    }
-
-    std::sort(targetVerts.begin(), targetVerts.end());
-    targetVerts.erase(std::unique(targetVerts.begin(), targetVerts.end()), targetVerts.end());
+    std::vector<uint32_t> targetVerts = GetTargetUVVerts();
     if (targetVerts.empty()) return;
 
     float minU = 1e9f, maxU = -1e9f, minV = 1e9f, maxV = -1e9f;
@@ -5423,18 +5248,25 @@ void UIManager::RenderHelpWindows() {
             ImGui::BulletText("Double-click or L over a shell: select the whole shell");
             ImGui::BulletText("Click empty space: clear the selection");
             ImGui::BulletText("Alt+LMB drag: orbit (3D) or pan (2D)");
-            ImGui::SeparatorText("Marking Menu (Shift+Right-Click, then flick)");
+            ImGui::BulletText("Right-click (no drag): context menu");
+            ImGui::BulletText("Right-drag: dolly (3D) or pan (2D)");
+            ImGui::BulletText("Curve tool: click to add points, Enter for the next curve, Esc to exit");
+            ImGui::SeparatorText("Marking menu (Shift+Right-click, then flick)");
+            ImGui::TextDisabled("Release without flicking to keep it open and click a label.");
             if (ImGui::BeginTable("##gesture_wedges", 3, ImGuiTableFlags_SizingFixedSame)) {
-                const char* wedges[3][3] = {
-                    { "Camera Proj (NW)", "Cut (Up)",   "Ring (NE)" },
-                    { "Unwrap (Left)",    "",           "Loop (Right)" },
-                    { "Clear (SW)",       "Sew (Down)", "Auto UV (SE)" },
-                };
-                for (auto& row : wedges) {
+                // Same layout as kMarkingWedges, read as a 3x3 grid (angles in screen space, 0 = east)
+                const char* grid[3][3] = {};
+                for (const MarkingWedge& w : kMarkingWedges) {
+                    const float rad = w.angleDeg * 3.14159265f / 180.0f;
+                    const int col = 1 + static_cast<int>(std::lround(std::cos(rad)));
+                    const int row = 1 + static_cast<int>(std::lround(std::sin(rad)));
+                    grid[row][col] = w.label;
+                }
+                for (auto& row : grid) {
                     ImGui::TableNextRow();
                     for (int col = 0; col < 3; ++col) {
                         ImGui::TableSetColumnIndex(col);
-                        ImGui::TextUnformatted(row[col]);
+                        ImGui::TextUnformatted(row[col] ? row[col] : "");
                     }
                 }
                 ImGui::EndTable();
@@ -5453,95 +5285,10 @@ void UIManager::RenderHelpWindows() {
     }
 }
 
-void UIManager::RenderUDIMCanvasPanel() {
-    if (!ImGui::Begin("UDIM Layout###udim", &m_shellState.showUdim)) {
-        ImGui::End();
-        return;
-    }
-
-    if (!m_hasLowPoly || m_lowPolyMesh.detectedUDIMs.empty()) {
-        ImGui::TextDisabled("Load a low-poly mesh to inspect and manage UDIM tiles.");
-        ImGui::End();
-        return;
-    }
-
-    BakerUI::SectionLabel("TILE SELECTION FOR BAKE");
-    ImGui::Text("Detected UDIM Tiles (%zu total):", m_lowPolyMesh.detectedUDIMs.size());
-
-    ImGui::Spacing();
-    if (ImGui::Button("Select All Tiles")) {
-        SelectAllUDIMs();
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Select Only 1001")) {
-        SelectOnlyUDIM(1001);
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Deselect All")) {
-        m_selectedUDIMs.clear();
-    }
-
-    ImGui::Spacing();
-    bool openCards = BakerUI::BeginCard("##udim_cards");
-    if (openCards) {
-        for (int tile : m_lowPolyMesh.detectedUDIMs) {
-            bool sel = IsUDIMSelected(tile);
-            char chkLabel[64];
-            snprintf(chkLabel, sizeof(chkLabel), "Bake Tile %d##chk_%d", tile, tile);
-            if (ImGui::Checkbox(chkLabel, &sel)) {
-                ToggleUDIM(tile);
-            }
-            ImGui::SameLine();
-            if (sel) {
-                BakerUI::StatusPill("ACTIVE", BakerUI::Col::Ok());
-            } else {
-                BakerUI::StatusPill("SKIPPED", BakerUI::Col::Warn());
-            }
-        }
-    }
-    BakerUI::EndCard();
-
-    ImGui::Spacing();
-    BakerUI::SectionLabel("UDIM GRID PREVIEW");
-
-    ImDrawList* drawList = ImGui::GetWindowDrawList();
-    ImVec2 canvasPos = ImGui::GetCursorScreenPos();
-    float tileSize = 60.0f;
-    float tilePadding = 10.0f;
-
-    for (size_t i = 0; i < m_lowPolyMesh.detectedUDIMs.size(); ++i) {
-        int tile = m_lowPolyMesh.detectedUDIMs[i];
-        int col = (tile - 1001) % 10;
-        int row = (tile - 1001) / 10;
-
-        ImVec2 p0(canvasPos.x + col * (tileSize + tilePadding), canvasPos.y + row * (tileSize + tilePadding));
-        ImVec2 p1(p0.x + tileSize, p0.y + tileSize);
-
-        bool isSel = IsUDIMSelected(tile);
-        ImU32 bgCol = isSel ? ImGui::GetColorU32(BakerUI::Col::Panel()) : ImGui::GetColorU32(BakerUI::Col::Bg());
-        ImU32 borderCol = isSel ? ImGui::GetColorU32(BakerUI::Col::Accent()) : ImGui::GetColorU32(BakerUI::Col::Border());
-
-        drawList->AddRectFilled(p0, p1, bgCol, 6.0f);
-        drawList->AddRect(p0, p1, borderCol, 6.0f, 0, isSel ? 2.0f : 1.0f);
-
-        char tileLabel[16];
-        snprintf(tileLabel, sizeof(tileLabel), "%d", tile);
-        ImVec2 textSz = ImGui::CalcTextSize(tileLabel);
-        ImVec2 textPos(p0.x + (tileSize - textSz.x) * 0.5f, p0.y + (tileSize - textSz.y) * 0.5f - 8);
-        drawList->AddText(textPos, isSel ? ImGui::GetColorU32(BakerUI::Col::AccentHi()) : ImGui::GetColorU32(BakerUI::Col::TextDim()), tileLabel);
-
-        const char* statusTxt = isSel ? "BAKE" : "SKIP";
-        ImVec2 sSz = ImGui::CalcTextSize(statusTxt);
-        ImVec2 sPos(p0.x + (tileSize - sSz.x) * 0.5f, p0.y + (tileSize - sSz.y) * 0.5f + 10);
-        drawList->AddText(sPos, isSel ? ImGui::GetColorU32(BakerUI::Col::Ok()) : ImGui::GetColorU32(BakerUI::Col::TextDim()), statusTxt);
-    }
-
-    ImGui::Dummy(ImVec2(10 * (tileSize + tilePadding), 4 * (tileSize + tilePadding)));
-    ImGui::End();
-}
-
 void UIManager::RenderBakeProgressPanel() {
-    if (!ImGui::Begin("Output Log###log", &m_shellState.showLog)) {
+    ImGui::SetNextWindowPos(ImVec2(ImGui::GetMainViewport()->WorkPos.x + 24.0f, ImGui::GetMainViewport()->WorkPos.y + BakerUI::TopBarHeight() + 8.0f), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(620.0f, 240.0f), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Output Log###log", &m_shellState.showLog, ImGuiWindowFlags_NoDocking)) {
         ImGui::End();
         return;
     }

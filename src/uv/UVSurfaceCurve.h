@@ -27,6 +27,7 @@ struct SurfaceCurve {
     std::vector<CurvePoint> points;
     bool isClosed = false;
     bool isBaked = false;
+    bool visible = true; // hidden curves are not drawn, snapped to, or included in Apply All
 
     // Dense surface-following points contoured to the mesh surface along camera perspective
     std::vector<Vec3> sampledPath;

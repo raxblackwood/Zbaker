@@ -819,6 +819,7 @@ bool CurveManager::BakeCurvesToSeams(CurveManager& mgr, LowPolyMesh& mesh, bool 
     for (size_t i = 0; i < mgr.curves.size(); ++i) {
         if (curveIndex >= 0 && static_cast<int>(i) != curveIndex) continue;
         auto& curve = mgr.curves[i];
+        if (!curve.visible && curveIndex < 0) continue; // Apply All skips hidden curves
         if (curve.points.size() < 2 && curve.sampledPath.size() < 2) continue;
 
         std::vector<std::pair<uint32_t, uint32_t>> edges;

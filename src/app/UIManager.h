@@ -52,17 +52,17 @@ public:
     };
 
 private:
-    void RenderOutlinerPanel();
     void RenderViewportPanel();
-    void RenderFloatingUVBar(const ImVec2& origin, const ImVec2& avail);
     void Render2DUVCanvas(const ImVec2& origin, const ImVec2& size);
-    void RenderMeshPanel();
-    void RenderSettingsPanel();
-    void RenderPropertiesPanel();
-    void DockNewPanelsIntoSavedLayout();
-    void RenderUVToolsPanel();
+    void RenderScenePanel();
+    void RenderOutliner();
+    void RenderSceneContents();
+    enum class SceneObject { HighPoly, LowPoly };
+    SceneObject m_selectedObject = SceneObject::HighPoly;
+    void RenderActionPanel();
+    void RenderUVStep();
+    void RenderBakeStep();
     void RenderHelpWindows();
-    void RenderUDIMCanvasPanel();
     void RenderBakeProgressPanel();
 
     // UV Cutting & Packing Actions
@@ -137,7 +137,7 @@ private:
     std::string m_bakeStatus = "Ready";
     std::vector<std::string> m_logEntries;
     BakerUI::ShellState m_shellState;
-    BakerUI::ShellState::AppTab m_prevActiveTab = BakerUI::ShellState::AppTab::Baking;
+    BakerUI::ShellState::Step m_prevStep = BakerUI::ShellState::Step::Import;
 
     // UV Cutting & Packing State (ZenUV & UVPackmaster Facilities)
     enum class UVSelectionMode {
@@ -209,6 +209,9 @@ private:
     void StackIdenticalIslands();
     void SeparateOverlappingIslands();
     void StraightenIslands();
+    void RelaxUVs();
+    void SnapIslandsToPixels();
+    void SyncIslandsFromMesh();
     void OrientIslandsToWorld();
 
     // Maya UV Viewport Actions
@@ -218,13 +221,15 @@ private:
     void FrameAllUVs();
     void FrameSelectedUVs();
     void ApplyCameraProjection();
+    std::vector<uint32_t> GetTargetUVVerts() const;
+    void AlignSelectedUVs(int mode);
+    void PlanarProjectUVs(int axis);
     void FlipSelectedUVs(bool horizontal);
     void RotateSelectedUVs(float angleDeg);
     std::set<uint32_t> GetConnectedUVIsland(uint32_t seedTri);
 
     // UV Surface Curves State
     CurveManager m_curveManager;
-    bool m_curveCutTopology = false; // false = snap to mesh edges, true = cut into topology
     int m_draggingPointIndex = -1;
     bool m_wasDraggingPoint = false;
 
@@ -234,16 +239,23 @@ private:
     void PerformUndo();
     void PerformRedo();
 
-    // Maya-Style Marking Menu State
+    // Radial marking menu (Shift+RMB) and right-click context menu
     struct MarkingMenuState {
         bool active = false;
+        bool sticky = false; // released without a flick: stays open until a label is clicked or Esc
         ImVec2 centerPos = ImVec2(0, 0);
-        int armedWedge = -1; // 0=North(Cut), 1=South(Sew), 2=East(Loop), 3=West(Unwrap), 4=NE(SelectSeams), 5=SW(Clear)
+        int armedWedge = -1;
         float dragDist = 0.0f;
     } m_markingMenu;
 
+    void OpenMarkingMenu();
     void RenderMarkingMenu();
-    void ExecuteMarkingMenuAction(int wedge);
+
+    // RMB drag navigates, so the context menu opens only on a click that did not drag
+    bool m_rmbPressArmed = false;
+    bool m_contextIn2D = false;
+    void UpdateContextMenuTrigger(bool in3DZone, bool in2DZone);
+    void RenderContextMenu();
 
     // Background Thread Ingestion State
     std::mutex m_meshMutex;
@@ -267,13 +279,6 @@ private:
     bool HasUVComponentSelection() const;
     bool m_showShortcutsWindow = false;
 
-    // Scene Outliner selection drives the Properties panel
-    enum class SceneObject { None, HighPoly, LowPoly, Cage };
-    SceneObject m_selectedObject = SceneObject::None;
-    bool SceneObjectExists(SceneObject obj) const;
-    bool m_propertiesDockChecked = false;
-    bool m_uvToolsDockChecked = false;
-    void RenderObjectProperties();
     bool m_showAboutWindow = false;
     bool m_showGesturesWindow = false;
     bool GetActiveCurveSegment(int& p0, int& p1);

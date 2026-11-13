@@ -76,6 +76,9 @@ public:
     bool showSkew = false;
     bool showSeams = true;
     bool showGrid = true;
+    bool showUVChecker = false;  // procedural UV checker on the low-poly mesh
+    bool showUVStretch = false;  // per-pixel stretch/compression heat (blue = compressed, green = ok, red = stretched)
+    float uvStretchRange = 1.0f; // +/- log2 texel-density deviation mapped to full blue/red (1 = 2x)
     bool showBakedNormals = true;
     ShadingMode highPolyShading = ShadingMode::StudioWhite;
     float highPolyOpacity = 1.0f;
@@ -125,6 +128,7 @@ private:
     int m_bakedNormalWidth = 0;
     int m_bakedNormalHeight = 0;
     bool m_hasBakedNormalMap = false;
+    float m_uvTexelScale = 0.0f; // UV units per world unit (area-weighted mean), 0 when the mesh has no UVs
 
     // Mesh GPU Buffers
     struct MeshGPUBuffer {

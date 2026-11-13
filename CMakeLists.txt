@@ -216,3 +216,7 @@ target_include_directories(TestGoZReader PRIVATE
 
 
 
+
+# UV relax / snap self-check
+add_executable(TestUVRelax test/TestUVRelax.cpp src/uv/UVUnwrapper.cpp)
+target_include_directories(TestUVRelax PRIVATE src/baker src/uv)

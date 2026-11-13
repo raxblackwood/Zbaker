@@ -27,6 +27,30 @@ Once the plugin workflow and architecture are completely finalized, necessary ad
 
 ---
 
+## 2.0 UI Redesign - Workflow Layout (2026-11-11, supersedes 2.2 and 2.5 below)
+The companion app is now one linear flow: **Import -> UV -> Bake**, picked from a stepper in the header bar.
+Layout: Viewport (centre), a **Scene** window (left: outliner of meshes on top, details of the selected mesh below) and an **Actions** window (right, UV tools or bake settings per step), no dock or menu bar; log is an overlay.
+The step's primary action is pinned at the bottom of the Inspector (Continue to UV / Auto UV / START BAKE).
+Removed because they duplicated each other: Scene Outliner, Properties, Mesh Ingestion, Bake Parameters panels, UDIM Layout panel, floating bake bar, Bake/Edit/UV menus.
+Header right: one 3D | 2D | Split layout control plus Undo / Redo. Menus left: File, Select (UV step only), View, Help.
+Code: `UIManager::RenderScenePanel/RenderActionPanel/RenderUVStep/RenderBakeStep`, `BakerUI::BeginStageHost/BeginSidePanel/StepTab`.
+The standalone app still uses the old `BeginFrameHost` (paused per 1.1).
+Invariant: `BakerUI::BeginCard` closes its child itself when clipped, so callers call `EndCard()` only when it returned true.
+Visual pass (2026-11-11): UI grays, 3D viewport clear colour (#303033) and UV canvas lifted one step for legibility. UV wire draws faint triangulation under bright polygon edges.
+Cage is a property of the game mesh, not a scene object: the Cage card (show toggle, custom cage open/remove) lives in the Game mesh details. Outliner rows have a right-click menu (Replace/Add, Toggle Visibility, Delete) using the same registry commands.
+Next: confirm on screen after rebuild (exe was locked by the running companion at last build); optional row info popup if the user still wants an "i" menu.
+
+## 2.0b UV Navigation Gap Pass (2026-11-12)
+Audit of the UV step against the Maya UV Editor found the marking menu hard-coded (duplicated logic, overlapping labels), no right-click menu, and curve tools with no way to hide or apply a curve separately.
+Marking menu (`UIManager::RenderMarkingMenu`, `kMarkingWedges`) is now driven by the CommandRegistry: Cut, Edge ring, Edge loop, Auto UV, Sew, Clear selection, Unwrap, Camera projection.
+Shift+RMB and flick runs a wedge on release; releasing without a flick leaves it open (sticky) so labels can be clicked; Esc closes it. Disabled wedges are dimmed and show the reason.
+Right-click without dragging opens a registry-built context menu (`UpdateContextMenuTrigger`, `RenderContextMenu`). RMB drag still dollies (3D) or pans (2D).
+New registry commands: `select.seams`, `uv.camera_project`, `uv.project_x/y/z`, `uv.align_*` (6), `uv.mark_seams_polygroup`, `uv.mark_seams_uv_borders`, plus the curve set below.
+Curves: `SurfaceCurve::visible`, a curve list with eye toggles, Mark as Seam (keeps topology), Cut Mesh (splits polygons), Mark All / Cut All (skip hidden curves), Show / Hide All.
+Behaviour changes: Enter now only finishes the curve and starts the next (it no longer cuts the mesh); right-click no longer commits a curve; Esc leaves the curve tool; Delete removes the selected point.
+Still open vs Maya: grow / shrink / invert / convert selection, select all, move and sew, cylindrical and spherical projection, relax brush, pin, isolate, snap to grid, normalize / unitize, distribute, hotkeys for Cut / Sew / Unwrap / Pack, Frame Selected hotkey.
+Verified by launching the build and driving it (marking menu, context menu, curve draw, Mark as Seam, Hide All). The Standalone app was not touched.
+
 ## 2. Complete UI Design & Viewport Overview
 
 ### 2.1 Visual Design Identity
@@ -309,3 +333,10 @@ To achieve full parity with Marmoset Toolbag's interactive 3D brush toolset:
   ```powershell
   powershell -ExecutionPolicy Bypass -File .\deploy_plugin.ps1
   ```
+
+## 2.0c 3D UV Checker + Stretch (2026-11-13)
+Low-poly shading mode 8 in `ViewportRenderer` draws a procedural 16x16 UV checker (U red / V green tint per UDIM tile) and/or a stretch heat.
+Stretch is computed per pixel in the shader from ddx/ddy of UV and world position (singular values of the UV-to-world Jacobian), normalised by `m_uvTexelScale` (area-weighted mean). Blue = compressed, green = even, red = stretched; the worst of the two directions wins.
+Commands `view.3d_uv_checker`, `view.3d_uv_stretch` (View > 3D Display) plus Checker / Stretch chips and a range slider in the UV step toolbar. The 2D canvas already had its own checker and area heatmap.
+Known limits: uniform lpScale assumed; 1px noise on seam edges (derivatives straddle triangles). Not yet verified on screen.
+Next from the EZ UV comparison: stretch-aware relax (Optimize), texel density match, pixel snap, pin, island stacking, hotspot - none exist yet.
